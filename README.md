@@ -66,6 +66,10 @@ python manage.py collectstatic --noinput
 gunicorn config.wsgi:application --bind 0.0.0.0:8000
 ```
 
+## Deploy to PythonAnywhere
+
+See **[PYTHONANYWHERE_DEPLOYMENT.md](PYTHONANYWHERE_DEPLOYMENT.md)** for step-by-step instructions to deploy on [pythonanywhere.com](https://www.pythonanywhere.com).
+
 ## Tech
 
 - Django 5.x, Bootstrap 5, Font Awesome
