@@ -1,0 +1,69 @@
+{% extends 'base.html' %}
+{% load static %}
+{% block title %}My Attendance - LJIET_Attendance{% endblock %}
+{% block content %}
+<style>
+.my-att-hero { background: linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #334155 100%); border-radius: 16px; padding: 1.25rem 1.5rem; margin-bottom: 1.5rem; color: #fff; box-shadow: 0 10px 40px rgba(15, 23, 42, 0.25); }
+.my-att-hero .hero-logo { height: 44px; width: auto; max-width: 90px; object-fit: contain; filter: drop-shadow(0 2px 8px rgba(0,0,0,0.4)); }
+.my-att-hero .page-title { color: #fff !important; font-size: 1.5rem; margin-bottom: 0.35rem !important; }
+.my-att-hero .page-subtitle { color: #94a3b8 !important; font-size: 0.9rem; }
+.my-att-hero .student-badges .badge { font-weight: 500; padding: 0.35rem 0.65rem; border-radius: 8px; }
+
+.my-att-card { border: none; border-radius: 14px; box-shadow: 0 4px 20px rgba(0,0,0,0.06); overflow: hidden; transition: transform 0.2s ease, box-shadow 0.2s ease; max-width: 480px; }
+.my-att-card:hover { transform: translateY(-3px); box-shadow: 0 12px 28px rgba(0,0,0,0.1); }
+.my-att-card .card-body { padding: 1.5rem; }
+.my-att-stat { border-radius: 12px; padding: 1.25rem; text-align: center; }
+.my-att-stat .stat-value { font-size: 1.75rem; font-weight: 700; line-height: 1.2; }
+.my-att-stat .stat-label { font-size: 0.8rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; margin-top: 0.25rem; }
+.my-att-stat-held { background: linear-gradient(135deg, #dbeafe 0%, #bfdbfe 100%); color: #1e40af; }
+.my-att-stat-attended { background: linear-gradient(135deg, #d1fae5 0%, #a7f3d0 100%); color: #065f46; }
+.my-att-pct { border-radius: 12px; padding: 1.25rem 1.5rem; margin-top: 1.25rem; }
+.my-att-pct .stat-label { font-size: 0.8rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 0.35rem; }
+.my-att-pct .stat-value { font-size: 2rem; font-weight: 700; }
+.my-att-pct.good { background: linear-gradient(135deg, #d1fae5 0%, #a7f3d0 100%); color: #047857; }
+.my-att-pct.warn { background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%); color: #b45309; }
+.my-att-pct.low { background: linear-gradient(135deg, #fee2e2 0%, #fecaca 100%); color: #dc2626; }
+.my-att-pct .tip { font-size: 0.8rem; margin-top: 0.5rem; margin-bottom: 0; opacity: 0.95; }
+</style>
+
+<div class="my-att-hero d-flex flex-wrap justify-content-between align-items-center gap-3">
+    <div class="d-flex align-items-center gap-3">
+        <img src="{% static 'images/ljiet-logo.png' %}" alt="LJIET" class="hero-logo">
+        <div>
+            <h1 class="page-title mb-1">My Attendance Summary</h1>
+        <p class="page-subtitle mb-2">{{ student.name }}</p>
+        <div class="student-badges d-flex flex-wrap gap-2">
+            <span class="badge bg-primary bg-opacity-25 text-white">Roll No {{ student.roll_no }}</span>
+            <span class="badge bg-info bg-opacity-25 text-white">{{ student.batch.name }}</span>
+            </div>
+        </div>
+    </div>
+    <a href="{% url 'core:student_dashboard' %}" class="btn btn-outline-light btn-sm"><i class="fas fa-arrow-left me-1"></i> Dashboard</a>
+</div>
+
+<div class="card my-att-card">
+    <div class="card-body">
+        <div class="row g-3 text-center mb-0">
+            <div class="col-6">
+                <div class="my-att-stat my-att-stat-held">
+                    <p class="stat-value mb-0">{{ total_held }}</p>
+                    <p class="stat-label text-dark opacity-90 mb-0">Lectures held</p>
+                </div>
+            </div>
+            <div class="col-6">
+                <div class="my-att-stat my-att-stat-attended">
+                    <p class="stat-value mb-0">{{ total_attended }}</p>
+                    <p class="stat-label text-dark opacity-90 mb-0">Attended</p>
+                </div>
+            </div>
+        </div>
+        <div class="my-att-pct {% if overall_pct >= 75 %}good{% elif overall_pct >= 50 %}warn{% else %}low{% endif %}">
+            <p class="stat-label mb-1">Overall attendance</p>
+            <p class="stat-value mb-0">{{ overall_pct }}%</p>
+            {% if overall_pct < 75 %}
+            <p class="tip">Keep attendance above 75% to meet requirements.</p>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endblock %}

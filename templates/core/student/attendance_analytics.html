@@ -1,0 +1,261 @@
+{% extends 'base.html' %}
+{% load static %}
+{% block title %}Attendance Analytics - LJIET_Attendance{% endblock %}
+{% block content %}
+<style>
+/* Student Analytics: clear, colorful design */
+.analytics-hero {
+    background: linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #334155 100%);
+    border-radius: 16px;
+    padding: 1.25rem 1.5rem;
+    margin-bottom: 1.5rem;
+    color: #fff;
+    box-shadow: 0 10px 40px rgba(15, 23, 42, 0.25);
+}
+.analytics-hero .page-title { color: #fff !important; font-size: 1.5rem; margin-bottom: 0.35rem !important; }
+.analytics-hero .page-subtitle { color: #94a3b8 !important; font-size: 0.9rem; }
+.analytics-hero .hero-logo { height: 44px; width: auto; max-width: 90px; object-fit: contain; filter: drop-shadow(0 2px 8px rgba(0,0,0,0.4)); }
+.analytics-hero .student-badges .badge { font-weight: 500; padding: 0.35rem 0.65rem; border-radius: 8px; }
+.analytics-hero .btn-outline-app { border-color: rgba(255,255,255,0.4); color: #e2e8f0; }
+.analytics-hero .btn-outline-app:hover { background: rgba(255,255,255,0.15); color: #fff; border-color: rgba(255,255,255,0.5); }
+
+.analytics-card { border: none; border-radius: 14px; box-shadow: 0 4px 20px rgba(0,0,0,0.06); overflow: hidden; height: 100%; transition: transform 0.2s ease, box-shadow 0.2s ease; }
+.analytics-card:hover { transform: translateY(-3px); box-shadow: 0 12px 28px rgba(0,0,0,0.1); }
+.analytics-card .card-body { padding: 1.25rem 1.25rem; }
+.analytics-card .stat-icon { width: 48px; height: 48px; border-radius: 12px; display: flex; align-items: center; justify-content: center; font-size: 1.35rem; margin-bottom: 0.75rem; }
+.analytics-card .stat-label { font-size: 0.8rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 0.25rem; }
+.analytics-card .stat-value { font-size: 1.75rem; font-weight: 700; line-height: 1.2; }
+.analytics-card-total .stat-icon { background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%); color: #fff; }
+.analytics-card-total .stat-label { color: #1e40af; }
+.analytics-card-total .stat-value { color: #1e3a8a; }
+.analytics-card-attended .stat-icon { background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: #fff; }
+.analytics-card-attended .stat-label { color: #047857; }
+.analytics-card-attended .stat-value { color: #065f46; }
+.analytics-card-pct .stat-icon { background: linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%); color: #fff; }
+.analytics-card-pct .stat-label { color: #5b21b6; }
+.analytics-card-pct .stat-value.good { color: #047857; }
+.analytics-card-pct .stat-value.warn { color: #b45309; }
+.analytics-card-pct .stat-value.low { color: #dc2626; }
+
+.analytics-filters { background: linear-gradient(180deg, #f8fafc 0%, #f1f5f9 100%); border: 1px solid #e2e8f0; border-radius: 14px; padding: 1.25rem 1.5rem; margin-bottom: 1.5rem; }
+.analytics-filters .form-label { font-weight: 600; color: #475569; font-size: 0.85rem; }
+.analytics-filters .form-select { min-width: 160px; }
+
+.table-analytics thead th { background: linear-gradient(180deg, #1e293b 0%, #334155 100%); color: #fff !important; font-weight: 600; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.5px; padding: 0.9rem 1rem; border: none; }
+.table-analytics tbody td { padding: 0.85rem 1rem; vertical-align: middle; }
+.table-analytics tbody tr:nth-child(even) { background: #f8fafc; }
+.table-analytics tbody tr:hover { background: #eff6ff !important; }
+.table-analytics tbody tr.highlight-row { background: #dbeafe !important; }
+.table-analytics .pct-good { color: #047857; font-weight: 700; }
+.table-analytics .pct-warn { color: #b45309; font-weight: 700; }
+.table-analytics .pct-low { color: #dc2626; font-weight: 700; }
+
+.card-section .card-header { background: linear-gradient(90deg, #1e293b 0%, #334155 100%); color: #fff; font-weight: 600; padding: 0.9rem 1.25rem; border: none; border-radius: 14px 14px 0 0; }
+.card-section .card-header .text-secondary { color: #94a3b8 !important; }
+.card-section .card { border: none; border-radius: 14px; box-shadow: 0 4px 20px rgba(0,0,0,0.08); overflow: hidden; }
+</style>
+
+<div class="d-flex flex-wrap justify-content-between align-items-center analytics-hero gap-3">
+    <div class="d-flex align-items-center gap-3">
+        <img src="{% static 'images/ljiet-logo.png' %}" alt="LJIET" class="hero-logo">
+        <div>
+            <h1 class="page-title mb-1">Attendance Analytics</h1>
+        <p class="page-subtitle mb-2">{{ student.name }}</p>
+        <div class="student-badges d-flex flex-wrap gap-2">
+            <span class="badge bg-primary bg-opacity-25 text-white">Roll No {{ student.roll_no }}</span>
+            <span class="badge bg-info bg-opacity-25 text-white">{{ student.batch.name }}</span>
+            <span class="badge bg-secondary bg-opacity-25 text-white">{{ student.department.name }}</span>
+            </div>
+        </div>
+    </div>
+    <a href="{% url 'core:student_dashboard' %}" class="btn btn-outline-app"><i class="fas fa-arrow-left me-1"></i> Dashboard</a>
+</div>
+
+<p class="small text-muted mb-2"><i class="fas fa-info-circle me-1"></i>Holidays are excluded from lectures held.</p>
+<div class="row g-3 mb-4">
+    <div class="col-6 col-md-4">
+        <div class="card analytics-card analytics-card-total">
+            <div class="card-body">
+                <div class="stat-icon"><i class="fas fa-chalkboard-teacher"></i></div>
+                <p class="stat-label">Total lectures (cumulative)</p>
+                <p class="stat-value">{{ total_held }}</p>
+            </div>
+        </div>
+    </div>
+    <div class="col-6 col-md-4">
+        <div class="card analytics-card analytics-card-attended">
+            <div class="card-body">
+                <div class="stat-icon"><i class="fas fa-check-double"></i></div>
+                <p class="stat-label">Attended</p>
+                <p class="stat-value">{{ total_attended }}</p>
+            </div>
+        </div>
+    </div>
+    <div class="col-12 col-md-4">
+        <div class="card analytics-card analytics-card-pct">
+            <div class="card-body">
+                <div class="stat-icon"><i class="fas fa-percentage"></i></div>
+                <p class="stat-label">Overall attendance</p>
+                <p class="stat-value {% if overall_pct >= 75 %}good{% elif overall_pct >= 50 %}warn{% else %}low{% endif %}">{{ overall_pct }}%</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="card analytics-filters">
+    <p class="small fw-bold text-dark mb-3"><i class="fas fa-filter text-primary me-1"></i> View options</p>
+    <form method="get" action="{% url 'core:student_attendance_analytics' %}" class="row g-3 align-items-end">
+        <div class="col-12 col-sm-6 col-md-auto">
+            <label class="form-label mb-1">View by</label>
+            <select name="period_type" id="period_type" class="form-select form-select-app" onchange="this.form.submit()">
+                <option value="date" {% if period_type == 'date' %}selected{% endif %}>Date-wise</option>
+                <option value="week" {% if period_type == 'week' %}selected{% endif %}>Week-wise</option>
+                <option value="phase" {% if period_type == 'phase' %}selected{% endif %}>Phase-wise</option>
+            </select>
+        </div>
+        <div class="col-12 col-sm-6 col-md-auto" id="dateGroup" style="display:{% if period_type == 'date' %}block{% else %}none{% endif %};">
+            <label class="form-label mb-1">Select date</label>
+            <select name="date" class="form-select form-select-app" onchange="this.form.submit()">
+                <option value="">— Select date —</option>
+                {% for d in available_dates %}
+                <option value="{{ d|date:'Y-m-d' }}" {% if selected_date and selected_date == d %}selected{% endif %}>{{ d|date:"D, d M Y" }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="col-12 col-sm-6 col-md-auto" id="phaseGroup" style="display:{% if period_type == 'week' or period_type == 'phase' %}block{% else %}none{% endif %};">
+            <label class="form-label mb-1">Phase</label>
+            <select name="phase" id="phaseSelect" class="form-select form-select-app" onchange="this.form.submit()">
+                {% for p in phases %}
+                <option value="{{ p }}" {% if phase == p %}selected{% endif %}>{{ p }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="col-12 col-sm-6 col-md-auto" id="weekGroup" style="display:{% if period_type == 'week' %}block{% else %}none{% endif %};">
+            <label class="form-label mb-1">Week</label>
+            <select name="week" class="form-select form-select-app" onchange="this.form.submit()">
+                <option value="">— Select week —</option>
+                {% for w in phase_weeks %}
+                <option value="{{ forloop.counter0 }}" {% if selected_week_idx == forloop.counter0 %}selected{% endif %}>Week {{ forloop.counter }}</option>
+                {% endfor %}
+            </select>
+        </div>
+    </form>
+</div>
+
+<script>
+(function(){
+    var pt = document.getElementById('period_type');
+    var dateG = document.getElementById('dateGroup');
+    var phaseG = document.getElementById('phaseGroup');
+    var weekG = document.getElementById('weekGroup');
+    function toggle(){
+        var v = pt.value;
+        dateG.style.display = v === 'date' ? 'block' : 'none';
+        phaseG.style.display = (v === 'week' || v === 'phase') ? 'block' : 'none';
+        weekG.style.display = v === 'week' ? 'block' : 'none';
+    }
+    pt.addEventListener('change', toggle);
+})();
+</script>
+
+
+{% if period_type == 'date' and selected_date %}
+<div class="card card-section overflow-hidden mb-4">
+    <div class="card-header d-flex flex-wrap align-items-center gap-2">
+        <span>{{ selected_date|date:"l, d M Y" }} — Day attendance</span>
+        {% if day_pct is not None %}<span class="badge bg-light text-dark ms-2">{{ day_attended }}/{{ day_held }} ({{ day_pct }}%)</span>{% endif %}
+    </div>
+    {% if day_slots %}
+    <div class="table-responsive">
+        <table class="table table-analytics table-hover mb-0">
+            <thead>
+                <tr><th>Time</th><th>Subject</th><th>Faculty</th><th>Status</th></tr>
+            </thead>
+            <tbody>
+                {% for row in day_slots %}
+                <tr>
+                    <td class="fw-medium">{{ row.time_slot }}</td>
+                    <td>{{ row.subject }}</td>
+                    <td class="text-secondary">{{ row.faculty }}</td>
+                    <td>{% if row.attended == True %}<span class="badge bg-success">Present</span>{% elif row.attended == False %}<span class="badge bg-danger">Absent</span>{% else %}<span class="text-secondary">—</span>{% endif %}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <p class="text-center text-secondary py-5 mb-0">No lectures recorded for this date.</p>
+    {% endif %}
+</div>
+{% endif %}
+
+{% if period_type == 'week' or period_type == 'phase' %}
+<div class="card card-section overflow-hidden mb-4">
+    <div class="card-header">
+        {% if period_type == 'week' %}Week-wise attendance{% else %}Phase-wise attendance{% endif %}
+        {% if phase_start_date and phase_end_date %}<span class="fw-normal opacity-90 small ms-2">({{ phase_start_date|date:"d M" }} – {{ phase_end_date|date:"d M Y" }})</span>{% endif %}
+    </div>
+    {% if weeks_summary %}
+    <div class="table-responsive">
+        <table class="table table-analytics table-hover mb-0">
+            <thead>
+                <tr>
+                    <th>Week</th>
+                    <th class="text-end">Held</th>
+                    <th class="text-end">Attended</th>
+                    <th class="text-end">Week %</th>
+                    <th class="text-end">Cum. Held</th>
+                    <th class="text-end">Cum. Attended</th>
+                    <th class="text-end">Cum. %</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for w in weeks_summary %}
+                <tr class="{% if selected_week_idx == forloop.counter0 %}highlight-row{% endif %}">
+                    <td class="fw-medium">Week {{ w.week_num }}</td>
+                    <td class="text-end">{{ w.held }}</td>
+                    <td class="text-end">{{ w.attended }}</td>
+                    <td class="text-end {% if w.pct >= 75 %}pct-good{% elif w.pct >= 50 %}pct-warn{% else %}pct-low{% endif %}">{{ w.pct }}%</td>
+                    <td class="text-end">{{ w.cum_held }}</td>
+                    <td class="text-end">{{ w.cum_attended }}</td>
+                    <td class="text-end {% if w.cum_pct >= 75 %}pct-good{% elif w.cum_pct >= 50 %}pct-warn{% else %}pct-low{% endif %}">{{ w.cum_pct }}%</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% if selected_week_summary %}
+    <div class="card-footer border-0 py-3" style="background: linear-gradient(90deg, #dbeafe 0%, #eff6ff 100%);">
+        <p class="small mb-0"><strong>Current cumulative:</strong> <strong>{{ selected_week_summary.cum_held }}</strong> held, <strong>{{ selected_week_summary.cum_attended }}</strong> attended — <span class="fw-bold {% if selected_week_summary.cum_pct >= 75 %}pct-good{% elif selected_week_summary.cum_pct >= 50 %}pct-warn{% else %}pct-low{% endif %}">{{ selected_week_summary.cum_pct }}%</span></p>
+    </div>
+    {% endif %}
+    {% else %}
+    <p class="text-center text-secondary py-5 mb-0">No week data for this phase. Set term phases and ensure attendance is marked.</p>
+    {% endif %}
+</div>
+{% endif %}
+<div class="card card-section overflow-hidden">
+    <div class="card-header">Subject-wise attendance</div>
+    {% if subject_wise %}
+    <div class="table-responsive">
+        <table class="table table-analytics table-hover mb-0">
+            <thead>
+                <tr><th>Subject</th><th class="text-end">Lectures held</th><th class="text-end">Attended</th><th class="text-end">%</th></tr>
+            </thead>
+            <tbody>
+                {% for s in subject_wise %}
+                <tr>
+                    <td class="fw-medium">{{ s.name }}</td>
+                    <td class="text-end">{{ s.held }}</td>
+                    <td class="text-end">{{ s.attended }}</td>
+                    <td class="text-end {% if s.pct >= 75 %}pct-good{% elif s.pct >= 50 %}pct-warn{% else %}pct-low{% endif %}">{{ s.pct }}%</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <p class="text-center text-secondary py-5 mb-0">No subject-wise data yet.</p>
+    {% endif %}
+</div>
+{% endblock %}

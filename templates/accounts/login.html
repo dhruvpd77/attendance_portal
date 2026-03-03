@@ -1,0 +1,255 @@
+{% extends 'base.html' %}
+{% load static %}
+{% block title %}Login - LJIET_Attendance{% endblock %}
+{% block extra_head %}
+<style>
+    /* Full-height gradient background behind the combined login card */
+    .login-section {
+        min-height: calc(100vh - 56px - 3rem);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 2rem 1rem 3rem;
+        margin: -0.5rem -1rem 0 -1rem;
+        background: linear-gradient(135deg, #0f172a 0%, #1e3a5f 25%, #1e293b 50%, #312e81 75%, #4c1d95 100%);
+        background-size: 400% 400%;
+        animation: loginBgShift 12s ease infinite;
+        position: relative;
+        overflow: hidden;
+    }
+    @media (min-width: 768px) {
+        .login-section { margin: -0.5rem -1.5rem 0 -1.5rem; }
+    }
+    @media (min-width: 992px) {
+        .login-section { margin: -0.5rem -2rem 0 -2rem; }
+    }
+    .login-section::before {
+        content: '';
+        position: absolute;
+        inset: 0;
+        background:
+            radial-gradient(ellipse 80% 50% at 50% -20%, rgba(59,130,246,0.25), transparent),
+            radial-gradient(ellipse 60% 40% at 100% 50%, rgba(139,92,246,0.2), transparent),
+            radial-gradient(ellipse 50% 30% at 0% 80%, rgba(16,185,129,0.15), transparent);
+        pointer-events: none;
+    }
+    @keyframes loginBgShift {
+        0%, 100% { background-position: 0% 50%; }
+        50% { background-position: 100% 50%; }
+    }
+
+    /* Combined login card (logos + form in one card) */
+    .login-card {
+        position: relative;
+        z-index: 1;
+        display: flex;
+        flex-direction: column;
+        max-width: 860px;
+        width: 100%;
+        border-radius: 26px;
+        overflow: hidden;
+        box-shadow: 0 28px 60px rgba(15, 23, 42, 0.55);
+        background: #020617;
+        border: 1px solid rgba(148, 163, 184, 0.35);
+    }
+    @media (min-width: 768px) {
+        .login-card {
+            flex-direction: row;
+        }
+    }
+
+    /* Left panel: university branding */
+    .login-card-left {
+        background:
+            radial-gradient(circle at top left, rgba(59,130,246,0.4), transparent 55%),
+            radial-gradient(circle at bottom right, rgba(16,185,129,0.35), transparent 55%),
+            linear-gradient(145deg, #020617 0%, #111827 40%, #1e293b 100%);
+        color: #e5e7eb;
+        padding: 2rem 1.75rem;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        align-items: center;
+        gap: 1.5rem;
+        flex: 0 0 45%;
+    }
+    @media (min-width: 768px) {
+        .login-card-left {
+            padding: 2.25rem 2rem;
+        }
+    }
+
+    .login-brand-combined {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        text-align: center;
+        gap: 0.75rem;
+    }
+    .login-brand-combined .logo-lju {
+        height: 52px;
+        width: auto;
+        max-width: 320px;
+        object-fit: contain;
+        filter: drop-shadow(0 4px 14px rgba(0,0,0,0.5));
+    }
+    .login-brand-combined .logo-ljiet {
+        height: 96px;
+        width: auto;
+        max-width: 140px;
+        object-fit: contain;
+        filter: drop-shadow(0 8px 20px rgba(0,0,0,0.6));
+    }
+    @media (min-width: 768px) {
+        .login-brand-combined .logo-lju {
+            height: 64px;
+        }
+        .login-brand-combined .logo-ljiet {
+            height: 110px;
+        }
+    }
+
+    .login-text-main {
+        margin-top: 0.2rem;
+        text-align: center;
+    }
+    .login-text-main h1 {
+        font-size: 1.6rem;
+        font-weight: 700;
+        letter-spacing: -0.02em;
+        margin-bottom: 0.3rem;
+        color: #f9fafb;
+    }
+    .login-text-main p {
+        margin: 0;
+        font-size: 0.9rem;
+        color: #cbd5f5;
+    }
+
+    /* Right panel: actual login form */
+    .login-card-right {
+        background: #ffffff;
+        flex: 1 1 55%;
+        padding: 2rem 1.75rem 2.25rem;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+    }
+    @media (min-width: 768px) {
+        .login-card-right {
+            padding: 2.25rem 2.25rem 2.5rem;
+        }
+    }
+
+    .login-card-right-header {
+        margin-bottom: 1.5rem;
+    }
+    .login-card-right-header h2 {
+        font-size: 1.35rem;
+        font-weight: 700;
+        margin-bottom: 0.25rem;
+        color: #0f172a;
+    }
+    .login-card-right-header p {
+        margin: 0;
+        font-size: 0.9rem;
+        color: #6b7280;
+    }
+
+    .login-form-label {
+        font-weight: 600;
+        color: #334155;
+        font-size: 0.9rem;
+        margin-bottom: 0.45rem;
+    }
+    .login-form-control {
+        border-radius: 12px;
+        padding: 0.75rem 1rem;
+        border: 1px solid #e2e8f0;
+        font-size: 16px;
+        background: #f8fafc;
+        transition: border-color 0.2s ease, box-shadow 0.2s ease, background-color 0.2s ease;
+    }
+    .login-form-control:focus {
+        border-color: #3b82f6;
+        box-shadow: 0 0 0 3px rgba(59,130,246,0.2);
+        background-color: #ffffff;
+    }
+    .login-form-control::placeholder {
+        color: #94a3b8;
+    }
+
+    .login-submit-btn {
+        width: 100%;
+        padding: 0.9rem 1rem;
+        font-weight: 600;
+        font-size: 1rem;
+        border-radius: 12px;
+        border: none;
+        background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+        color: #fff;
+        margin-top: 0.5rem;
+        transition: transform 0.2s ease, box-shadow 0.2s ease;
+        box-shadow: 0 4px 14px rgba(16,185,129,0.45);
+    }
+    .login-submit-btn:hover,
+    .login-submit-btn:focus {
+        color: #fff;
+        transform: translateY(-2px);
+        box-shadow: 0 8px 24px rgba(16,185,129,0.55);
+    }
+    .login-submit-btn i {
+        margin-right: 0.5rem;
+    }
+
+    .login-note {
+        font-size: 0.8rem;
+        color: #9ca3af;
+        margin-top: 0.75rem;
+    }
+
+    @media (max-width: 576px) {
+        .login-section { padding: 1.5rem 0.75rem 2rem; }
+        .login-card { border-radius: 20px; }
+        .login-card-left { padding: 1.75rem 1.5rem; }
+        .login-card-right { padding: 1.75rem 1.5rem 2rem; }
+    }
+</style>
+{% endblock %}
+{% block content %}
+<div class="login-section">
+    <div class="login-card">
+        <div class="login-card-left">
+            <div class="login-brand-combined">
+                <img src="{% static 'images/lju-logo.png' %}" alt="LJU - University with a Difference" class="logo-lju">
+                <img src="{% static 'images/ljiet-logo.png' %}" alt="LJIET" class="logo-ljiet">
+            </div>
+            <div class="login-text-main">
+                <h1>LJIET_Attendance</h1>
+                <p>Secure access for students, faculty, and administrators to manage daily attendance and reports.</p>
+            </div>
+        </div>
+        <div class="login-card-right">
+            <div class="login-card-right-header">
+                <h2>Sign in</h2>
+                <p>Enter your assigned username and password to continue.</p>
+            </div>
+            <form method="post">
+                {% csrf_token %}
+                <div class="mb-3">
+                    <label for="username" class="login-form-label">Username</label>
+                    <input type="text" name="username" id="username" required autofocus class="form-control login-form-control" placeholder="Enter username">
+                </div>
+                <div class="mb-4">
+                    <label for="password" class="login-form-label">Password</label>
+                    <input type="password" name="password" id="password" required class="form-control login-form-control" placeholder="Enter password">
+                </div>
+                <button type="submit" class="login-submit-btn">
+                    <i class="fas fa-sign-in-alt"></i> Sign In
+                </button>
+                <p class="login-note">Use the username and password given by your institute.</p>
+            </form>
+        </div>
+    </div>
+</div>
+{% endblock %}

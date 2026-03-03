@@ -1,0 +1,226 @@
+{% extends 'core/admin/base_admin.html' %}
+{% load static %}
+{% block title %}Analytics Dashboard - LJIET_Attendance{% endblock %}
+{% block extra_head %}
+{{ block.super }}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<style>
+.analytics-hero { background: linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #334155 100%); border-radius: 16px; padding: 1.25rem 1.5rem; margin-bottom: 1.5rem; color: #fff; }
+.analytics-hero .page-title { color: #fff !important; }
+.analytics-hero .admin-logo { height: 44px; width: auto; max-width: 90px; object-fit: contain; filter: drop-shadow(0 2px 8px rgba(0,0,0,0.4)); }
+.analytics-card { border: none; border-radius: 14px; box-shadow: 0 4px 20px rgba(0,0,0,0.08); overflow: hidden; margin-bottom: 1.5rem; }
+.analytics-card .card-header { background: linear-gradient(90deg, #1e293b 0%, #334155 100%); color: #fff; font-weight: 600; padding: 0.9rem 1.25rem; border: none; }
+.analytics-card .card-body { padding: 1.25rem; }
+.at-risk-table .table thead th { background: #475569; color: #fff; font-size: 0.8rem; }
+.at-risk-table .table tbody td { padding: 0.75rem 1rem; }
+.at-risk-table .pct-low { color: #dc2626; font-weight: 700; }
+.at-risk-table .pct-warn { color: #b45309; font-weight: 700; }
+.heat-map-cell { min-width: 60px; text-align: center; padding: 0.5rem !important; font-size: 0.8rem; border-radius: 6px; }
+.heat-map-cell.good { background: #dcfce7; color: #166534; }
+.heat-map-cell.warn { background: #fef3c7; color: #92400e; }
+.heat-map-cell.low { background: #fee2e2; color: #991b1b; }
+.heat-map-cell.na { background: #f1f5f9; color: #64748b; }
+</style>
+{% endblock %}
+{% block content %}
+<div class="analytics-hero d-flex flex-wrap justify-content-between align-items-center gap-3">
+    <div class="d-flex align-items-center gap-3">
+        <img src="{% static 'images/ljiet-logo.png' %}" alt="LJIET" class="admin-logo">
+        <div>
+            <h1 class="page-title mb-1">Attendance Analytics</h1>
+            <p class="text-white-50 mb-0">{{ department.name }} — Phase {{ phase }}{% if selected_week != 'all' and selected_week %} — Week {{ selected_week|add:1 }}{% else %} — All weeks{% endif %}</p>
+        </div>
+    </div>
+    <form method="get" class="d-flex flex-wrap align-items-center gap-3">
+        <div class="d-flex align-items-center gap-2">
+            <label class="text-white-50 small mb-0">Phase</label>
+            <select name="phase" class="form-select form-select-sm" style="max-width: 100px;" onchange="this.form.submit()">
+                {% for p in phases %}
+                <option value="{{ p }}" {% if phase == p %}selected{% endif %}>{{ p }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="d-flex align-items-center gap-2">
+            <label class="text-white-50 small mb-0">Week</label>
+            <select name="week" class="form-select form-select-sm" style="max-width: 120px;" onchange="this.form.submit()">
+                <option value="all" {% if selected_week == 'all' or not selected_week %}selected{% endif %}>All</option>
+                {% for idx in week_range %}
+                <option value="{{ idx }}" {% if selected_week == idx|stringformat:"d" %}selected{% endif %}>Week {{ idx|add:1 }}</option>
+                {% endfor %}
+            </select>
+        </div>
+    </form>
+</div>
+
+<div class="row g-4 mb-4">
+    <div class="col-lg-8">
+        <div class="analytics-card">
+            <div class="card-header">Attendance over time (weekly)</div>
+            <div class="card-body">
+                <canvas id="chartWeekly" height="120"></canvas>
+            </div>
+        </div>
+    </div>
+    <div class="col-lg-4">
+        <div class="analytics-card">
+            <div class="card-header">Subject-wise attendance</div>
+            <div class="card-body">
+                <canvas id="chartSubject" height="180"></canvas>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row g-4 mb-4">
+    <div class="col-lg-6">
+        <div class="analytics-card">
+            <div class="card-header">Batch-wise attendance</div>
+            <div class="card-body">
+                <canvas id="chartBatch" height="180"></canvas>
+            </div>
+        </div>
+    </div>
+    <div class="col-lg-6">
+        <div class="analytics-card">
+            <div class="card-header d-flex flex-wrap align-items-center justify-content-between gap-2">
+                <span>At-risk students (below 75%)</span>
+                {% if at_risk_students %}
+                <a href="{% url 'core:admin_analytics_at_risk_excel' %}?phase={{ phase }}&week={{ selected_week }}" class="btn btn-sm btn-light">
+                    <i class="fas fa-file-excel me-1"></i> Download Excel
+                </a>
+                {% endif %}
+            </div>
+            <div class="card-body p-0">
+                {% if at_risk_students %}
+                <div class="table-responsive">
+                    <table class="table at-risk-table table-hover mb-0">
+                        <thead>
+                            <tr><th>Roll No</th><th>Name</th><th>Batch</th><th>Held</th><th>Attended</th><th>%</th></tr>
+                        </thead>
+                        <tbody>
+                            {% for r in at_risk_students %}
+                            <tr>
+                                <td class="fw-medium">{{ r.student.roll_no }}</td>
+                                <td>{{ r.student.name }}</td>
+                                <td>{{ r.student.batch.name }}</td>
+                                <td>{{ r.held }}</td>
+                                <td>{{ r.attended }}</td>
+                                <td class="{% if r.pct < 50 %}pct-low{% else %}pct-warn{% endif %}">{{ r.pct }}%</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% else %}
+                <p class="text-center text-success py-4 mb-0"><i class="fas fa-check-circle me-2"></i>No at-risk students. All above 75%.</p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="analytics-card">
+    <div class="card-header">Heat map — Low attendance days & time slots</div>
+    <div class="card-body">
+        <p class="small text-secondary mb-3">Darker red = lower attendance. Green = good (&ge;75%).</p>
+        {% if heat_map %}
+        <div class="table-responsive">
+            <table class="table table-bordered mb-0">
+                <thead>
+                    <tr>
+                        <th style="min-width: 100px;">Day</th>
+                        {% for slot in heat_map_slots %}
+                        <th class="heat-map-cell" style="font-size: 0.75rem;">{{ slot }}</th>
+                        {% endfor %}
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for row in heat_map %}
+                    <tr>
+                        <td class="fw-medium">{{ row.day }}</td>
+                        {% for s in row.slots %}
+                        <td class="heat-map-cell {% if s.pct == None %}na{% elif s.pct >= 75 %}good{% elif s.pct >= 50 %}warn{% else %}low{% endif %}">
+                            {% if s.pct != None %}{{ s.pct }}%{% else %}—{% endif %}
+                        </td>
+                        {% endfor %}
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <p class="text-center text-secondary py-4 mb-0">No heat map data. Set term phases and ensure attendance is marked.</p>
+        {% endif %}
+    </div>
+</div>
+
+<script>
+(function() {
+    var weeklyData = {{ weekly_trend_json|safe }};
+    var subjectData = {{ subject_wise_json|safe }};
+    var batchData = {{ batch_wise_json|safe }};
+
+    if (weeklyData && weeklyData.length) {
+        new Chart(document.getElementById('chartWeekly'), {
+            type: 'line',
+            data: {
+                labels: weeklyData.map(function(w) { return 'Week ' + w.week; }),
+                datasets: [{
+                    label: 'Attendance %',
+                    data: weeklyData.map(function(w) { return w.pct; }),
+                    borderColor: '#3b82f6',
+                    backgroundColor: 'rgba(59, 130, 246, 0.1)',
+                    fill: true,
+                    tension: 0.3
+                }]
+            },
+            options: {
+                responsive: true,
+                plugins: { legend: { display: false } },
+                scales: {
+                    y: { min: 0, max: 100 }
+                }
+            }
+        });
+    }
+    if (subjectData && subjectData.length) {
+        new Chart(document.getElementById('chartSubject'), {
+            type: 'doughnut',
+            data: {
+                labels: subjectData.map(function(s) { return s.name; }),
+                datasets: [{
+                    data: subjectData.map(function(s) { return s.pct; }),
+                    backgroundColor: ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899']
+                }]
+            },
+            options: {
+                responsive: true,
+                plugins: { legend: { position: 'right' } }
+            }
+        });
+    }
+    if (batchData && batchData.length) {
+        new Chart(document.getElementById('chartBatch'), {
+            type: 'bar',
+            data: {
+                labels: batchData.map(function(b) { return b.name; }),
+                datasets: [{
+                    label: 'Attendance %',
+                    data: batchData.map(function(b) { return b.pct; }),
+                    backgroundColor: batchData.map(function(b) {
+                        return b.pct >= 75 ? '#10b981' : (b.pct >= 50 ? '#f59e0b' : '#ef4444');
+                    })
+                }]
+            },
+            options: {
+                responsive: true,
+                plugins: { legend: { display: false } },
+                scales: {
+                    y: { min: 0, max: 100 }
+                }
+            }
+        });
+    }
+})();
+</script>
+{% endblock %}

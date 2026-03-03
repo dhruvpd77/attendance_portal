@@ -1,0 +1,38 @@
+{% extends 'core/admin/base_admin.html' %}
+{% load static %}
+{% block title %}{% if form_type == 'add' %}Add Faculty{% else %}Edit Faculty{% endif %} - LJIET_Attendance{% endblock %}
+{% block content %}
+<div class="admin-hero">
+    <div class="d-flex align-items-center gap-3">
+        <img src="{% static 'images/ljiet-logo.png' %}" alt="LJIET" class="admin-logo">
+        <div>
+            <h1 class="page-title mb-1">{% if form_type == 'add' %}Add Faculty{% else %}Edit Faculty{% endif %}</h1>
+            <p class="page-subtitle">Add or update faculty details for the department.</p>
+        </div>
+    </div>
+    <a href="{% url 'core:faculty_list' %}" class="btn btn-outline-light btn-sm"><i class="fas fa-arrow-left me-1"></i> Back</a>
+</div>
+<div class="card admin-card">
+    <div class="card-body p-4">
+        <form method="post">
+            {% csrf_token %}
+            <div class="mb-3">
+                <label class="form-label fw-semibold">Full name</label>
+                <input type="text" name="full_name" required value="{% if obj %}{{ obj.full_name }}{% endif %}" class="form-control form-control-app" placeholder="Enter full name">
+            </div>
+            <div class="mb-3">
+                <label class="form-label fw-semibold">Short name</label>
+                <input type="text" name="short_name" required value="{% if obj %}{{ obj.short_name }}{% endif %}" class="form-control form-control-app" placeholder="e.g. UMS, PSK">
+            </div>
+            <div class="mb-4">
+                <label class="form-label fw-semibold">Email (optional)</label>
+                <input type="email" name="email" value="{% if obj %}{{ obj.email }}{% endif %}" class="form-control form-control-app" placeholder="faculty@example.com">
+            </div>
+            <div class="d-flex flex-wrap gap-2">
+                <button type="submit" class="btn btn-primary-app"><i class="fas fa-save me-2"></i>Save</button>
+                <a href="{% url 'core:faculty_list' %}" class="btn btn-outline-secondary">Cancel</a>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}

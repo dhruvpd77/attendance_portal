@@ -1,0 +1,178 @@
+{% extends 'core/admin/base_admin.html' %}
+{% load static %}
+{% block title %}Term Phases - LJIET_Attendance{% endblock %}
+{% block content %}
+<div class="admin-hero">
+    <div class="d-flex align-items-center gap-3">
+        <img src="{% static 'images/ljiet-logo.png' %}" alt="LJIET" class="admin-logo">
+        <div>
+            <h1 class="page-title mb-1">Term phases (T1–T4)</h1>
+            <p class="page-subtitle">Set date ranges and holidays for each term. Holiday dates are excluded from lectures, attendance, and all reports.</p>
+        </div>
+    </div>
+    <a href="{% url 'core:admin_dashboard' %}" class="btn btn-outline-light btn-sm"><i class="fas fa-arrow-left me-1"></i> Dashboard</a>
+</div>
+<form method="post" class="card admin-card">
+    <div class="card-body p-4">
+        {% csrf_token %}
+        <div class="row g-4">
+            <div class="col-md-6">
+                <div class="border rounded-3 p-4 h-100">
+                    <h3 class="h6 fw-bold mb-3">T1</h3>
+                    <div class="row g-2 mb-3">
+                        <div class="col-6"><label class="form-label small text-secondary mb-0">Start</label><input type="date" name="t1_start" value="{% if term_phase.t1_start %}{{ term_phase.t1_start|date:'Y-m-d' }}{% endif %}" class="form-control form-control-app form-control-sm"></div>
+                        <div class="col-6"><label class="form-label small text-secondary mb-0">End</label><input type="date" name="t1_end" value="{% if term_phase.t1_end %}{{ term_phase.t1_end|date:'Y-m-d' }}{% endif %}" class="form-control form-control-app form-control-sm"></div>
+                    </div>
+                    <label class="form-label small text-secondary mb-1">Holidays</label>
+                    <div class="d-flex flex-wrap gap-2 align-items-end mb-2">
+                        <select id="t1_holiday_picker" class="form-select form-select-app form-select-sm" style="max-width: 160px;">
+                            <option value="">Select date</option>
+                        </select>
+                        <button type="button" class="btn btn-sm btn-outline-app" onclick="addHoliday(1)"><i class="fas fa-plus me-1"></i> Add</button>
+                    </div>
+                    <div id="t1_holiday_list" class="d-flex flex-wrap gap-1 mb-2 small"></div>
+                    <textarea name="t1_holidays" id="t1_holidays" class="d-none" aria-hidden="true">{{ t1_holidays|default:'' }}</textarea>
+                </div>
+            </div>
+            <div class="col-md-6">
+                <div class="border rounded-3 p-4 h-100">
+                    <h3 class="h6 fw-bold mb-3">T2</h3>
+                    <div class="row g-2 mb-3">
+                        <div class="col-6"><label class="form-label small text-secondary mb-0">Start</label><input type="date" name="t2_start" value="{% if term_phase.t2_start %}{{ term_phase.t2_start|date:'Y-m-d' }}{% endif %}" class="form-control form-control-app form-control-sm"></div>
+                        <div class="col-6"><label class="form-label small text-secondary mb-0">End</label><input type="date" name="t2_end" value="{% if term_phase.t2_end %}{{ term_phase.t2_end|date:'Y-m-d' }}{% endif %}" class="form-control form-control-app form-control-sm"></div>
+                    </div>
+                    <label class="form-label small text-secondary mb-1">Holidays</label>
+                    <div class="d-flex flex-wrap gap-2 align-items-end mb-2">
+                        <select id="t2_holiday_picker" class="form-select form-select-app form-select-sm" style="max-width: 160px;">
+                            <option value="">Select date</option>
+                        </select>
+                        <button type="button" class="btn btn-sm btn-outline-app" onclick="addHoliday(2)"><i class="fas fa-plus me-1"></i> Add</button>
+                    </div>
+                    <div id="t2_holiday_list" class="d-flex flex-wrap gap-1 mb-2 small"></div>
+                    <textarea name="t2_holidays" id="t2_holidays" class="d-none" aria-hidden="true">{{ t2_holidays|default:'' }}</textarea>
+                </div>
+            </div>
+            <div class="col-md-6">
+                <div class="border rounded-3 p-4 h-100">
+                    <h3 class="h6 fw-bold mb-3">T3</h3>
+                    <div class="row g-2 mb-3">
+                        <div class="col-6"><label class="form-label small text-secondary mb-0">Start</label><input type="date" name="t3_start" value="{% if term_phase.t3_start %}{{ term_phase.t3_start|date:'Y-m-d' }}{% endif %}" class="form-control form-control-app form-control-sm"></div>
+                        <div class="col-6"><label class="form-label small text-secondary mb-0">End</label><input type="date" name="t3_end" value="{% if term_phase.t3_end %}{{ term_phase.t3_end|date:'Y-m-d' }}{% endif %}" class="form-control form-control-app form-control-sm"></div>
+                    </div>
+                    <label class="form-label small text-secondary mb-1">Holidays</label>
+                    <div class="d-flex flex-wrap gap-2 align-items-end mb-2">
+                        <select id="t3_holiday_picker" class="form-select form-select-app form-select-sm" style="max-width: 160px;">
+                            <option value="">Select date</option>
+                        </select>
+                        <button type="button" class="btn btn-sm btn-outline-app" onclick="addHoliday(3)"><i class="fas fa-plus me-1"></i> Add</button>
+                    </div>
+                    <div id="t3_holiday_list" class="d-flex flex-wrap gap-1 mb-2 small"></div>
+                    <textarea name="t3_holidays" id="t3_holidays" class="d-none" aria-hidden="true">{{ t3_holidays|default:'' }}</textarea>
+                </div>
+            </div>
+            <div class="col-md-6">
+                <div class="border rounded-3 p-4 h-100">
+                    <h3 class="h6 fw-bold mb-3">T4</h3>
+                    <div class="row g-2 mb-3">
+                        <div class="col-6"><label class="form-label small text-secondary mb-0">Start</label><input type="date" name="t4_start" value="{% if term_phase.t4_start %}{{ term_phase.t4_start|date:'Y-m-d' }}{% endif %}" class="form-control form-control-app form-control-sm"></div>
+                        <div class="col-6"><label class="form-label small text-secondary mb-0">End</label><input type="date" name="t4_end" value="{% if term_phase.t4_end %}{{ term_phase.t4_end|date:'Y-m-d' }}{% endif %}" class="form-control form-control-app form-control-sm"></div>
+                    </div>
+                    <label class="form-label small text-secondary mb-1">Holidays</label>
+                    <div class="d-flex flex-wrap gap-2 align-items-end mb-2">
+                        <select id="t4_holiday_picker" class="form-select form-select-app form-select-sm" style="max-width: 160px;">
+                            <option value="">Select date</option>
+                        </select>
+                        <button type="button" class="btn btn-sm btn-outline-app" onclick="addHoliday(4)"><i class="fas fa-plus me-1"></i> Add</button>
+                    </div>
+                    <div id="t4_holiday_list" class="d-flex flex-wrap gap-1 mb-2 small"></div>
+                    <textarea name="t4_holidays" id="t4_holidays" class="d-none" aria-hidden="true">{{ t4_holidays|default:'' }}</textarea>
+                </div>
+            </div>
+        </div>
+        <p class="small text-secondary mt-2 mb-0">Select dates from the dropdown (between phase start and end) and click Add. Holiday dates are excluded from lecture counts, attendance, and all Excel reports.</p>
+        <div class="mt-4 d-flex gap-2">
+            <button type="submit" class="btn btn-primary-app">Save</button>
+            <a href="{% url 'core:admin_dashboard' %}" class="btn btn-outline-app"><i class="fas fa-arrow-left me-1"></i> Dashboard</a>
+        </div>
+    </div>
+</form>
+<script>
+(function() {
+    function datesBetween(startStr, endStr) {
+        if (!startStr || !endStr) return [];
+        var start = new Date(startStr);
+        var end = new Date(endStr);
+        if (end < start) return [];
+        var out = [], d = new Date(start);
+        while (d <= end) {
+            out.push(d.toISOString().slice(0, 10));
+            d.setDate(d.getDate() + 1);
+        }
+        return out;
+    }
+    function getLines(ta) {
+        var v = (ta && ta.value || '').trim();
+        return v ? v.split(/\r?\n/).map(function(s) { return s.trim(); }).filter(Boolean) : [];
+    }
+    function setLines(ta, lines) {
+        ta.value = lines.join('\n');
+    }
+    function refreshList(phaseNum) {
+        var ta = document.getElementById('t' + phaseNum + '_holidays');
+        var listEl = document.getElementById('t' + phaseNum + '_holiday_list');
+        var lines = getLines(ta);
+        listEl.innerHTML = '';
+        lines.forEach(function(ymd) {
+            var span = document.createElement('span');
+            span.className = 'badge bg-secondary d-inline-flex align-items-center gap-1';
+            span.innerHTML = ymd + ' <button type="button" class="btn btn-link p-0 border-0 bg-transparent text-white" style="font-size:0.75rem;line-height:1" aria-label="Remove" onclick="removeHoliday(' + phaseNum + ',\'' + ymd + '\')">&times;</button>';
+            listEl.appendChild(span);
+        });
+        refreshPicker(phaseNum);
+    }
+    function refreshPicker(phaseNum) {
+        var start = document.querySelector('input[name="t' + phaseNum + '_start"]');
+        var end = document.querySelector('input[name="t' + phaseNum + '_end"]');
+        var picker = document.getElementById('t' + phaseNum + '_holiday_picker');
+        var ta = document.getElementById('t' + phaseNum + '_holidays');
+        var existing = getLines(ta);
+        var dates = datesBetween(start && start.value, end && end.value);
+        picker.innerHTML = '<option value="">Select date</option>';
+        dates.forEach(function(ymd) {
+            if (existing.indexOf(ymd) === -1) {
+                var opt = document.createElement('option');
+                opt.value = ymd;
+                opt.textContent = ymd;
+                picker.appendChild(opt);
+            }
+        });
+    }
+    window.addHoliday = function(phaseNum) {
+        var picker = document.getElementById('t' + phaseNum + '_holiday_picker');
+        var ta = document.getElementById('t' + phaseNum + '_holidays');
+        var val = picker && picker.value;
+        if (!val) return;
+        var lines = getLines(ta);
+        if (lines.indexOf(val) !== -1) return;
+        lines.push(val);
+        lines.sort();
+        setLines(ta, lines);
+        refreshList(phaseNum);
+        picker.value = '';
+    };
+    window.removeHoliday = function(phaseNum, ymd) {
+        var ta = document.getElementById('t' + phaseNum + '_holidays');
+        var lines = getLines(ta).filter(function(d) { return d !== ymd; });
+        setLines(ta, lines);
+        refreshList(phaseNum);
+    };
+    [1,2,3,4].forEach(function(i) {
+        refreshList(i);
+        var start = document.querySelector('input[name="t' + i + '_start"]');
+        var end = document.querySelector('input[name="t' + i + '_end"]');
+        if (start) start.addEventListener('change', function() { refreshPicker(i); });
+        if (end) end.addEventListener('change', function() { refreshPicker(i); });
+    });
+})();
+</script>
+{% endblock %}

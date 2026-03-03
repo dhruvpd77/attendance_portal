@@ -1,0 +1,12 @@
+{% extends 'base.html' %}
+{% load static %}
+{% block title %}Page Not Found - LJIET_Attendance{% endblock %}
+{% block content %}
+<div class="d-flex flex-column align-items-center justify-content-center min-vh-75 py-5">
+    <img src="{% static 'images/ljiet-logo.png' %}" alt="LJIET" class="mb-4" style="height: 64px; opacity: 0.9;">
+    <h1 class="display-4 fw-bold text-dark mb-2">404</h1>
+    <p class="lead text-muted mb-4">Page not found</p>
+    <p class="text-secondary mb-4">The page you're looking for doesn't exist or has been moved.</p>
+    <a href="{% url 'accounts:login' %}" class="btn btn-primary-app btn-lg"><i class="fas fa-home me-2"></i>Go to Login</a>
+</div>
+{% endblock %}

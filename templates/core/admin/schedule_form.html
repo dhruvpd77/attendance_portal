@@ -1,0 +1,64 @@
+{% extends 'core/admin/base_admin.html' %}
+{% load static %}
+{% block title %}{% if slot %}Edit Schedule Slot{% else %}Add Schedule Slot{% endif %} - LJIET_Attendance{% endblock %}
+{% block content %}
+<div class="admin-hero">
+    <div class="d-flex align-items-center gap-3">
+        <img src="{% static 'images/ljiet-logo.png' %}" alt="LJIET" class="admin-logo">
+        <div>
+            <h1 class="page-title mb-1">{% if slot %}Edit schedule slot{% else %}Add schedule slot{% endif %}</h1>
+            <p class="page-subtitle">Assign faculty, subject, batch, day and time for a lecture slot.</p>
+        </div>
+    </div>
+    <a href="{% url 'core:schedule_list' %}" class="btn btn-outline-light btn-sm"><i class="fas fa-arrow-left me-1"></i> Back</a>
+</div>
+<div class="card admin-card">
+    <div class="card-body p-4">
+        <form method="post">
+            {% csrf_token %}
+            <div class="row g-3">
+                <div class="col-md-6">
+                    <label class="form-label fw-semibold">Faculty</label>
+                    <select name="faculty" required class="form-select form-select-app">
+                        {% for f in faculties %}
+                        <option value="{{ f.id }}" {% if slot and slot.faculty_id == f.id %}selected{% endif %}>{{ f.full_name }} ({{ f.short_name }})</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label fw-semibold">Subject</label>
+                    <select name="subject" required class="form-select form-select-app">
+                        {% for s in subjects %}
+                        <option value="{{ s.id }}" {% if slot and slot.subject_id == s.id %}selected{% endif %}>{{ s.name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label fw-semibold">Batch</label>
+                    <select name="batch" required class="form-select form-select-app">
+                        {% for b in batches %}
+                        <option value="{{ b.id }}" {% if slot and slot.batch_id == b.id %}selected{% endif %}>{{ b.name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label fw-semibold">Day</label>
+                    <select name="day" required class="form-select form-select-app">
+                        {% for d in days %}
+                        <option value="{{ d }}" {% if slot and slot.day == d %}selected{% endif %}>{{ d }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-12">
+                    <label class="form-label fw-semibold">Time slot</label>
+                    <input type="text" name="time_slot" required placeholder="e.g. 08:45-09:45 or Lec 1" value="{% if slot %}{{ slot.time_slot }}{% endif %}" class="form-control form-control-app">
+                </div>
+            </div>
+            <div class="d-flex flex-wrap gap-2 mt-4">
+                <button type="submit" class="btn btn-primary-app"><i class="fas fa-save me-2"></i>{% if slot %}Update{% else %}Add{% endif %}</button>
+                <a href="{% url 'core:schedule_list' %}" class="btn btn-outline-secondary">Cancel</a>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}

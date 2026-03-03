@@ -1,0 +1,116 @@
+{% extends 'core/admin/base_admin.html' %}
+{% load static %}
+{% block title %}Attendance Sheet - LJIET_Attendance{% endblock %}
+{% block content %}
+<div class="d-flex flex-wrap justify-content-between align-items-center mb-4 gap-3">
+    <div>
+        <h1 class="page-title mb-1">Attendance Sheet Manager</h1>
+        <p class="page-subtitle mb-0">Download attendance sheet Excel by batch — daily, weekly, or full phase.</p>
+    </div>
+    <a href="{% url 'core:admin_dashboard' %}" class="btn btn-outline-app"><i class="fas fa-arrow-left me-1"></i> Dashboard</a>
+</div>
+<div class="card card-app mb-4" style="max-width: 480px;">
+    <div class="card-body p-4">
+        <form method="get" action="{% url 'core:attendance_sheet_excel' %}" id="sheetForm">
+            <div class="mb-3">
+                <label class="form-label fw-semibold text-secondary">Batch</label>
+                <select name="batch" required class="form-select form-select-app">
+                    <option value="">Select batch</option>
+                    <option value="all">All batches</option>
+                    {% for b in batches %}
+                    <option value="{{ b.id }}">{{ b.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="mb-3">
+                <label class="form-label fw-semibold text-secondary">Download type</label>
+                <select name="period_type" id="period_type" class="form-select form-select-app">
+                    <option value="daily">Daily (single date)</option>
+                    <option value="weekly">Weekly (one week)</option>
+                    <option value="phase">Phase-wise (full term)</option>
+                </select>
+            </div>
+            <div class="mb-3" id="dailyGroup">
+                <label class="form-label fw-semibold text-secondary">Date</label>
+                <select name="date" class="form-select form-select-app">
+                    <option value="">Select date</option>
+                    {% for d in available_dates %}
+                    <option value="{{ d|date:'Y-m-d' }}">{{ d|date:"D, d M Y" }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="mb-3" id="phaseGroup">
+                <label class="form-label fw-semibold text-secondary">Phase</label>
+                <select name="phase" id="phaseSelect" class="form-select form-select-app">
+                    <option value="">Select phase</option>
+                    {% for p in phases %}
+                    <option value="{{ p }}">{{ p }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="mb-4" id="weekGroup" style="display:none;">
+                <label class="form-label fw-semibold text-secondary">Week</label>
+                <select name="week" id="weekSelect" class="form-select form-select-app">
+                    <option value="">Select week</option>
+                </select>
+            </div>
+            <button type="submit" class="btn btn-primary-app w-100 w-md-auto">
+                <i class="fas fa-download me-1"></i> Download Excel
+            </button>
+        </form>
+    </div>
+</div>
+<script id="week-map-data" type="application/json">{{ week_map_json|safe }}</script>
+<script>
+(function() {
+    var periodType = document.getElementById('period_type');
+    var dailyGroup = document.getElementById('dailyGroup');
+    var phaseGroup = document.getElementById('phaseGroup');
+    var weekGroup = document.getElementById('weekGroup');
+    var phaseSelect = document.getElementById('phaseSelect');
+    var weekSelect = document.getElementById('weekSelect');
+    var wm = {};
+    try {
+        var el = document.getElementById('week-map-data');
+        if (el) wm = JSON.parse(el.textContent || '{}');
+    } catch (e) {}
+    function updateVisibility() {
+        var v = periodType.value;
+        dailyGroup.style.display = v === 'daily' ? 'block' : 'none';
+        phaseGroup.style.display = (v === 'weekly' || v === 'phase') ? 'block' : 'none';
+        weekGroup.style.display = v === 'weekly' ? 'block' : 'none';
+        if (v === 'daily') {
+            phaseSelect.removeAttribute('required');
+            weekSelect.removeAttribute('required');
+            dailyGroup.querySelector('select').setAttribute('required', 'required');
+        } else {
+            dailyGroup.querySelector('select').removeAttribute('required');
+            phaseSelect.setAttribute('required', 'required');
+            if (v === 'weekly') {
+                weekSelect.setAttribute('required', 'required');
+                fillWeeks();
+            } else {
+                weekSelect.removeAttribute('required');
+            }
+        }
+    }
+    function fillWeeks() {
+        var p = phaseSelect.value;
+        weekSelect.innerHTML = '<option value="">Select week</option>';
+        if (!wm[p]) return;
+        for (var i = 0; i < wm[p].length; i++) {
+            var opt = document.createElement('option');
+            opt.value = i;
+            var weekDates = wm[p][i];
+            var start = weekDates[0] || '';
+            var end = weekDates[weekDates.length - 1] || '';
+            opt.textContent = 'Week ' + (i + 1) + (start && end ? ' (' + start + ' - ' + end + ')' : '');
+            weekSelect.appendChild(opt);
+        }
+    }
+    periodType.addEventListener('change', updateVisibility);
+    phaseSelect.addEventListener('change', fillWeeks);
+    updateVisibility();
+})();
+</script>
+{% endblock %}

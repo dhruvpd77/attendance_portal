@@ -1,0 +1,64 @@
+{% extends 'core/admin/base_admin.html' %}
+{% load static %}
+{% block title %}Compile Attendance - LJIET_Attendance{% endblock %}
+{% block content %}
+<div class="d-flex flex-wrap justify-content-between align-items-center mb-4 gap-3">
+    <div>
+        <h1 class="page-title mb-1">Compile Attendance</h1>
+        <p class="page-subtitle mb-0">Download one Excel sheet with all students (all batches): Week 1, Week 2 cumulative, … and compile columns (Total Held, Attended, %).</p>
+    </div>
+    <a href="{% url 'core:admin_dashboard' %}" class="btn btn-outline-app"><i class="fas fa-arrow-left me-1"></i> Dashboard</a>
+</div>
+<div class="card card-app mb-4" style="max-width: 480px;">
+    <div class="card-body p-4">
+        <form method="get" action="{% url 'core:compile_attendance_excel' %}">
+            <div class="mb-3">
+                <label class="form-label fw-semibold text-secondary">Phase</label>
+                <select name="phase" id="phaseSelect" required class="form-select form-select-app" onchange="fillWeeks();">
+                    <option value="">Select phase</option>
+                    {% for p in phases %}
+                    <option value="{{ p }}">{{ p }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="mb-4">
+                <label class="form-label fw-semibold text-secondary">Up to week</label>
+                <select name="week" id="weekSelect" required class="form-select form-select-app">
+                    <option value="">Select week</option>
+                </select>
+            </div>
+            <button type="submit" class="btn btn-primary-app w-100 w-md-auto">
+                <i class="fas fa-download me-1"></i> Download Excel
+            </button>
+        </form>
+    </div>
+</div>
+<p class="text-secondary small" style="max-width: 560px;">
+    The Excel file will have one sheet: all students from all batches. Columns: <strong>Roll No</strong>, <strong>Name</strong>, <strong>Batch</strong>, then for each week: <strong>Held</strong>, <strong>Attended</strong>, <strong>%</strong>. At the end: <strong>Total Held</strong>, <strong>Total Attended</strong>, <strong>Total %</strong>.
+</p>
+<script id="week-map-data" type="application/json">{{ week_map_json|safe }}</script>
+<script>
+(function() {
+    var phaseSelect = document.getElementById('phaseSelect');
+    var weekSelect = document.getElementById('weekSelect');
+    var wm = {};
+    try {
+        var el = document.getElementById('week-map-data');
+        if (el) wm = JSON.parse(el.textContent || '{}');
+    } catch (e) {}
+    function fillWeeks() {
+        var p = phaseSelect.value;
+        weekSelect.innerHTML = '<option value="">Select week</option>';
+        if (!wm[p]) return;
+        for (var i = 0; i < wm[p].length; i++) {
+            var opt = document.createElement('option');
+            opt.value = i;
+            opt.textContent = 'Week ' + (i + 1);
+            weekSelect.appendChild(opt);
+        }
+    }
+    phaseSelect.addEventListener('change', fillWeeks);
+    fillWeeks();
+})();
+</script>
+{% endblock %}

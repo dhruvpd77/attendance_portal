@@ -1,0 +1,77 @@
+{% extends 'core/admin/base_admin.html' %}
+{% load static %}
+{% block title %}Students - LJIET_Attendance{% endblock %}
+{% block content %}
+<div class="admin-hero">
+    <div class="d-flex align-items-center gap-3">
+        <img src="{% static 'images/ljiet-logo.png' %}" alt="LJIET" class="admin-logo">
+        <div>
+            <h1 class="page-title mb-1">Students</h1>
+            <p class="page-subtitle">{% if department %}{{ department.name }}{% else %}Select a department from Dashboard{% endif %}</p>
+        </div>
+    </div>
+    <div class="d-flex gap-2 flex-wrap align-items-center">
+        <a href="{% url 'core:admin_dashboard' %}" class="btn btn-outline-light btn-sm"><i class="fas fa-arrow-left me-1"></i> Dashboard</a>
+        <form method="get" class="d-flex align-items-center gap-2 flex-wrap">
+            <input type="search" name="q" value="{{ search_q }}" placeholder="Search roll, name, enrollment…" class="form-control form-control-sm" style="min-width:180px;">
+            <select name="batch" onchange="this.form.submit()" class="form-select form-select-sm" style="min-width:140px;">
+                <option value="">All batches</option>
+                {% for b in batches %}
+                <option value="{{ b.id }}" {% if selected_batch_id == b.id|stringformat:"s" %}selected{% endif %}>{{ b.name }}</option>
+                {% endfor %}
+            </select>
+            <button type="submit" class="btn btn-outline-light btn-sm"><i class="fas fa-search"></i></button>
+        </form>
+        <a href="{% url 'core:generate_credentials_choice' %}" class="btn btn-success btn-sm"><i class="fas fa-key me-1"></i> Generate credentials</a>
+        <a href="{% url 'core:student_upload' %}" class="btn btn-primary-app btn-sm"><i class="fas fa-upload me-1"></i> Upload CSV</a>
+    </div>
+</div>
+<div class="card admin-card overflow-hidden">
+    {% if page_obj.paginator.count %}
+    <div class="card-body py-2 border-bottom small text-muted">
+        {{ page_obj.paginator.count }} student{{ page_obj.paginator.count|pluralize }}{% if search_q %} matching "{{ search_q }}"{% endif %}
+    </div>
+    {% endif %}
+    <div class="table-responsive">
+        <table class="table table-hover mb-0">
+            <thead>
+                <tr>
+                    <th>Roll No</th>
+                    <th>Name</th>
+                    <th>Enrollment No</th>
+                    <th>Batch</th>
+                    <th>Mentor</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for s in students %}
+                <tr>
+                    <td class="fw-medium">{{ s.roll_no }}</td>
+                    <td>{{ s.name }}</td>
+                    <td class="text-secondary">{{ s.enrollment_no|default:"—" }}</td>
+                    <td class="text-secondary">{{ s.batch.name }}</td>
+                    <td class="text-secondary">{{ s.mentor.full_name|default:"" }}{% if s.mentor %} ({{ s.mentor.short_name }}){% else %}—{% endif %}</td>
+                </tr>
+                {% empty %}
+                <tr><td colspan="5" class="text-center text-secondary py-5">No students. Upload CSV, adjust search, or select another batch.</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% if page_obj.has_other_pages %}
+    <div class="card-footer d-flex justify-content-between align-items-center flex-wrap gap-2">
+        <span class="small text-muted">Page {{ page_obj.number }} of {{ page_obj.paginator.num_pages }}</span>
+        <nav>
+            <ul class="pagination pagination-sm mb-0">
+                {% if page_obj.has_previous %}
+                <li class="page-item"><a class="page-link" href="?page={{ page_obj.previous_page_number }}{% if search_q %}&q={{ search_q }}{% endif %}{% if selected_batch_id %}&batch={{ selected_batch_id }}{% endif %}">Previous</a></li>
+                {% endif %}
+                {% if page_obj.has_next %}
+                <li class="page-item"><a class="page-link" href="?page={{ page_obj.next_page_number }}{% if search_q %}&q={{ search_q }}{% endif %}{% if selected_batch_id %}&batch={{ selected_batch_id }}{% endif %}">Next</a></li>
+                {% endif %}
+            </ul>
+        </nav>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

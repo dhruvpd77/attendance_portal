@@ -1,0 +1,58 @@
+{% extends 'core/admin/base_admin.html' %}
+{% load static %}
+{% block title %}Schedule - LJIET_Attendance{% endblock %}
+{% block content %}
+<div class="admin-hero">
+    <div class="d-flex align-items-center gap-3">
+        <img src="{% static 'images/ljiet-logo.png' %}" alt="LJIET" class="admin-logo">
+        <div>
+            <h1 class="page-title mb-1">Schedule</h1>
+            <p class="page-subtitle">{% if department %}{{ department.name }}{% else %}Select a department from Dashboard{% endif %} — Add, edit, delete entries</p>
+        </div>
+    </div>
+    <div class="d-flex gap-2 flex-wrap">
+        <a href="{% url 'core:admin_dashboard' %}" class="btn btn-outline-light btn-sm"><i class="fas fa-arrow-left me-1"></i> Dashboard</a>
+        <a href="{% url 'core:upload_timetable' %}" class="btn btn-outline-light btn-sm"><i class="fas fa-file-upload me-1"></i> Upload Excel</a>
+        <a href="{% url 'core:schedule_add' %}" class="btn btn-primary-app btn-sm"><i class="fas fa-plus me-1"></i> Add slot</a>
+        {% if slots %}
+        <form method="post" action="{% url 'core:schedule_clear_all' %}" class="d-inline" onsubmit="return confirm('Delete ALL schedule entries for this department? This cannot be undone.');">
+            {% csrf_token %}
+            <button type="submit" class="btn btn-danger btn-sm">Delete all</button>
+        </form>
+        {% endif %}
+    </div>
+</div>
+<div class="card admin-card overflow-hidden">
+    <div class="table-responsive">
+        <table class="table table-hover mb-0">
+            <thead>
+                <tr>
+                    <th>Batch</th>
+                    <th>Day</th>
+                    <th>Time</th>
+                    <th>Subject</th>
+                    <th>Faculty</th>
+                    <th class="text-end">Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for s in slots %}
+                <tr>
+                    <td class="fw-medium">{{ s.batch.name }}</td>
+                    <td class="text-secondary">{{ s.day }}</td>
+                    <td class="text-secondary">{{ s.time_slot }}</td>
+                    <td>{{ s.subject.name }}</td>
+                    <td class="text-secondary">{{ s.faculty.short_name }}</td>
+                    <td class="text-end">
+                        <a href="{% url 'core:schedule_edit' s.pk %}" class="btn btn-sm btn-outline-primary btn-edit-sm me-1">Edit</a>
+                        <a href="{% url 'core:schedule_delete' s.pk %}" class="btn btn-sm btn-outline-danger btn-delete-sm" onclick="return confirm('Remove this slot?');">Delete</a>
+                    </td>
+                </tr>
+                {% empty %}
+                <tr><td colspan="6" class="text-center text-secondary py-5">No schedule slots. Add slots to define lectures.</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}

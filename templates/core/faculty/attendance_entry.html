@@ -1,0 +1,238 @@
+{% extends 'base.html' %}
+{% load static %}
+{% block title %}Mark Attendance - LJIET_Attendance{% endblock %}
+{% block content %}
+<style>
+.faculty-att-hero { background: linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #334155 100%); border-radius: 16px; padding: 1.25rem 1.5rem; margin-bottom: 1.5rem; color: #fff; box-shadow: 0 10px 40px rgba(15, 23, 42, 0.25); }
+.faculty-att-hero .page-title { color: #fff !important; font-size: 1.5rem; margin-bottom: 0.35rem !important; }
+.faculty-att-hero .page-subtitle { color: #94a3b8 !important; font-size: 0.9rem; }
+.faculty-att-hero .hero-logo { height: 44px; width: auto; max-width: 90px; object-fit: contain; filter: drop-shadow(0 2px 8px rgba(0,0,0,0.4)); }
+.faculty-att-hero .faculty-badges .badge { font-weight: 500; padding: 0.35rem 0.65rem; border-radius: 8px; }
+
+.faculty-att-filters { background: linear-gradient(180deg, #f8fafc 0%, #f1f5f9 100%); border: 1px solid #e2e8f0; border-radius: 14px; padding: 1.25rem 1.5rem; margin-bottom: 1.5rem; }
+.faculty-att-filters .form-label { font-weight: 600; color: #475569; font-size: 0.85rem; }
+.faculty-att-filters .form-select { min-width: 200px; }
+
+.faculty-batch-card { border: none; border-radius: 14px; box-shadow: 0 4px 20px rgba(0,0,0,0.08); overflow: hidden; margin-bottom: 1.5rem; }
+.faculty-batch-card .card-header { background: linear-gradient(90deg, #1e293b 0%, #334155 100%); color: #fff; font-weight: 600; padding: 0.9rem 1.25rem; border: none; display: flex; justify-content: space-between; align-items: center; }
+.faculty-batch-card .slot-attendance-form { border-bottom: 1px solid #e2e8f0; padding: 1.25rem 1.5rem; }
+.faculty-batch-card .slot-attendance-form:last-of-type { border-bottom: none; }
+.faculty-batch-card .slot-title { font-weight: 600; color: #1e293b; }
+.faculty-batch-card .form-label.small { color: #64748b; }
+.faculty-batch-card label.d-flex.p-2.rounded-3 { border-radius: 10px !important; transition: background 0.2s ease; }
+.faculty-batch-card label.d-flex.p-2.rounded-3:hover { background: #e0f2fe !important; }
+</style>
+
+<div class="faculty-att-hero d-flex flex-wrap justify-content-between align-items-start gap-3">
+    <div class="d-flex align-items-center gap-3">
+        <img src="{% static 'images/ljiet-logo.png' %}" alt="LJIET" class="hero-logo">
+        <div>
+            <h1 class="page-title mb-1">Mark Attendance</h1>
+        <p class="page-subtitle mb-2">Select date and batch. Tick checkboxes for <strong>absent</strong> students. If no one is absent, click <strong>All present</strong>.</p>
+        {% if faculty %}<div class="faculty-badges"><span class="badge bg-primary bg-opacity-25 text-white">{{ faculty.short_name }}</span></div>{% endif %}
+        </div>
+    </div>
+</div>
+
+<form method="get" class="card faculty-att-filters">
+    <div class="card-body d-flex flex-wrap align-items-end gap-3">
+        <div>
+            <label class="form-label mb-1">Date</label>
+            <select name="date" onchange="this.form.submit()" class="form-select form-select-app">
+                {% for d in available_dates %}
+                <option value="{{ d|date:'Y-m-d' }}" {% if d == selected_date %}selected{% endif %}>{{ d|date:"D, d M Y" }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        {% if selected_date %}
+        <div id="attendance-meta" data-date-dmy="{{ selected_date|date:'d/m/Y' }}" data-fac-initials="{{ faculty.short_name|default:'' }}" style="display:none" aria-hidden="true"></div>
+        <div>
+            <button type="button" id="copy-attendance-text-btn" class="btn btn-outline-primary btn-sm"><i class="fas fa-copy me-1"></i> Copy attendance text</button>
+        </div>
+        {% endif %}
+    </div>
+</form>
+
+<!-- Modal: show attendance text, then copy -->
+<div class="modal fade" id="attendance-text-modal" tabindex="-1" aria-labelledby="attendance-text-modal-label" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="attendance-text-modal-label">Attendance text</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <pre id="attendance-text-preview" class="bg-light p-3 rounded small mb-0" style="white-space: pre-wrap; max-height: 50vh; overflow-y: auto;"></pre>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                <button type="button" class="btn btn-primary-app" id="attendance-text-copy-btn">Copy text</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% if selected_date %}
+<div class="mb-4">
+    {% for batch, slots in slots_by_batch.items %}
+    <div class="card faculty-batch-card batch-slots">
+        <div class="card-header">
+            <span>Batch: {{ batch.name }}</span>
+            <a href="{% url 'core:faculty_report_excel' %}?date={{ selected_date|date:'Y-m-d' }}&batch_id={{ batch.id }}" class="btn btn-sm btn-light">Download Excel</a>
+        </div>
+        {% for slot in slots %}
+        <div class="slot-attendance-form" data-slot-index="{{ forloop.counter0 }}">
+            <div class="d-flex flex-wrap align-items-center justify-content-between gap-3 mb-3">
+                <p class="slot-title mb-0">{{ slot.time_slot }} — {{ slot.display_subject_name|default:slot.subject.name }}</p>
+                <div class="d-flex gap-2 flex-wrap">
+                    {% if not forloop.first %}
+                    <button type="button" class="btn btn-sm btn-outline-secondary copy-above-btn" data-slot-index="{{ forloop.counter0 }}">Copy above</button>
+                    {% endif %}
+                    <button type="button" class="btn btn-sm btn-success all-present-btn" data-form-id="form-{{ batch.id }}-{{ forloop.counter0 }}">All present</button>
+                    <button type="submit" form="form-{{ batch.id }}-{{ forloop.counter0 }}" class="btn btn-sm btn-primary">Save</button>
+                </div>
+            </div>
+            <form id="form-{{ batch.id }}-{{ forloop.counter0 }}" method="post" action="{% url 'core:faculty_attendance_save' %}">
+                {% csrf_token %}
+                <input type="hidden" name="date" value="{{ selected_date|date:'Y-m-d' }}">
+                <input type="hidden" name="batch_id" value="{{ batch.id }}">
+                <input type="hidden" name="lecture_slot" value="{{ slot.time_slot }}">
+                <label class="form-label small text-uppercase fw-semibold mb-2">Tick absent students</label>
+                <div class="row g-2">
+                    {% for s in batch.student_set.all %}
+                    <div class="col-4 col-sm-3 col-md-2">
+                        <label class="d-flex align-items-center gap-2 p-2 rounded-3 border border-light bg-light bg-opacity-50 mb-0" style="cursor:pointer;">
+                            <input type="checkbox" name="absent_roll_numbers" value="{{ s.roll_no }}" {% if s.roll_no in slot.prefill_absent_set %}checked{% endif %} class="form-check-input">
+                            <span class="small text-truncate" title="{{ s.roll_no }} — {{ s.name }}">{{ s.roll_no }}</span>
+                        </label>
+                    </div>
+                    {% endfor %}
+                </div>
+            </form>
+        </div>
+        {% endfor %}
+    </div>
+    {% empty %}
+    <p class="text-secondary">No lectures for this date.</p>
+    {% endfor %}
+</div>
+
+<script>
+(function() {
+    document.querySelectorAll('.copy-above-btn').forEach(function(btn) {
+        btn.addEventListener('click', function() {
+            var slotIndex = parseInt(this.getAttribute('data-slot-index'), 10);
+            var batchContainer = this.closest('.batch-slots');
+            if (!batchContainer) return;
+            var allSlots = batchContainer.querySelectorAll('.slot-attendance-form');
+            var currentSlot = allSlots[slotIndex];
+            var prevSlot = allSlots[slotIndex - 1];
+            if (!currentSlot || !prevSlot) return;
+            var prevForm = prevSlot.querySelector('form');
+            var currForm = currentSlot.querySelector('form');
+            if (!prevForm || !currForm) return;
+            var checkedValues = [];
+            prevForm.querySelectorAll('input[name="absent_roll_numbers"]:checked').forEach(function(cb) {
+                checkedValues.push(cb.value);
+            });
+            currForm.querySelectorAll('input[name="absent_roll_numbers"]').forEach(function(cb) {
+                cb.checked = checkedValues.indexOf(cb.value) !== -1;
+            });
+        });
+    });
+    document.querySelectorAll('.all-present-btn').forEach(function(btn) {
+        btn.addEventListener('click', function() {
+            var formId = this.getAttribute('data-form-id');
+            var form = document.getElementById(formId);
+            if (!form) return;
+            form.querySelectorAll('input[name="absent_roll_numbers"]').forEach(function(cb) { cb.checked = false; });
+            form.submit();
+        });
+    });
+
+    // Show attendance text in modal first, then copy on button click
+    var copyBtn = document.getElementById('copy-attendance-text-btn');
+    var meta = document.getElementById('attendance-meta');
+    var modalEl = document.getElementById('attendance-text-modal');
+    var previewEl = document.getElementById('attendance-text-preview');
+    var modalCopyBtn = document.getElementById('attendance-text-copy-btn');
+
+    // Time slot → lecture number: 08:45-09:45=Lec1, 09:45-10:45=Lec2, 11:30-12:30=Lec3, 12:30-13:30=Lec4, 13:45-14:45=Lec5
+    function getLecNoFromTimeSlot(slotStr) {
+        if (!slotStr) return null;
+        var n = (slotStr + '').replace(/\s+to\s+/gi, '-').replace(/\s*-\s*/g, '-').replace(/\s+/g, '').trim();
+        var map = { '08:45-09:45': 1, '09:45-10:45': 2, '11:30-12:30': 3, '12:30-13:30': 4, '13:45-14:45': 5 };
+        return map[n] || null;
+    }
+
+    function buildAttendanceText() {
+        if (!meta) return '';
+        var dateDmy = meta.getAttribute('data-date-dmy') || '';
+        var facInitials = meta.getAttribute('data-fac-initials') || '';
+        var batchCards = document.querySelectorAll('.batch-slots');
+        var blocks = [];
+        batchCards.forEach(function(card) {
+            var batchLabel = card.querySelector('.card-header span.fw-bold');
+            var divName = batchLabel ? batchLabel.textContent.replace(/^Batch:\s*/i, '').trim() : '';
+            var slotForms = card.querySelectorAll('.slot-attendance-form');
+            var lecNumbers = [];
+            var absentLines = [];
+            slotForms.forEach(function(slotDiv, idx) {
+                var form = slotDiv.querySelector('form');
+                var slotInput = form ? form.querySelector('input[name="lecture_slot"]') : null;
+                var timeSlot = slotInput ? slotInput.value : '';
+                var lecNo = getLecNoFromTimeSlot(timeSlot);
+                if (lecNo == null) lecNo = idx + 1;
+                lecNumbers.push(String(lecNo));
+                var absent = [];
+                if (form) {
+                    form.querySelectorAll('input[name="absent_roll_numbers"]:checked').forEach(function(cb) {
+                        absent.push(cb.value);
+                    });
+                }
+                absent.sort(function(a, b) { return parseInt(a, 10) - parseInt(b, 10); });
+                absentLines.push('Lec ' + lecNo + ': ' + (absent.length ? absent.join(', ') : '—'));
+            });
+            var block = '*Fac Initials :* ' + facInitials + '\n*Date:* ' + dateDmy + '\n*LEC No:* ' + lecNumbers.join(',') + '\n*Div:* ' + divName + '\n*Absent numbers* -\n' + absentLines.join('\n');
+            blocks.push(block);
+        });
+        return blocks.join('\n\n');
+    }
+
+    if (copyBtn && meta && modalEl && previewEl) {
+        copyBtn.addEventListener('click', function() {
+            var text = buildAttendanceText();
+            if (!text.trim()) return;
+            previewEl.textContent = text;
+            var modal = typeof bootstrap !== 'undefined' && bootstrap.Modal ? new bootstrap.Modal(modalEl) : null;
+            if (modal) modal.show(); else { modalEl.classList.add('show'); modalEl.style.display = 'block'; modalEl.classList.add('d-block'); }
+        });
+    }
+
+    if (modalCopyBtn && previewEl) {
+        modalCopyBtn.addEventListener('click', function() {
+            var text = previewEl.textContent || '';
+            if (!text.trim()) return;
+            navigator.clipboard.writeText(text).then(function() {
+                var orig = modalCopyBtn.textContent;
+                modalCopyBtn.textContent = 'Copied!';
+                setTimeout(function() { modalCopyBtn.textContent = orig; }, 2000);
+            }).catch(function() {
+                var ta = document.createElement('textarea');
+                ta.value = text;
+                document.body.appendChild(ta);
+                ta.select();
+                document.execCommand('copy');
+                document.body.removeChild(ta);
+                var orig = modalCopyBtn.textContent;
+                modalCopyBtn.textContent = 'Copied!';
+                setTimeout(function() { modalCopyBtn.textContent = orig; }, 2000);
+            });
+        });
+    }
+})();
+</script>
+{% else %}
+<p class="text-secondary">Set term phases so that lecture dates are available.</p>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,34 @@
+{% extends 'core/admin/base_admin.html' %}
+{% load static %}
+{% block title %}{% if form_type == 'add' %}Add Department{% else %}Edit Department{% endif %} - LJIET_Attendance{% endblock %}
+{% block content %}
+<div class="admin-hero">
+    <div class="d-flex align-items-center gap-3">
+        <img src="{% static 'images/ljiet-logo.png' %}" alt="LJIET" class="admin-logo">
+        <div>
+            <h1 class="page-title mb-1">{% if form_type == 'add' %}Add Department{% else %}Edit Department{% endif %}</h1>
+            <p class="page-subtitle">Create or update a department.</p>
+        </div>
+    </div>
+    <a href="{% url 'core:department_list' %}" class="btn btn-outline-light btn-sm"><i class="fas fa-arrow-left me-1"></i> Back</a>
+</div>
+<div class="card admin-card">
+    <div class="card-body p-4">
+        <form method="post">
+            {% csrf_token %}
+            <div class="mb-3">
+                <label class="form-label fw-semibold">Name</label>
+                <input type="text" name="name" required value="{% if obj %}{{ obj.name }}{% endif %}" class="form-control form-control-app" placeholder="Department name">
+            </div>
+            <div class="mb-4">
+                <label class="form-label fw-semibold">Code (optional)</label>
+                <input type="text" name="code" value="{% if obj %}{{ obj.code }}{% endif %}" class="form-control form-control-app" placeholder="e.g. CE">
+            </div>
+            <div class="d-flex flex-wrap gap-2">
+                <button type="submit" class="btn btn-primary-app"><i class="fas fa-save me-2"></i>Save</button>
+                <a href="{% url 'core:department_list' %}" class="btn btn-outline-secondary">Cancel</a>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}

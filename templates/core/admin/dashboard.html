@@ -1,0 +1,149 @@
+{% extends 'core/admin/base_admin.html' %}
+{% load static %}
+{% block title %}Admin Dashboard - LJIET_Attendance{% endblock %}
+{% block content %}
+<div class="admin-hero">
+    <div class="d-flex align-items-center gap-3">
+        <img src="{% static 'images/ljiet-logo.png' %}" alt="LJIET" class="admin-logo">
+        <div>
+            <h1 class="page-title mb-1">Admin Dashboard</h1>
+            <p class="page-subtitle">Manage departments, batches, schedule and attendance reports.</p>
+        </div>
+    </div>
+</div>
+
+<div class="card admin-card mb-4">
+    <div class="card-header">Current department</div>
+    <div class="card-body p-4">
+        {% if is_super_admin %}
+        <form method="post" action="{% url 'core:department_list' %}" class="d-flex flex-wrap align-items-center gap-3">
+            {% csrf_token %}
+            <select name="department_id" class="form-select form-select-app" style="max-width: 280px;">
+                {% for d in departments %}
+                <option value="{{ d.id }}" {% if department and department.id == d.id %}selected{% endif %}>{{ d.name }}</option>
+                {% endfor %}
+            </select>
+            <button type="submit" name="set_department" value="1" class="btn btn-primary-app">
+                <i class="fas fa-check me-1"></i> Set Department
+            </button>
+        </form>
+        {% if not departments %}
+        <p class="text-warning mt-3 mb-0 small">No department yet. <a href="{% url 'core:department_add' %}" class="fw-semibold text-decoration-underline">Add a department</a> first.</p>
+        {% endif %}
+        {% else %}
+        <p class="fw-semibold text-dark mb-1">{% if department %}{{ department.name }}{% else %}—{% endif %}</p>
+        <p class="text-secondary small mb-0">You can only access this department's data and attendance.</p>
+        {% endif %}
+    </div>
+</div>
+
+<div class="row g-4 mb-5">
+    <div class="col-sm-6 col-lg-3">
+        <a href="{% url 'core:batch_list' %}" class="card admin-stat-card">
+            <div class="card-body">
+                <div class="stat-icon" style="background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%); color: #fff;"><i class="fas fa-layer-group"></i></div>
+                <div>
+                    <p class="stat-value mb-0">{{ batch_count|default:0 }}</p>
+                    <p class="stat-label">Batches</p>
+                </div>
+            </div>
+        </a>
+    </div>
+    <div class="col-sm-6 col-lg-3">
+        <a href="{% url 'core:faculty_list' %}" class="card admin-stat-card">
+            <div class="card-body">
+                <div class="stat-icon" style="background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: #fff;"><i class="fas fa-chalkboard-teacher"></i></div>
+                <div>
+                    <p class="stat-value mb-0">{{ faculty_count|default:0 }}</p>
+                    <p class="stat-label">Faculties</p>
+                </div>
+            </div>
+        </a>
+    </div>
+    <div class="col-sm-6 col-lg-3">
+        <a href="{% url 'core:student_list' %}" class="card admin-stat-card">
+            <div class="card-body">
+                <div class="stat-icon" style="background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%); color: #fff;"><i class="fas fa-user-graduate"></i></div>
+                <div>
+                    <p class="stat-value mb-0">{{ student_count|default:0 }}</p>
+                    <p class="stat-label">Students</p>
+                </div>
+            </div>
+        </a>
+    </div>
+    <div class="col-sm-6 col-lg-3">
+        <a href="{% url 'core:admin_analytics_dashboard' %}" class="card admin-stat-card">
+            <div class="card-body">
+                <div class="stat-icon" style="background: linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%); color: #fff;"><i class="fas fa-chart-line"></i></div>
+                <div>
+                    <p class="fw-semibold mb-0">Analytics</p>
+                    <p class="stat-label">Charts & Reports</p>
+                </div>
+            </div>
+        </a>
+    </div>
+    <div class="col-sm-6 col-lg-3">
+        <a href="{% url 'core:daily_absent' %}" class="card admin-stat-card">
+            <div class="card-body">
+                <div class="stat-icon" style="background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%); color: #fff;"><i class="fas fa-file-excel"></i></div>
+                <div>
+                    <p class="fw-semibold mb-0">Daily Absent</p>
+                    <p class="stat-label">Report</p>
+                </div>
+            </div>
+        </a>
+    </div>
+</div>
+
+<div class="row">
+    <div class="col-lg-6">
+        <div class="card admin-card">
+            <div class="card-header">Quick links</div>
+            <div class="card-body p-4">
+                <ul class="list-group list-group-flush">
+                    <li class="list-group-item border-0 px-0 py-2">
+                        <a href="{% url 'core:upload_timetable' %}" class="text-primary text-decoration-none fw-medium">
+                            <i class="fas fa-file-upload me-2"></i> Upload timetable (Excel)
+                        </a>
+                    </li>
+                    <li class="list-group-item border-0 px-0 py-2">
+                        <a href="{% url 'core:schedule_list' %}" class="text-primary text-decoration-none fw-medium">
+                            <i class="fas fa-calendar-alt me-2"></i> Manage schedule
+                        </a>
+                    </li>
+                    <li class="list-group-item border-0 px-0 py-2">
+                        <a href="{% url 'core:term_phases' %}" class="text-primary text-decoration-none fw-medium">
+                            <i class="fas fa-calendar-week me-2"></i> Set term phases (T1–T4)
+                        </a>
+                    </li>
+                    <li class="list-group-item border-0 px-0 py-2">
+                        <a href="{% url 'core:student_upload' %}" class="text-primary text-decoration-none fw-medium">
+                            <i class="fas fa-upload me-2"></i> Upload students (CSV)
+                        </a>
+                    </li>
+                    <li class="list-group-item border-0 px-0 py-2">
+                        <a href="{% url 'core:attendance_sheet_manager' %}" class="text-primary text-decoration-none fw-medium">
+                            <i class="fas fa-table me-2"></i> Attendance sheet & Excel
+                        </a>
+                    </li>
+                </ul>
+            </div>
+        </div>
+    </div>
+    <div class="col-lg-6">
+        <div class="card admin-card">
+            <div class="card-header"><i class="fas fa-bell me-2"></i>Attendance notifications</div>
+            <div class="card-body p-4">
+                <p class="small text-secondary mb-2">Run this command to send emails:</p>
+                <code class="d-block bg-light p-2 rounded small mb-2">python manage.py send_attendance_notifications</code>
+                <ul class="small mb-0 ps-3">
+                    <li><strong>Students:</strong> Email when attendance &lt; 75% (max once/week)</li>
+                    <li><strong>Faculty:</strong> Daily reminder before class to mark attendance</li>
+                    <li><strong>Admins:</strong> Weekly summary of attendance trends</li>
+                </ul>
+                <p class="small text-secondary mt-2 mb-0">Schedule via cron (e.g. daily at 8:00 AM). Ensure students and faculty have email set.</p>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

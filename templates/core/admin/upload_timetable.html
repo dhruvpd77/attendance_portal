@@ -1,0 +1,87 @@
+{% extends 'core/admin/base_admin.html' %}
+{% load static %}
+{% block title %}Upload Timetable - LJIET_Attendance{% endblock %}
+{% block content %}
+<div class="admin-hero">
+    <div class="d-flex align-items-center gap-3">
+        <img src="{% static 'images/ljiet-logo.png' %}" alt="LJIET" class="admin-logo">
+        <div>
+            <h1 class="page-title mb-1">Upload Timetable (Excel)</h1>
+            <p class="page-subtitle">Import faculty, batches, subjects and day-wise schedule. Uses current department: <strong>{{ department.name }}</strong></p>
+        </div>
+    </div>
+    <a href="{% url 'core:admin_dashboard' %}" class="btn btn-outline-light btn-sm"><i class="fas fa-arrow-left me-1"></i> Dashboard</a>
+</div>
+
+{% if import_summary %}
+<div class="card admin-card border-success mb-4">
+    <div class="card-header bg-success bg-opacity-10 border-0 py-3">
+        <h2 class="h6 fw-bold text-success mb-0"><i class="fas fa-check-circle text-success me-1"></i> Import summary – {{ department.name }}</h2>
+        <p class="small text-secondary mb-0 mt-1">Exact counts after import.</p>
+    </div>
+    <div class="card-body p-4">
+        <div class="row g-3 mb-4">
+            <div class="col-6 col-sm-4 col-lg"><div class="card bg-light border-0 p-3 text-center"><p class="h4 fw-bold mb-0 text-dark">{{ import_summary.total_batches }}</p><p class="small text-uppercase fw-semibold text-secondary mb-0">Batches</p></div></div>
+            <div class="col-6 col-sm-4 col-lg"><div class="card bg-light border-0 p-3 text-center"><p class="h4 fw-bold mb-0 text-dark">{{ import_summary.total_days }}</p><p class="small text-uppercase fw-semibold text-secondary mb-0">Days</p></div></div>
+            <div class="col-6 col-sm-4 col-lg"><div class="card bg-light border-0 p-3 text-center"><p class="h4 fw-bold mb-0 text-dark">{{ import_summary.total_time_slots }}</p><p class="small text-uppercase fw-semibold text-secondary mb-0">Time slots</p></div></div>
+            <div class="col-6 col-sm-4 col-lg"><div class="card bg-light border-0 p-3 text-center"><p class="h4 fw-bold mb-0 text-dark">{{ import_summary.total_subjects }}</p><p class="small text-uppercase fw-semibold text-secondary mb-0">Subjects</p></div></div>
+            <div class="col-6 col-sm-4 col-lg"><div class="card bg-light border-0 p-3 text-center"><p class="h4 fw-bold mb-0 text-dark">{{ import_summary.total_faculties }}</p><p class="small text-uppercase fw-semibold text-secondary mb-0">Faculties</p></div></div>
+            <div class="col-6 col-sm-4 col-lg"><div class="card bg-light border-0 p-3 text-center"><p class="h4 fw-bold mb-0 text-dark">{{ import_summary.total_entries }}</p><p class="small text-uppercase fw-semibold text-secondary mb-0">Total entries</p></div></div>
+            <div class="col-6 col-sm-4 col-lg"><div class="card bg-primary bg-opacity-10 border-0 p-3 text-center"><p class="h4 fw-bold mb-0 text-primary">{{ import_summary.new_slots_added }}</p><p class="small text-uppercase fw-semibold text-secondary mb-0">New slots added</p></div></div>
+        </div>
+        <h3 class="h6 fw-bold mb-2">Entries per batch</h3>
+        <div class="table-responsive">
+            <table class="table table-app table-hover mb-0">
+                <thead><tr><th class="small text-uppercase fw-semibold text-secondary">#</th><th class="small text-uppercase fw-semibold text-secondary">Batch</th><th class="small text-uppercase fw-semibold text-secondary text-end">Total entries</th></tr></thead>
+                <tbody>
+                    {% for row in import_summary.per_batch %}
+                    <tr><td class="text-secondary">{{ forloop.counter }}</td><td class="fw-medium">{{ row.batch_name }}</td><td class="text-end">{{ row.count }}</td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% if import_summary.replace_schedule %}
+        <p class="small text-secondary mt-3 mb-0">Existing schedule for this department was replaced before import.</p>
+        {% else %}
+        <p class="small text-secondary mt-3 mb-0">Existing slots were kept; only new slots were added (duplicates skipped).</p>
+        {% endif %}
+        <a href="{% url 'core:schedule_list' %}" class="btn btn-outline-app btn-sm mt-3">View schedule <i class="fas fa-arrow-right ms-1"></i></a>
+    </div>
+</div>
+{% endif %}
+
+<div class="card admin-card mb-4" style="max-width: 640px;">
+    <div class="card-body p-4">
+        <form method="post" enctype="multipart/form-data">
+            {% csrf_token %}
+            <div class="mb-4">
+                <label class="form-label fw-semibold text-secondary">Excel file</label>
+                <input type="file" name="excel_file" accept=".xlsx,.xls" required class="form-control form-control-app">
+            </div>
+            <div class="form-check mb-4">
+                <input type="checkbox" name="replace_schedule" id="replace_schedule" checked class="form-check-input">
+                <label for="replace_schedule" class="form-check-label text-secondary">Replace existing schedule for this department (uncheck to only add new slots)</label>
+            </div>
+            <div class="d-flex flex-wrap gap-2">
+                <button type="submit" class="btn btn-primary-app">
+                    <i class="fas fa-upload me-1"></i> Upload & Import
+                </button>
+                <a href="{% url 'core:schedule_list' %}" class="btn btn-outline-app">Cancel</a>
+            </div>
+        </form>
+    </div>
+</div>
+
+<div class="card card-app">
+    <div class="card-body p-4">
+        <h2 class="h6 fw-bold mb-3">Expected Excel format</h2>
+    <ul class="list-unstyled small text-secondary mb-0">
+        <li class="mb-2"><strong class="text-dark">Sheet name:</strong> <code class="bg-light px-1 rounded">TT-CLASSWISE</code> (or Timetable / Sheet1)</li>
+        <li class="mb-2"><strong class="text-dark">Row 3:</strong> Batch names only in columns C, D, E, … (e.g. A1, B2, SY1). Columns with “Timing”, “Time”, “Lec 1”, or time ranges are skipped (not treated as batches).</li>
+        <li class="mb-2"><strong class="text-dark">From row 4:</strong> Column A = Day (Mon, Tue, … or Monday, …), Column B = Time slot (e.g. 08:45-09:45 or Lec 1)</li>
+        <li class="mb-2"><strong class="text-dark">Cell format:</strong> <code class="bg-light px-1 rounded">Subject (Faculty) (Room)</code> e.g. <code class="bg-light px-1 rounded">DE (UMS) (301)</code> or <code class="bg-light px-1 rounded">Subject (Faculty) (Lab)</code>. Old format: <code class="bg-light px-1 rounded">FAC-SUB-310</code></li>
+    </ul>
+        <p class="small text-secondary mt-2 mb-0">The system will create batches, faculties and subjects as needed and add schedule slots for the selected department.</p>
+    </div>
+</div>
+{% endblock %}

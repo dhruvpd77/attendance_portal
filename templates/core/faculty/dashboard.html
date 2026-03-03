@@ -1,0 +1,80 @@
+{% extends 'base.html' %}
+{% load static %}
+{% block title %}Faculty Dashboard - LJIET_Attendance{% endblock %}
+{% block content %}
+<style>
+.faculty-dash-hero { background: linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #334155 100%); border-radius: 16px; padding: 1.5rem 1.75rem; margin-bottom: 1.5rem; color: #fff; box-shadow: 0 10px 40px rgba(15, 23, 42, 0.25); }
+.faculty-dash-hero .page-title { color: #fff !important; font-size: 1.5rem; margin-bottom: 0.35rem !important; }
+.faculty-dash-hero .page-subtitle { color: #94a3b8 !important; font-size: 0.95rem; }
+.faculty-dash-hero .hero-logo { height: 44px; width: auto; max-width: 90px; object-fit: contain; filter: drop-shadow(0 2px 8px rgba(0,0,0,0.4)); }
+.faculty-dash-hero .faculty-badges .badge { font-weight: 500; padding: 0.4rem 0.75rem; border-radius: 8px; }
+
+.faculty-dash-card { border: none; border-radius: 14px; box-shadow: 0 4px 20px rgba(0,0,0,0.06); text-decoration: none !important; height: 100%; overflow: hidden; transition: transform 0.25s ease, box-shadow 0.25s ease; }
+.faculty-dash-card:hover { transform: translateY(-4px); box-shadow: 0 12px 32px rgba(0,0,0,0.12); }
+.faculty-dash-card .card-body { padding: 1.5rem 1.5rem; display: flex; align-items: center; gap: 1.25rem; }
+.faculty-dash-card .card-icon { width: 56px; height: 56px; border-radius: 14px; display: flex; align-items: center; justify-content: center; font-size: 1.5rem; flex-shrink: 0; background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%); color: #fff; }
+.faculty-dash-card:hover .card-icon { box-shadow: 0 6px 20px rgba(37, 99, 235, 0.4); }
+.faculty-dash-card .card-title { font-weight: 700; font-size: 1.1rem; margin-bottom: 0.25rem; color: #1e293b; }
+.faculty-dash-card .card-desc { font-size: 0.875rem; color: #64748b; margin-bottom: 0; }
+
+.faculty-dash-table .card-header { background: linear-gradient(90deg, #1e293b 0%, #334155 100%); color: #fff; font-weight: 600; padding: 0.9rem 1.25rem; border: none; border-radius: 14px 14px 0 0; }
+.faculty-dash-table .table thead th { background: linear-gradient(180deg, #334155 0%, #475569 100%); color: #fff !important; font-weight: 600; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.5px; padding: 0.9rem 1rem; border: none; }
+.faculty-dash-table .table tbody td { padding: 0.85rem 1rem; vertical-align: middle; }
+.faculty-dash-table .table tbody tr:nth-child(even) { background: #f8fafc; }
+.faculty-dash-table .table tbody tr:hover { background: #eff6ff !important; }
+</style>
+
+<div class="faculty-dash-hero d-flex align-items-center gap-3">
+    <img src="{% static 'images/ljiet-logo.png' %}" alt="LJIET" class="hero-logo">
+    <div>
+        <h1 class="page-title">Welcome, {{ faculty.full_name }}</h1>
+        <p class="page-subtitle mb-2">Your lectures for today — {{ today|date:"l, d M Y" }}</p>
+        <div class="faculty-badges d-flex flex-wrap gap-2">
+        <span class="badge bg-primary bg-opacity-25 text-white">{{ faculty.short_name|default:"Faculty" }}</span>
+        {% if faculty.department %}<span class="badge bg-info bg-opacity-25 text-white">{{ faculty.department.name }}</span>{% endif %}
+        </div>
+    </div>
+</div>
+
+<div class="row g-4 mb-4">
+    <div class="col-md-6">
+        <a href="{% url 'core:faculty_attendance_entry' %}" class="card faculty-dash-card">
+            <div class="card-body">
+                <div class="card-icon"><i class="fas fa-edit"></i></div>
+                <div>
+                    <p class="card-title">Mark Attendance</p>
+                    <p class="card-desc">Select date and mark absent students</p>
+                </div>
+            </div>
+        </a>
+    </div>
+</div>
+
+<div class="card faculty-dash-table overflow-hidden">
+    <div class="card-header">Today's schedule</div>
+    {% if today_slots %}
+    <div class="table-responsive">
+        <table class="table table-hover mb-0">
+            <thead>
+                <tr>
+                    <th>Time</th>
+                    <th>Batch</th>
+                    <th>Subject</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for s in today_slots %}
+                <tr>
+                    <td class="fw-medium">{{ s.time_slot }}</td>
+                    <td>{{ s.batch.name }}</td>
+                    <td>{{ s.subject.name }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <p class="text-center text-secondary py-5 mb-0">No lectures scheduled for today.</p>
+    {% endif %}
+</div>
+{% endblock %}

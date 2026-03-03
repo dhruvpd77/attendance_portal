@@ -1,0 +1,66 @@
+from django.urls import path
+from . import views
+
+app_name = 'core'
+
+urlpatterns = [
+    path('', views.portal_root, name='portal_root'),
+    path('home/', views.home, name='home'),
+
+    # Admin
+    path('admin-dashboard/', views.admin_dashboard, name='admin_dashboard'),
+    path('admin/analytics/', views.admin_analytics_dashboard, name='admin_analytics_dashboard'),
+    path('admin/analytics/at-risk-excel/', views.admin_analytics_at_risk_excel, name='admin_analytics_at_risk_excel'),
+    path('admin/departments/', views.department_list, name='department_list'),
+    path('admin/departments/add/', views.department_add, name='department_add'),
+    path('admin/departments/<int:pk>/edit/', views.department_edit, name='department_edit'),
+    path('admin/departments/<int:pk>/delete/', views.department_delete, name='department_delete'),
+    path('admin/departmental-admins/', views.departmental_admin_list, name='departmental_admin_list'),
+    path('admin/departmental-admins/add/', views.departmental_admin_create, name='departmental_admin_create'),
+    path('admin/batches/', views.batch_list, name='batch_list'),
+    path('admin/batches/add/', views.batch_add, name='batch_add'),
+    path('admin/batches/<int:pk>/edit/', views.batch_edit, name='batch_edit'),
+    path('admin/batches/<int:pk>/delete/', views.batch_delete, name='batch_delete'),
+    path('admin/subjects/', views.subject_list, name='subject_list'),
+    path('admin/subjects/add/', views.subject_add, name='subject_add'),
+    path('admin/subjects/<int:pk>/edit/', views.subject_edit, name='subject_edit'),
+    path('admin/subjects/<int:pk>/delete/', views.subject_delete, name='subject_delete'),
+    path('admin/faculties/', views.faculty_list, name='faculty_list'),
+    path('admin/faculties/add/', views.faculty_add, name='faculty_add'),
+    path('admin/faculties/<int:pk>/edit/', views.faculty_edit, name='faculty_edit'),
+    path('admin/faculties/<int:pk>/delete/', views.faculty_delete, name='faculty_delete'),
+    path('admin/generate-credentials/', views.generate_credentials_choice, name='generate_credentials_choice'),
+    path('admin/faculties/generate-credentials/', views.faculty_generate_credentials, name='faculty_generate_credentials'),
+    path('admin/students/generate-credentials/', views.student_generate_credentials, name='student_generate_credentials'),
+    path('admin/credentials-result/', views.credentials_result, name='credentials_result'),
+    path('admin/faculties/credentials-result/', views.faculty_credentials_result, name='faculty_credentials_result'),
+    path('admin/credentials/download/<str:filename>/', views.download_credentials_file, name='download_credentials_file'),
+    path('admin/students/', views.student_list, name='student_list'),
+    path('admin/students/upload/', views.student_upload, name='student_upload'),
+    path('admin/schedule/', views.schedule_list, name='schedule_list'),
+    path('admin/schedule/add/', views.schedule_add, name='schedule_add'),
+    path('admin/schedule/<int:pk>/edit/', views.schedule_edit, name='schedule_edit'),
+    path('admin/schedule/<int:pk>/delete/', views.schedule_delete, name='schedule_delete'),
+    path('admin/schedule/clear-all/', views.schedule_clear_all, name='schedule_clear_all'),
+    path('admin/lecture-adjustment/', views.lecture_adjustment, name='lecture_adjustment'),
+    path('admin/upload-timetable/', views.upload_timetable, name='upload_timetable'),
+    path('admin/term-phases/', views.term_phases, name='term_phases'),
+    path('admin/daily-absent/', views.daily_absent, name='daily_absent'),
+    path('admin/daily-absent/excel/', views.daily_absent_excel, name='daily_absent_excel'),
+    path('admin/attendance-sheet/', views.attendance_sheet_manager, name='attendance_sheet_manager'),
+    path('admin/attendance-sheet/excel/', views.attendance_sheet_excel, name='attendance_sheet_excel'),
+    path('admin/compile-attendance/', views.compile_attendance, name='compile_attendance'),
+    path('admin/compile-attendance/excel/', views.compile_attendance_excel, name='compile_attendance_excel'),
+
+    # Faculty
+    path('faculty-dashboard/', views.faculty_dashboard, name='faculty_dashboard'),
+    path('faculty/attendance/', views.faculty_attendance_entry, name='faculty_attendance_entry'),
+    path('faculty/mentorship/', views.faculty_mentorship, name='faculty_mentorship'),
+    path('faculty/attendance/save/', views.faculty_attendance_save, name='faculty_attendance_save'),
+    path('faculty/report/excel/', views.faculty_report_excel, name='faculty_report_excel'),
+
+    # Student
+    path('student-dashboard/', views.student_dashboard, name='student_dashboard'),
+    path('student/attendance-summary/', views.student_attendance_summary, name='student_attendance_summary'),
+    path('student/attendance-analytics/', views.student_attendance_analytics, name='student_attendance_analytics'),
+]

@@ -1,0 +1,139 @@
+{% extends 'base.html' %}
+{% load static %}
+{% block title %}Mentorship Students - LJIET_Attendance{% endblock %}
+{% block content %}
+<style>
+.mentor-hero { background: linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #334155 100%); border-radius: 16px; padding: 1.25rem 1.5rem; margin-bottom: 1.5rem; color: #fff; }
+.mentor-hero .page-title { color: #fff !important; }
+.mentor-hero .admin-logo { height: 44px; width: auto; max-width: 90px; object-fit: contain; filter: drop-shadow(0 2px 8px rgba(0,0,0,0.4)); }
+.mentor-card { border: none; border-radius: 14px; box-shadow: 0 4px 20px rgba(0,0,0,0.08); margin-bottom: 1.5rem; overflow: hidden; }
+.mentor-card .card-header { background: linear-gradient(90deg, #1e293b 0%, #334155 100%); color: #fff; font-weight: 600; padding: 0.9rem 1.25rem; border: none; }
+.mentor-table thead th { background: #475569; color: #fff; font-size: 0.8rem; }
+.mentor-table tbody td { padding: 0.75rem 1rem; vertical-align: middle; }
+.mentor-table .pct-low { color: #dc2626; font-weight: 700; }
+.mentor-table .pct-warn { color: #b45309; font-weight: 700; }
+.mentor-table .pct-good { color: #047857; font-weight: 700; }
+.week-badge { font-size: 0.75rem; padding: 0.2rem 0.5rem; border-radius: 6px; }
+</style>
+
+<div class="mentor-hero d-flex flex-wrap justify-content-between align-items-center gap-3">
+    <div class="d-flex align-items-center gap-3">
+        <img src="{% static 'images/ljiet-logo.png' %}" alt="LJIET" class="admin-logo">
+        <div>
+            <h1 class="page-title mb-1">Mentorship Students</h1>
+            <p class="text-white-50 mb-0">{{ faculty.full_name }} ({{ faculty.short_name }}) — Phase {{ phase }}{% if selected_week != 'all' and selected_week %} — Week {{ selected_week|add:1 }}{% else %} — All (Cumulative){% endif %}</p>
+        </div>
+    </div>
+    <form method="get" class="d-flex flex-wrap align-items-center gap-3">
+        <div class="d-flex align-items-center gap-2">
+            <label class="text-white-50 small mb-0">Phase</label>
+            <select name="phase" class="form-select form-select-sm" style="max-width: 100px;" onchange="this.form.submit()">
+                {% for p in phases %}
+                <option value="{{ p }}" {% if phase == p %}selected{% endif %}>{{ p }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="d-flex align-items-center gap-2">
+            <label class="text-white-50 small mb-0">Week</label>
+            <select name="week" class="form-select form-select-sm" style="max-width: 120px;" onchange="this.form.submit()">
+                <option value="all" {% if selected_week == 'all' or not selected_week %}selected{% endif %}>All (Cumulative)</option>
+                {% for idx in week_range %}
+                <option value="{{ idx }}" {% if selected_week == idx|stringformat:"d" %}selected{% endif %}>Week {{ idx|add:1 }}</option>
+                {% endfor %}
+            </select>
+        </div>
+    </form>
+</div>
+
+<ul class="nav nav-tabs mb-3" id="mentorTabs" role="tablist">
+    <li class="nav-item" role="presentation">
+        <button class="nav-link active" id="all-tab" data-bs-toggle="tab" data-bs-target="#all-students" type="button" role="tab">All Students</button>
+    </li>
+    <li class="nav-item" role="presentation">
+        <button class="nav-link" id="risk-tab" data-bs-toggle="tab" data-bs-target="#risk-students" type="button" role="tab">At-Risk (below 75%) <span class="badge bg-danger">{% if at_risk %}{{ at_risk|length }}{% else %}0{% endif %}</span></button>
+    </li>
+</ul>
+
+<div class="tab-content" id="mentorTabsContent">
+    <div class="tab-pane fade show active" id="all-students" role="tabpanel">
+<div class="mentor-card">
+    <div class="card-header">All mentorship students — Attendance analytics</div>
+    <div class="card-body p-0">
+        {% if student_stats %}
+        {% for stat in student_stats %}
+        <div class="border-bottom p-4 {% if not forloop.last %}border-bottom{% endif %}" style="{% if forloop.last %}border-bottom: none !important;{% endif %}">
+            <div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-3">
+                <div>
+                    <h5 class="mb-1">{{ stat.student.name }} <span class="badge bg-primary bg-opacity-25 text-white">{{ stat.student.roll_no }}</span> <span class="badge bg-info bg-opacity-25 text-white">{{ stat.student.batch.name }}</span></h5>
+                    <p class="mb-0 small text-secondary">Overall: <strong>{{ stat.attended }}/{{ stat.held }}</strong> — <span class="{% if stat.pct >= 75 %}pct-good{% elif stat.pct >= 50 %}pct-warn{% else %}pct-low{% endif %}">{{ stat.pct }}%</span></p>
+                </div>
+            </div>
+            <div class="row g-3">
+                <div class="col-12 col-md-6">
+                    <p class="small fw-bold text-dark mb-2">Week-wise & Cumulative</p>
+                    <div class="d-flex flex-wrap gap-2 align-items-center">
+                        {% for w in stat.week_wise %}
+                        <span class="week-badge {% if w.pct >= 75 %}bg-success bg-opacity-25{% elif w.pct >= 50 %}bg-warning bg-opacity-25{% else %}bg-danger bg-opacity-25{% endif %}">W{{ w.week }}: {{ w.attended }}/{{ w.held }} ({{ w.pct }}%)</span>
+                        <span class="week-badge bg-secondary bg-opacity-25 text-dark">Cum W{{ w.week }}: {{ w.cum_attended }}/{{ w.cum_held }} ({{ w.cum_pct }}%)</span>
+                        {% endfor %}
+                    </div>
+                </div>
+                <div class="col-12 col-md-6">
+                    <p class="small fw-bold text-dark mb-2">Subject-wise</p>
+                    <div class="table-responsive">
+                        <table class="table table-sm mb-0">
+                            <thead><tr><th>Subject</th><th class="text-end">Held</th><th class="text-end">Attended</th><th class="text-end">%</th></tr></thead>
+                            <tbody>
+                                {% for sub in stat.subject_wise %}
+                                <tr>
+                                    <td class="small">{{ sub.name }}</td>
+                                    <td class="text-end">{{ sub.held }}</td>
+                                    <td class="text-end">{{ sub.attended }}</td>
+                                    <td class="text-end {% if sub.pct >= 75 %}pct-good{% elif sub.pct >= 50 %}pct-warn{% else %}pct-low{% endif %}">{{ sub.pct }}%</td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+        {% else %}
+        <p class="text-center text-secondary py-5 mb-0">No mentorship students assigned. Assign mentors via CSV upload (mentor column) or run: <code>python manage.py seed_mentors</code></p>
+        {% endif %}
+    </div>
+</div>
+    </div>
+    <div class="tab-pane fade" id="risk-students" role="tabpanel">
+        <div class="mentor-card">
+            <div class="card-header">At-risk students (below 75%)</div>
+            <div class="card-body p-0">
+                {% if at_risk %}
+                <div class="table-responsive">
+                    <table class="table mentor-table table-hover mb-0">
+                        <thead>
+                            <tr><th>Roll No</th><th>Name</th><th>Batch</th><th>Held</th><th>Attended</th><th>%</th></tr>
+                        </thead>
+                        <tbody>
+                            {% for r in at_risk %}
+                            <tr>
+                                <td class="fw-medium">{{ r.student.roll_no }}</td>
+                                <td>{{ r.student.name }}</td>
+                                <td>{{ r.student.batch.name }}</td>
+                                <td>{{ r.held }}</td>
+                                <td>{{ r.attended }}</td>
+                                <td class="{% if r.pct < 50 %}pct-low{% else %}pct-warn{% endif %}">{{ r.pct }}%</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% else %}
+                <p class="text-center text-success py-5 mb-0"><i class="fas fa-check-circle me-2"></i>No at-risk students. All above 75%.</p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

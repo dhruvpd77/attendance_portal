@@ -1,0 +1,47 @@
+{% extends 'core/admin/base_admin.html' %}
+{% load static %}
+{% block title %}Create Departmental Admin - LJIET_Attendance{% endblock %}
+{% block content %}
+<div class="admin-hero">
+    <div class="d-flex align-items-center gap-3">
+        <img src="{% static 'images/ljiet-logo.png' %}" alt="LJIET" class="admin-logo">
+        <div>
+            <h1 class="page-title mb-1">Create departmental admin</h1>
+            <p class="page-subtitle">Set username and password. This admin will only access the selected department's data and attendance.</p>
+        </div>
+    </div>
+    <a href="{% url 'core:departmental_admin_list' %}" class="btn btn-outline-light btn-sm"><i class="fas fa-arrow-left me-1"></i> Back</a>
+</div>
+<div class="card admin-card">
+    <div class="card-body p-4">
+        <form method="post">
+            {% csrf_token %}
+            <div class="mb-3">
+                <label class="form-label fw-semibold">Username</label>
+                <input type="text" name="username" required maxlength="150" autocomplete="username" class="form-control form-control-app" placeholder="e.g. ce_admin">
+            </div>
+            <div class="mb-3">
+                <label class="form-label fw-semibold">Password</label>
+                <input type="password" name="password" required minlength="6" autocomplete="new-password" class="form-control form-control-app" placeholder="At least 6 characters">
+            </div>
+            <div class="mb-3">
+                <label class="form-label fw-semibold">Confirm password</label>
+                <input type="password" name="password2" required minlength="6" autocomplete="new-password" class="form-control form-control-app" placeholder="Same as above">
+            </div>
+            <div class="mb-4">
+                <label class="form-label fw-semibold">Department</label>
+                <select name="department_id" required class="form-select form-select-app">
+                    <option value="">Select department</option>
+                    {% for d in departments %}
+                    <option value="{{ d.pk }}">{{ d.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="d-flex flex-wrap gap-2">
+                <button type="submit" class="btn btn-primary-app"><i class="fas fa-user-plus me-2"></i>Create</button>
+                <a href="{% url 'core:departmental_admin_list' %}" class="btn btn-outline-secondary">Cancel</a>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}

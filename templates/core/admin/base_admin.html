@@ -1,0 +1,41 @@
+{% extends 'base.html' %}
+{% load static %}
+{% block extra_head %}
+{{ block.super }}
+<style>
+/* Admin: colorful design */
+.admin-hero {
+    background: linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #334155 100%);
+    border-radius: 16px;
+    padding: 1.25rem 1.5rem;
+    margin-bottom: 1.5rem;
+    color: #fff;
+    box-shadow: 0 10px 40px rgba(15, 23, 42, 0.25);
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+}
+.admin-hero .page-title { color: #fff !important; font-size: 1.5rem; margin-bottom: 0.35rem !important; }
+.admin-hero .page-subtitle { color: #94a3b8 !important; font-size: 0.9rem; margin: 0; }
+.admin-hero .admin-logo { height: 44px; width: auto; max-width: 90px; object-fit: contain; filter: drop-shadow(0 2px 8px rgba(0,0,0,0.4)); }
+
+.admin-card { border: none; border-radius: 14px; box-shadow: 0 4px 20px rgba(0,0,0,0.08); overflow: hidden; }
+.admin-card .card-header { background: linear-gradient(90deg, #1e293b 0%, #334155 100%); color: #fff; font-weight: 600; padding: 0.9rem 1.25rem; border: none; }
+.admin-card .table thead th { background: linear-gradient(180deg, #334155 0%, #475569 100%); color: #fff !important; font-weight: 600; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.5px; padding: 0.9rem 1rem; border: none; }
+.admin-card .table tbody td { padding: 0.85rem 1rem; vertical-align: middle; }
+.admin-card .table tbody tr:nth-child(even) { background: #f8fafc; }
+.admin-card .table tbody tr:hover { background: #eff6ff !important; }
+
+.admin-stat-card { border: none; border-radius: 14px; box-shadow: 0 4px 20px rgba(0,0,0,0.06); overflow: hidden; height: 100%; transition: transform 0.2s ease, box-shadow 0.2s ease; text-decoration: none !important; }
+.admin-stat-card:hover { transform: translateY(-3px); box-shadow: 0 12px 28px rgba(0,0,0,0.12); }
+.admin-stat-card .card-body { padding: 1.25rem; display: flex; align-items: center; gap: 1rem; }
+.admin-stat-card .stat-icon { width: 52px; height: 52px; border-radius: 12px; display: flex; align-items: center; justify-content: center; font-size: 1.4rem; flex-shrink: 0; }
+.admin-stat-card .stat-value { font-size: 1.5rem; font-weight: 700; color: #1e293b; }
+.admin-stat-card .stat-label { font-size: 0.85rem; color: #64748b; margin: 0; }
+
+.btn-edit-sm { padding: 0.35rem 0.65rem; font-size: 0.8rem; border-radius: 8px; }
+.btn-delete-sm { padding: 0.35rem 0.65rem; font-size: 0.8rem; border-radius: 8px; }
+</style>
+{% endblock %}
