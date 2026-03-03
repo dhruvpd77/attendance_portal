@@ -1,8 +1,10 @@
 from django.shortcuts import render, redirect
-from django.contrib.auth import authenticate, login, logout
+from django.contrib.auth import authenticate, login, logout, get_user_model
 from django.contrib.auth.decorators import login_required
 from django.contrib import messages
 from .models import UserRole
+
+User = get_user_model()
 
 
 def login_view(request):
@@ -44,3 +46,49 @@ def role_redirect(request):
     if role_profile.role == 'student':
         return redirect('core:student_dashboard')
     return redirect('core:home')
+
+
+def change_password_view(request):
+    """Change password: supports both logged-in and anonymous users (via username)."""
+    if request.method != 'POST':
+        return render(request, 'accounts/change_password.html', {'show_username': not request.user.is_authenticated})
+
+    # Determine user
+    if request.user.is_authenticated:
+        user = request.user
+        username = user.username
+    else:
+        username = request.POST.get('username', '').strip()
+        if not username:
+            messages.error(request, 'Username is required.')
+            return render(request, 'accounts/change_password.html', {'show_username': True})
+        try:
+            user = User.objects.get(username=username)
+        except User.DoesNotExist:
+            messages.error(request, 'No account found with this username.')
+            return render(request, 'accounts/change_password.html', {'show_username': True})
+
+    old_password = request.POST.get('old_password', '')
+    new_password = request.POST.get('new_password', '')
+    confirm_password = request.POST.get('confirm_password', '')
+
+    if not old_password:
+        messages.error(request, 'Please enter your current password.')
+        return render(request, 'accounts/change_password.html', {'show_username': not request.user.is_authenticated})
+
+    if not user.check_password(old_password):
+        messages.error(request, 'Current password is incorrect.')
+        return render(request, 'accounts/change_password.html', {'show_username': not request.user.is_authenticated})
+
+    if not new_password:
+        messages.error(request, 'Please enter a new password.')
+        return render(request, 'accounts/change_password.html', {'show_username': not request.user.is_authenticated})
+
+    if new_password != confirm_password:
+        messages.error(request, 'New password and confirmation do not match.')
+        return render(request, 'accounts/change_password.html', {'show_username': not request.user.is_authenticated})
+
+    user.set_password(new_password)
+    user.save()
+    messages.success(request, 'Your password has been changed successfully. Please sign in with your new password.')
+    return redirect('accounts:login')

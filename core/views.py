@@ -2793,6 +2793,7 @@ def compile_attendance_excel(request):
             ws.cell(1, col).fill = header_fill
             ws.cell(1, col).border = thin_border
             col += 1
+    total_col = col  # first of the three Total columns (Held, Attended, %)
     ws.cell(1, col, 'Total Held').font = header_font_white
     ws.cell(1, col).fill = header_fill
     ws.cell(1, col).border = thin_border
@@ -2804,7 +2805,6 @@ def compile_attendance_excel(request):
     ws.cell(1, col, 'Total %').font = header_font_white
     ws.cell(1, col).fill = header_fill
     ws.cell(1, col).border = thin_border
-    total_col = col
     col += 1
     for row_idx, s in enumerate(students, start=2):
         str_roll = str(s.roll_no)

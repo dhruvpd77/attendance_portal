@@ -377,6 +377,9 @@
                     <span class="user-icon"><i class="fas fa-user"></i></span>
                     <span class="user-name text-truncate">{{ user.get_full_name|default:user.username }}</span>
                 </span>
+                <a href="{% url 'accounts:change_password' %}" class="btn btn-logout btn-sm text-nowrap" title="Change password">
+                    <i class="fas fa-key me-1"></i> <span class="d-none d-sm-inline">Change Password</span>
+                </a>
                 <a href="{% url 'accounts:logout' %}" class="btn btn-logout btn-sm text-nowrap">
                     <i class="fas fa-sign-out-alt me-1"></i> <span class="d-none d-sm-inline">Logout</span>
                 </a>
