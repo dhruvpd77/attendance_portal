@@ -51,6 +51,8 @@ urlpatterns = [
     path('admin/attendance-sheet/excel/', views.attendance_sheet_excel, name='attendance_sheet_excel'),
     path('admin/compile-attendance/', views.compile_attendance, name='compile_attendance'),
     path('admin/compile-attendance/excel/', views.compile_attendance_excel, name='compile_attendance_excel'),
+    path('admin/notifications/', views.admin_notifications, name='admin_notifications'),
+    path('admin/student-analytics/', views.student_analytics, name='admin_student_analytics'),
 
     # Faculty
     path('faculty-dashboard/', views.faculty_dashboard, name='faculty_dashboard'),
@@ -58,6 +60,7 @@ urlpatterns = [
     path('faculty/mentorship/', views.faculty_mentorship, name='faculty_mentorship'),
     path('faculty/attendance/save/', views.faculty_attendance_save, name='faculty_attendance_save'),
     path('faculty/report/excel/', views.faculty_report_excel, name='faculty_report_excel'),
+    path('faculty/student-analytics/', views.student_analytics, name='faculty_student_analytics'),
 
     # Student
     path('student-dashboard/', views.student_dashboard, name='student_dashboard'),

@@ -13,6 +13,7 @@ from io import BytesIO
 import openpyxl
 from django.conf import settings
 from django.contrib.auth.models import User
+from django.core.mail import send_mail
 from django.http import Http404, HttpResponse
 
 from django.shortcuts import render, redirect, get_object_or_404
@@ -2280,6 +2281,433 @@ def compile_attendance(request):
     return render(request, 'core/admin/compile_attendance.html', ctx)
 
 
+def _admin_notifications_build_mentor_data(dept, phase, week_idx):
+    """Build list of mentors with their at-risk mentees (below 75%) and full attendance report.
+    Returns: [(mentor, [{'student': s, 'held': n, 'attended': n, 'pct': x, 'week_wise': [...], 'subject_wise': [...]}]), ...]
+    """
+    weeks = _compile_phase_weeks_date_objects(dept, phase)
+    if not weeks:
+        return []
+    cum_dates = set()
+    for i in range(len(weeks)):
+        cum_dates.update(weeks[i])
+        if i == week_idx:
+            break
+    students = list(
+        Student.objects.filter(department=dept, mentor__isnull=False)
+        .select_related('batch', 'mentor')
+        .order_by('mentor__full_name', 'batch__name', 'roll_no')
+    )
+    if not students:
+        return []
+    batch_scheduled = defaultdict(set)
+    for s in students:
+        batch = s.batch
+        for d in cum_dates:
+            weekday = d.strftime('%A')
+            for slot in ScheduleSlot.objects.filter(batch=batch, day=weekday).values_list('time_slot', flat=True).distinct():
+                batch_scheduled[batch.id].add((d, slot))
+    batch_att_map = defaultdict(lambda: defaultdict(set))
+    for batch_id in {s.batch_id for s in students}:
+        batch = next(b for b in students if b.batch_id == batch_id).batch
+        for att in FacultyAttendance.objects.filter(batch=batch, date__in=cum_dates):
+            key = (att.date, att.lecture_slot)
+            batch_att_map[batch_id][key] = set(x.strip() for x in (att.absent_roll_numbers or '').split(',') if x.strip())
+    mentor_data = defaultdict(list)
+    for s in students:
+        scheduled = batch_scheduled.get(s.batch_id, set())
+        str_roll = str(s.roll_no)
+        held = len(scheduled)
+        attended = sum(1 for (d, slot) in scheduled if (d, slot) in batch_att_map[s.batch_id] and str_roll not in batch_att_map[s.batch_id][(d, slot)])
+        pct = round(attended / held * 100, 1) if held else 0
+        if held and pct < 75:
+            week_wise = []
+            cum_held = cum_attended = 0
+            for i, week_dates in enumerate(weeks):
+                if i > week_idx:
+                    break
+                week_set = set(week_dates)
+                w_held = sum(1 for (d, slot) in scheduled if d in week_set)
+                w_attended = sum(1 for (d, slot) in scheduled if d in week_set and (d, slot) in batch_att_map[s.batch_id] and str_roll not in batch_att_map[s.batch_id][(d, slot)])
+                w_pct = round(w_attended / w_held * 100, 1) if w_held else 0
+                cum_held += w_held
+                cum_attended += w_attended
+                cum_pct = round(cum_attended / cum_held * 100, 1) if cum_held else 0
+                week_wise.append({'week': i + 1, 'held': w_held, 'attended': w_attended, 'pct': w_pct, 'cum_held': cum_held, 'cum_attended': cum_attended, 'cum_pct': cum_pct})
+            subject_wise = defaultdict(lambda: {'held': 0, 'attended': 0})
+            for (d, slot) in scheduled:
+                fac, subj = get_faculty_subject_for_slot(d, s.batch, slot)
+                subj_name = subj.name if subj else 'N/A'
+                subject_wise[subj_name]['held'] += 1
+                if (d, slot) in batch_att_map[s.batch_id] and str_roll not in batch_att_map[s.batch_id][(d, slot)]:
+                    subject_wise[subj_name]['attended'] += 1
+            subj_list = [{'name': n, 'held': t['held'], 'attended': t['attended'], 'pct': round(t['attended'] / t['held'] * 100, 1) if t['held'] else 0} for n, t in sorted(subject_wise.items())]
+            mentor_data[s.mentor].append({
+                'student': s, 'held': held, 'attended': attended, 'pct': pct,
+                'week_wise': week_wise, 'subject_wise': subj_list,
+            })
+    return [(mentor, data) for mentor, data in mentor_data.items() if data]
+
+
+@login_required
+def admin_notifications(request):
+    """Admin: Notifications — list students below 75% (phase/week), grouped by mentor. Email to mentor with full report."""
+    if not user_can_admin(request):
+        return redirect('accounts:role_redirect')
+    dept = get_admin_department(request)
+    if not dept:
+        messages.error(request, 'Select a department first.')
+        return redirect('core:admin_dashboard')
+    tp = TermPhase.objects.filter(department=dept).first()
+    phases = ['T1', 'T2', 'T3', 'T4']
+    phase = request.GET.get('phase') or request.POST.get('phase', 'T1')
+    week_str = request.GET.get('week') or request.POST.get('week')
+    week_map = {}
+    for p in phases:
+        start = getattr(tp, f'{p.lower()}_start', None) if tp else None
+        end = getattr(tp, f'{p.lower()}_end', None) if tp else None
+        if not start or not end:
+            week_map[p] = []
+            continue
+        days_set = set(ScheduleSlot.objects.filter(department=dept).values_list('day', flat=True).distinct())
+        days_set = {d.lower() for d in days_set if d}
+        holidays = get_phase_holidays(dept, p)
+        dates = []
+        cur = start
+        while cur <= end:
+            if cur not in holidays and cur.strftime('%A').lower() in days_set:
+                dates.append(cur)
+            cur += timedelta(days=1)
+        weeks = []
+        week = []
+        last_w = None
+        for d in sorted(dates):
+            w = d.isocalendar()[1]
+            if last_w is not None and w != last_w and week:
+                weeks.append(week)
+                week = []
+            week.append(d)
+            last_w = w
+        if week:
+            weeks.append(week)
+        week_map[p] = weeks
+    weeks_list = week_map.get(phase, [])
+    week_idx = 0
+    if week_str is not None:
+        try:
+            week_idx = int(week_str)
+            if week_idx < 0 or week_idx >= len(weeks_list):
+                week_idx = max(0, len(weeks_list) - 1)
+        except ValueError:
+            week_idx = 0
+    if weeks_list and week_idx >= len(weeks_list):
+        week_idx = len(weeks_list) - 1
+    mentor_data = []
+    if weeks_list:
+        mentor_data = _admin_notifications_build_mentor_data(dept, phase, week_idx)
+    if request.method == 'POST' and request.POST.get('action') == 'email_mentor':
+        mentor_id = request.POST.get('mentor_id')
+        if mentor_id:
+            mentor = Faculty.objects.filter(pk=mentor_id, department=dept).first()
+            if mentor:
+                mentor_data_full = _admin_notifications_build_mentor_data(dept, phase, week_idx)
+                mentor_entry = next((m for m in mentor_data_full if m[0].id == mentor.id), None)
+                if mentor_entry:
+                    mentor_fac, at_risk_list = mentor_entry
+                    email = mentor_fac.email or (mentor_fac.user.email if mentor_fac.user else None)
+                    if email:
+                        html = render(request, 'core/admin/email_mentor_attendance_report.html', {
+                            'mentor': mentor_fac,
+                            'phase': phase,
+                            'week_num': week_idx + 1,
+                            'at_risk_list': at_risk_list,
+                            'department': dept,
+                        }).content.decode('utf-8')
+                        try:
+                            send_mail(
+                                subject=f'LJIET Attendance: {len(at_risk_list)} mentee(s) below 75% — {phase} Week {week_idx + 1}',
+                                message='Please view this email in HTML format.',
+                                from_email=settings.DEFAULT_FROM_EMAIL,
+                                recipient_list=[email],
+                                html_message=html,
+                                fail_silently=False,
+                            )
+                            messages.success(request, f'Email sent to {mentor_fac.full_name} ({mentor_fac.email or mentor_fac.user.email}).')
+                        except Exception as e:
+                            err_str = str(e)
+                            if '535' in err_str or 'BadCredentials' in err_str or 'Username and Password' in err_str:
+                                msg = (
+                                    'Email failed: Gmail rejected the login. '
+                                    'Use an App Password (not your regular password). '
+                                    'Enable 2-Step Verification at myaccount.google.com, then create an App Password at myaccount.google.com/apppasswords. '
+                                    'Update EMAIL_HOST_PASSWORD in .env and restart the server.'
+                                )
+                            else:
+                                msg = f'Failed to send email: {e}'
+                            messages.error(request, msg)
+                    else:
+                        messages.error(request, f'No email address for {mentor_fac.full_name}. Add email in Faculty profile.')
+                else:
+                    messages.error(request, 'Mentor not found in at-risk list.')
+            else:
+                messages.error(request, 'Invalid mentor.')
+        url = reverse('core:admin_notifications') + f'?phase={phase}&week={week_idx}'
+        return redirect(url)
+    if request.method == 'POST' and request.POST.get('action') == 'email_all':
+        mentor_data_full = _admin_notifications_build_mentor_data(dept, phase, week_idx)
+        sent = 0
+        failed = []
+        for mentor_fac, at_risk_list in mentor_data_full:
+            email = mentor_fac.email or (mentor_fac.user.email if mentor_fac.user else None)
+            if not email:
+                failed.append(f'{mentor_fac.full_name} (no email)')
+                continue
+            html = render(request, 'core/admin/email_mentor_attendance_report.html', {
+                'mentor': mentor_fac,
+                'phase': phase,
+                'week_num': week_idx + 1,
+                'at_risk_list': at_risk_list,
+                'department': dept,
+            }).content.decode('utf-8')
+            try:
+                send_mail(
+                    subject=f'LJIET Attendance: {len(at_risk_list)} mentee(s) below 75% — {phase} Week {week_idx + 1}',
+                    message='Please view this email in HTML format.',
+                    from_email=settings.DEFAULT_FROM_EMAIL,
+                    recipient_list=[email],
+                    html_message=html,
+                    fail_silently=False,
+                )
+                sent += 1
+            except Exception:
+                failed.append(mentor_fac.full_name)
+        if sent:
+            messages.success(request, f'Email sent to {sent} mentor(s).')
+        if failed:
+            messages.warning(request, f'Could not email: {", ".join(failed[:5])}{"..." if len(failed) > 5 else ""}')
+        url = reverse('core:admin_notifications') + f'?phase={phase}&week={week_idx}'
+        return redirect(url)
+    week_range = list(range(len(weeks_list)))
+    ctx = {
+        'department': dept,
+        'phases': phases,
+        'phase': phase,
+        'week_idx': week_idx,
+        'week_range': week_range,
+        'mentor_data': mentor_data,
+    }
+    return render(request, 'core/admin/notifications.html', ctx)
+
+
+def _build_slot_subject_cache(batch, cum_dates, batch_scheduled):
+    """Pre-build (date, slot) -> subject_name to avoid N queries. Returns dict."""
+    cache = {}
+    if not batch_scheduled:
+        return cache
+    slots_by_day = {}
+    for (d, slot) in batch_scheduled:
+        day = d.strftime('%A')
+        slots_by_day.setdefault(day, set()).add(slot)
+    all_slots = set(slot for slots in slots_by_day.values() for slot in slots)
+    schedule_slots = list(ScheduleSlot.objects.filter(batch=batch).select_related('subject').only('day', 'time_slot', 'subject'))
+    slot_to_subj = {(s.day, s.time_slot): (s.subject.name if s.subject else 'N/A') for s in schedule_slots}
+    adj_list = list(LectureAdjustment.objects.filter(
+        batch=batch, date__in=cum_dates, time_slot__in=all_slots
+    ).select_related('new_subject').values('date', 'time_slot', 'new_subject__name'))
+    adj_map = {(a['date'], a['time_slot']): (a['new_subject__name'] or 'N/A') for a in adj_list}
+    for (d, slot) in batch_scheduled:
+        key = (d, slot)
+        if key in adj_map:
+            cache[key] = adj_map[key]
+        else:
+            day = d.strftime('%A')
+            cache[key] = slot_to_subj.get((day, slot), 'N/A')
+    return cache
+
+
+def _student_analytics_build_data(dept, phase, week_idx, batch_id, roll_search=None):
+    """Build student analytics for a batch: list of {student, held, attended, pct, week_wise, subject_wise}.
+    Cumulative phases: T2 = T1+T2, T3 = T1+T2+T3, T4 = T1+T2+T3+T4. Optimized for speed."""
+    batch = Batch.objects.filter(pk=batch_id, department=dept).first()
+    if not batch:
+        return [], []
+    week_map, _, phase_dates = _student_phase_weeks_and_dates(dept, batch)
+    phases = ['T1', 'T2', 'T3', 'T4']
+    phase_order_idx = phases.index(phase) if phase in phases else 0
+    weeks = week_map.get(phase, [])
+    if not weeks:
+        return [], []
+    if week_idx < 0 or week_idx >= len(weeks):
+        week_idx = len(weeks) - 1
+    cum_dates = set()
+    for i in range(phase_order_idx + 1):
+        cum_dates.update(phase_dates.get(phases[i], []))
+    if week_idx is not None and weeks:
+        cum_dates = set()
+        for i in range(phase_order_idx):
+            cum_dates.update(phase_dates.get(phases[i], []))
+        for i in range(week_idx + 1):
+            cum_dates.update(weeks[i])
+    students = Student.objects.filter(department=dept, batch=batch).select_related('batch', 'mentor').order_by('roll_no')
+    if roll_search:
+        q = Q(roll_no__icontains=roll_search) | Q(name__icontains=roll_search) | Q(enrollment_no__icontains=roll_search)
+        students = students.filter(q)
+    students = list(students)
+    if not students:
+        return [], []
+    day_slots = defaultdict(set)
+    for day, slot in ScheduleSlot.objects.filter(batch=batch).values_list('day', 'time_slot').distinct():
+        day_slots[day].add(slot)
+    batch_scheduled = set()
+    for d in cum_dates:
+        weekday = d.strftime('%A')
+        for slot in day_slots.get(weekday, ()):
+            batch_scheduled.add((d, slot))
+    batch_att_map = {}
+    for att in FacultyAttendance.objects.filter(batch=batch, date__in=cum_dates).only('date', 'lecture_slot', 'absent_roll_numbers'):
+        key = (att.date, att.lecture_slot)
+        batch_att_map[key] = set(x.strip() for x in (att.absent_roll_numbers or '').split(',') if x.strip())
+    slot_subj_cache = _build_slot_subject_cache(batch, cum_dates, batch_scheduled)
+    prev_dates_list = [set(phase_dates.get(phases[i], [])) for i in range(phase_order_idx)]
+    result = []
+    for s in students:
+        str_roll = str(s.roll_no)
+        held = len(batch_scheduled)
+        attended = sum(1 for (d, slot) in batch_scheduled if (d, slot) in batch_att_map and str_roll not in batch_att_map[(d, slot)])
+        pct = round(attended / held * 100, 1) if held else 0
+        week_wise = []
+        cum_held = cum_attended = 0
+        for prev_idx in range(phase_order_idx):
+            prev_dates = prev_dates_list[prev_idx]
+            prev_held = sum(1 for (d, slot) in batch_scheduled if d in prev_dates)
+            prev_attended = sum(1 for (d, slot) in batch_scheduled if d in prev_dates and (d, slot) in batch_att_map and str_roll not in batch_att_map[(d, slot)])
+            prev_pct = round(prev_attended / prev_held * 100, 1) if prev_held else 0
+            cum_held += prev_held
+            cum_attended += prev_attended
+            cum_pct = round(cum_attended / cum_held * 100, 1) if cum_held else 0
+            week_wise.append({'label': f'{phases[prev_idx]} Overall', 'held': prev_held, 'attended': prev_attended, 'pct': prev_pct, 'cum_held': cum_held, 'cum_attended': cum_attended, 'cum_pct': cum_pct})
+        weeks_to_show = range(len(weeks)) if week_idx is None else range(min(week_idx + 1, len(weeks)))
+        for i in weeks_to_show:
+            week_set = set(weeks[i])
+            w_held = sum(1 for (d, slot) in batch_scheduled if d in week_set)
+            w_attended = sum(1 for (d, slot) in batch_scheduled if d in week_set and (d, slot) in batch_att_map and str_roll not in batch_att_map[(d, slot)])
+            w_pct = round(w_attended / w_held * 100, 1) if w_held else 0
+            cum_held += w_held
+            cum_attended += w_attended
+            cum_pct = round(cum_attended / cum_held * 100, 1) if cum_held else 0
+            week_wise.append({'label': f'{phase} Week {i + 1}', 'week': i + 1, 'held': w_held, 'attended': w_attended, 'pct': w_pct, 'cum_held': cum_held, 'cum_attended': cum_attended, 'cum_pct': cum_pct})
+        subject_wise = defaultdict(lambda: {'held': 0, 'attended': 0})
+        for (d, slot) in batch_scheduled:
+            subj_name = slot_subj_cache.get((d, slot), 'N/A')
+            subject_wise[subj_name]['held'] += 1
+            if (d, slot) in batch_att_map and str_roll not in batch_att_map[(d, slot)]:
+                subject_wise[subj_name]['attended'] += 1
+        subj_list = [{'name': n, 'held': t['held'], 'attended': t['attended'], 'pct': round(t['attended'] / t['held'] * 100, 1) if t['held'] else 0} for n, t in sorted(subject_wise.items())]
+        result.append({'student': s, 'held': held, 'attended': attended, 'pct': pct, 'week_wise': week_wise, 'subject_wise': subj_list})
+    batches = list(Batch.objects.filter(department=dept).order_by('name'))
+    return result, batches
+
+
+def _student_analytics_build_data_by_roll_search(dept, phase, week_idx, roll_search):
+    """Search students by roll/name/enrollment across ALL batches. Return (result, batches)."""
+    batches = list(Batch.objects.filter(department=dept).order_by('name'))
+    if not roll_search:
+        return [], batches
+    weeks = _compile_phase_weeks_date_objects(dept, phase)
+    if not weeks or week_idx < 0 or week_idx >= len(weeks):
+        return [], batches
+    q = Q(roll_no__icontains=roll_search) | Q(name__icontains=roll_search) | Q(enrollment_no__icontains=roll_search)
+    students = list(Student.objects.filter(department=dept).filter(q).select_related('batch', 'mentor').order_by('batch__name', 'roll_no'))
+    if not students:
+        return [], batches
+    result = []
+    for bid in {s.batch_id for s in students}:
+        part, _ = _student_analytics_build_data(dept, phase, week_idx, bid, roll_search)
+        result.extend(part)
+    result.sort(key=lambda x: (x['student'].batch.name, str(x['student'].roll_no)))
+    return result, batches
+
+
+@login_required
+def student_analytics(request):
+    """Admin & Faculty: Student-wise, batch-wise, phase/week analytics. Filter by batch, search by roll no."""
+    dept = None
+    is_admin = user_can_admin(request)
+    if is_admin:
+        # Super admin can set department via POST
+        if is_super_admin(request) and request.method == 'POST' and request.POST.get('set_department'):
+            request.session['admin_department_id'] = request.POST.get('department_id')
+            base = 'core:admin_student_analytics'
+            params = request.GET.urlencode()
+            url = reverse(base)
+            return redirect(f"{url}?{params}" if params else url)
+        dept = get_admin_department(request)
+        if not dept:
+            messages.error(request, 'Select a department first.')
+            return redirect('core:admin_dashboard')
+    elif user_can_faculty(request):
+        faculty = get_faculty_user(request)
+        if faculty:
+            dept = faculty.department
+        if not dept:
+            return redirect('accounts:role_redirect')
+    else:
+        return redirect('accounts:role_redirect')
+    phases = ['T1', 'T2', 'T3', 'T4']
+    phase = request.GET.get('phase', 'T1')
+    week_str = request.GET.get('week')
+    batch_id = request.GET.get('batch_id')
+    roll_search = request.GET.get('roll_search', '').strip()
+    weeks_list = _compile_phase_weeks_date_objects(dept, phase)
+    week_idx = 0
+    if week_str is not None:
+        try:
+            week_idx = int(week_str)
+            if week_idx < 0 or week_idx >= len(weeks_list):
+                week_idx = max(0, len(weeks_list) - 1)
+        except ValueError:
+            week_idx = 0
+    if weeks_list and week_idx >= len(weeks_list):
+        week_idx = len(weeks_list) - 1
+    student_data = []
+    batches = list(Batch.objects.filter(department=dept).select_related('department').order_by('name'))
+    batches_from_all_depts = False
+    if not batches:
+        # Fallback: show batches from ALL departments so dropdown is never empty
+        batches = list(Batch.objects.select_related('department').order_by('department__name', 'name'))
+        batches_from_all_depts = bool(batches)
+    if weeks_list:
+        if roll_search and not batch_id:
+            student_data, _batches = _student_analytics_build_data_by_roll_search(dept, phase, week_idx, roll_search)
+            if not batches_from_all_depts:
+                batches = _batches
+        elif batch_id:
+            batch = Batch.objects.filter(pk=batch_id).select_related('department').first()
+            if batch:
+                effective_dept = batch.department
+                student_data, _batches = _student_analytics_build_data(effective_dept, phase, week_idx, batch_id, roll_search or None)
+                if not batches_from_all_depts:
+                    batches = _batches
+    week_range = list(range(len(weeks_list)))
+    departments = list(Department.objects.all()) if is_admin and is_super_admin(request) else []
+    ctx = {
+        'department': dept,
+        'departments': departments,
+        'is_super_admin': is_admin and is_super_admin(request),
+        'phases': phases,
+        'phase': phase,
+        'week_idx': week_idx,
+        'week_range': week_range,
+        'batches': batches,
+        'batches_from_all_depts': batches_from_all_depts,
+        'selected_batch_id': batch_id,
+        'roll_search': roll_search,
+        'student_data': student_data,
+        'is_admin': is_admin,
+    }
+    return render(request, 'core/student_analytics.html', ctx)
+
+
 @login_required
 def compile_attendance_excel(request):
     """Download compile attendance: one sheet, all students, columns = Roll No, Name, Batch, W1 Held/Attended/%, W2 Cum Held/Attended/%, ..., Total Held, Total Attended, Total %."""
@@ -2539,7 +2967,8 @@ def faculty_attendance_save(request):
         defaults={'absent_roll_numbers': absent_roll_numbers}
     )
     messages.success(request, 'Attendance saved.')
-    return redirect(f"{request.META.get('HTTP_REFERER', '/')}?date={date_str}")
+    url = reverse('core:faculty_attendance_entry') + f'?date={date_str}'
+    return redirect(url)
 
 
 @login_required
@@ -2674,54 +3103,67 @@ def faculty_mentorship(request):
                 week_idx = None
         except ValueError:
             week_idx = None
-    start_all = end_all = None
-    for p in phases:
-        s = getattr(tp, f'{p.lower()}_start', None) if tp else None
-        e = getattr(tp, f'{p.lower()}_end', None) if tp else None
-        if s and e:
-            start_all = min(start_all, s) if start_all else s
-            end_all = max(end_all, e) if end_all else e
-    if not start_all or not end_all:
-        start_all = datetime.now().date()
-        end_all = start_all
-    phase_dates_list = phase_dates.get(phase, [])
-    if week_idx is not None:
+    # Cumulative phase dates: T2 = T1+T2, T3 = T1+T2+T3, T4 = T1+T2+T3+T4
+    phase_order_idx = phases.index(phase) if phase in phases else 0
+    phase_dates_set = set()
+    for i in range(phase_order_idx + 1):
+        phase_dates_set.update(phase_dates.get(phases[i], []))
+    if week_idx is not None and weeks:
+        # Limit to previous phases + weeks 0..week_idx of current phase
         cum_dates = set()
+        for i in range(phase_order_idx):
+            cum_dates.update(phase_dates.get(phases[i], []))
         for i in range(week_idx + 1):
             cum_dates.update(weeks[i])
         phase_dates_set = cum_dates
-    else:
-        phase_dates_set = set(phase_dates_list)
+    prev_dates_list = [set(phase_dates.get(phases[i], [])) for i in range(phase_order_idx)]
+    batch_cache = {}
     student_stats = []
     at_risk = []
     for s in mentorship_students:
-        batch_scheduled = set()
-        for d in phase_dates_set:
-            weekday = d.strftime('%A')
-            for slot in ScheduleSlot.objects.filter(batch=s.batch, day=weekday).values_list('time_slot', flat=True).distinct():
-                batch_scheduled.add((d, slot))
-        batch_att_map = {}
-        for att in FacultyAttendance.objects.filter(batch=s.batch, date__in=phase_dates_set):
-            batch_att_map[(att.date, att.lecture_slot)] = set(x.strip() for x in (att.absent_roll_numbers or '').split(',') if x.strip())
+        bid = s.batch_id
+        if bid not in batch_cache:
+            day_slots = defaultdict(set)
+            for day, slot in ScheduleSlot.objects.filter(batch=s.batch).values_list('day', 'time_slot').distinct():
+                day_slots[day].add(slot)
+            batch_scheduled = set()
+            for d in phase_dates_set:
+                for slot in day_slots.get(d.strftime('%A'), ()):
+                    batch_scheduled.add((d, slot))
+            batch_att_map = {}
+            for att in FacultyAttendance.objects.filter(batch=s.batch, date__in=phase_dates_set).only('date', 'lecture_slot', 'absent_roll_numbers'):
+                batch_att_map[(att.date, att.lecture_slot)] = set(x.strip() for x in (att.absent_roll_numbers or '').split(',') if x.strip())
+            slot_subj = _build_slot_subject_cache(s.batch, phase_dates_set, batch_scheduled)
+            batch_cache[bid] = (batch_scheduled, batch_att_map, slot_subj)
+        batch_scheduled, batch_att_map, slot_subj = batch_cache[bid]
         held = len(batch_scheduled)
         str_roll = str(s.roll_no)
         attended = sum(1 for (d, slot) in batch_scheduled if (d, slot) in batch_att_map and str_roll not in batch_att_map[(d, slot)])
         pct = round(attended / held * 100, 1) if held else 0
         week_wise = []
         cum_held = cum_attended = 0
-        for i, week_dates in enumerate(weeks):
-            week_set = set(week_dates)
+        for prev_idx in range(phase_order_idx):
+            prev_dates = prev_dates_list[prev_idx]
+            prev_held = sum(1 for (d, slot) in batch_scheduled if d in prev_dates)
+            prev_attended = sum(1 for (d, slot) in batch_scheduled if d in prev_dates and (d, slot) in batch_att_map and str_roll not in batch_att_map[(d, slot)])
+            prev_pct = round(prev_attended / prev_held * 100, 1) if prev_held else 0
+            cum_held += prev_held
+            cum_attended += prev_attended
+            cum_pct = round(cum_attended / cum_held * 100, 1) if cum_held else 0
+            week_wise.append({'label': f'{phases[prev_idx]} Overall', 'held': prev_held, 'attended': prev_attended, 'pct': prev_pct, 'cum_held': cum_held, 'cum_attended': cum_attended, 'cum_pct': cum_pct})
+        weeks_to_show = range(len(weeks)) if week_idx is None else range(min(week_idx + 1, len(weeks)))
+        for i in weeks_to_show:
+            week_set = set(weeks[i])
             w_held = sum(1 for (d, slot) in batch_scheduled if d in week_set)
             w_attended = sum(1 for (d, slot) in batch_scheduled if d in week_set and (d, slot) in batch_att_map and str_roll not in batch_att_map[(d, slot)])
             w_pct = round(w_attended / w_held * 100, 1) if w_held else 0
             cum_held += w_held
             cum_attended += w_attended
             cum_pct = round(cum_attended / cum_held * 100, 1) if cum_held else 0
-            week_wise.append({'week': i + 1, 'held': w_held, 'attended': w_attended, 'pct': w_pct, 'cum_held': cum_held, 'cum_attended': cum_attended, 'cum_pct': cum_pct})
+            week_wise.append({'label': f'{phase} Week {i + 1}', 'week': i + 1, 'held': w_held, 'attended': w_attended, 'pct': w_pct, 'cum_held': cum_held, 'cum_attended': cum_attended, 'cum_pct': cum_pct})
         subject_wise = defaultdict(lambda: {'held': 0, 'attended': 0})
         for (d, slot) in batch_scheduled:
-            fac, subj = get_faculty_subject_for_slot(d, s.batch, slot)
-            subj_name = subj.name if subj else 'N/A'
+            subj_name = slot_subj.get((d, slot), 'N/A')
             subject_wise[subj_name]['held'] += 1
             if (d, slot) in batch_att_map and str_roll not in batch_att_map[(d, slot)]:
                 subject_wise[subj_name]['attended'] += 1
@@ -2731,7 +3173,7 @@ def faculty_mentorship(request):
             'week_wise': week_wise, 'subject_wise': subj_list,
         })
         if held and pct < 75:
-            at_risk.append({'student': s, 'held': held, 'attended': attended, 'pct': pct})
+            at_risk.append({'student': s, 'held': held, 'attended': attended, 'pct': pct, 'week_wise': week_wise, 'subject_wise': subj_list})
     week_range = list(range(len(weeks)))
     ctx = {
         'faculty': faculty,

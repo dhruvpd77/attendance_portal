@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mentorship Attendance Report — LJIET</title>
+</head>
+<body style="margin:0; padding:0; font-family:'Segoe UI',Tahoma,Geneva,Verdana,sans-serif; background-color:#e2e8f0; line-height:1.5;">
+    <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="background:#e2e8f0;">
+        <tr>
+            <td style="padding:24px 16px;">
+                <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="600" align="center" style="max-width:600px; background:#ffffff; border-radius:16px; overflow:hidden; box-shadow:0 8px 32px rgba(0,0,0,0.12);">
+                    <!-- Header -->
+                    <tr>
+                        <td style="background:linear-gradient(135deg,#0f172a 0%,#1e40af 50%,#3b82f6 100%); padding:32px 28px; text-align:center;">
+                            <h1 style="margin:0;font-size:1.5rem;font-weight:700;color:#ffffff;letter-spacing:-0.02em;">LJIET Attendance Portal</h1>
+                            <p style="margin:8px 0 0;font-size:0.95rem;color:#93c5fd;">Mentorship Attendance Report</p>
+                        </td>
+                    </tr>
+                    <!-- Body -->
+                    <tr>
+                        <td style="padding:28px 28px 24px;">
+                            <p style="margin:0 0 20px;font-size:1.05rem;color:#1e293b;font-weight:500;">Dear {{ mentor.full_name }},</p>
+                            
+                            <!-- Alert Box -->
+                            <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="margin-bottom:28px;">
+                                <tr>
+                                    <td style="background:linear-gradient(135deg,#fef3c7 0%,#fde68a 100%); border-left:4px solid #f59e0b; border-radius:10px; padding:18px 20px;">
+                                        <p style="margin:0;color:#92400e;font-size:0.95rem;line-height:1.6;">
+                                            <strong style="font-size:1.05rem;">{{ at_risk_list|length }} of your mentees</strong> have attendance below 75&#37; for <strong>{{ phase }} up to Week {{ week_num }}</strong>.<br>
+                                            Please review the details below and take necessary action.
+                                        </p>
+                                    </td>
+                                </tr>
+                            </table>
+
+                            {% for item in at_risk_list %}
+                            <!-- Student Card -->
+                            <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="margin-bottom:28px; border:1px solid #e2e8f0; border-radius:12px; overflow:hidden;">
+                                <tr>
+                                    <td style="background:linear-gradient(135deg,#f8fafc 0%,#f1f5f9 100%); padding:18px 20px; border-bottom:1px solid #e2e8f0;">
+                                        <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">
+                                            <tr>
+                                                <td>
+                                                    <p style="margin:0;font-size:1.1rem;font-weight:700;color:#1e293b;">{{ item.student.roll_no }} — {{ item.student.name }}</p>
+                                                    <p style="margin:4px 0 0;font-size:0.9rem;color:#64748b;">Batch {{ item.student.batch.name }} • {{ item.attended }}/{{ item.held }} lectures attended</p>
+                                                </td>
+                                                <td align="right" width="100" style="vertical-align:middle;">
+                                                    <span style="display:inline-block;font-size:1.2rem;font-weight:700;padding:8px 16px;border-radius:10px;{% if item.pct < 50 %}background:#fef2f2;color:#dc2626;{% else %}background:#fffbeb;color:#b45309;{% endif %}">{{ item.pct|default:0|floatformat:1 }}&#37;</span>
+                                                </td>
+                                            </tr>
+                                        </table>
+                                    </td>
+                                </tr>
+                                <tr>
+                                    <td style="padding:20px;">
+                                        <!-- Subject-wise Table -->
+                                        <p style="margin:0 0 12px;font-size:0.8rem;font-weight:700;color:#475569;text-transform:uppercase;letter-spacing:0.5px;">Subject-wise Attendance</p>
+                                        <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:collapse; font-size:0.9rem;">
+                                            <tr>
+                                                <td style="background:#1e40af;color:#fff;padding:12px 14px;font-weight:600;text-align:left;border:1px solid #1e40af;">Subject</td>
+                                                <td style="background:#1e40af;color:#fff;padding:12px 14px;font-weight:600;text-align:center;width:70px;border:1px solid #1e40af;">Held</td>
+                                                <td style="background:#1e40af;color:#fff;padding:12px 14px;font-weight:600;text-align:center;width:80px;border:1px solid #1e40af;">Attended</td>
+                                                <td style="background:#1e40af;color:#fff;padding:12px 14px;font-weight:600;text-align:center;width:100px;border:1px solid #1e40af;">Att &#37;</td>
+                                            </tr>
+                                            {% for s in item.subject_wise %}
+                                            <tr style="background:{% if forloop.counter|divisibleby:2 %}#f8fafc{% else %}#ffffff{% endif %};">
+                                                <td style="padding:12px 14px;border:1px solid #e2e8f0;">{{ s.name }}</td>
+                                                <td style="padding:12px 14px;border:1px solid #e2e8f0;text-align:center;">{{ s.held }}</td>
+                                                <td style="padding:12px 14px;border:1px solid #e2e8f0;text-align:center;">{{ s.attended }}</td>
+                                                <td style="padding:12px 14px;border:1px solid #e2e8f0;text-align:center;font-weight:600;color:#1e40af;">{{ s.pct|default:0|floatformat:1 }}&#37;</td>
+                                            </tr>
+                                            {% endfor %}
+                                        </table>
+
+                                        <!-- Week-wise Table -->
+                                        <p style="margin:24px 0 12px;font-size:0.8rem;font-weight:700;color:#475569;text-transform:uppercase;letter-spacing:0.5px;">Week-wise Attendance (Cumulative)</p>
+                                        <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:collapse; font-size:0.9rem;">
+                                            <tr>
+                                                <td style="background:#1e40af;color:#fff;padding:12px 14px;font-weight:600;text-align:left;border:1px solid #1e40af;">Week</td>
+                                                <td style="background:#1e40af;color:#fff;padding:12px 14px;font-weight:600;text-align:center;width:60px;border:1px solid #1e40af;">Held</td>
+                                                <td style="background:#1e40af;color:#fff;padding:12px 14px;font-weight:600;text-align:center;width:70px;border:1px solid #1e40af;">Attended</td>
+                                                <td style="background:#1e40af;color:#fff;padding:12px 14px;font-weight:600;text-align:center;width:90px;border:1px solid #1e40af;">Week &#37;</td>
+                                                <td style="background:#1e40af;color:#fff;padding:12px 14px;font-weight:600;text-align:center;width:90px;border:1px solid #1e40af;">Cum &#37;</td>
+                                            </tr>
+                                            {% for w in item.week_wise %}
+                                            <tr style="background:{% if forloop.counter|divisibleby:2 %}#f8fafc{% else %}#ffffff{% endif %};">
+                                                <td style="padding:12px 14px;border:1px solid #e2e8f0;">Week {{ w.week }}</td>
+                                                <td style="padding:12px 14px;border:1px solid #e2e8f0;text-align:center;">{{ w.held }}</td>
+                                                <td style="padding:12px 14px;border:1px solid #e2e8f0;text-align:center;">{{ w.attended }}</td>
+                                                <td style="padding:12px 14px;border:1px solid #e2e8f0;text-align:center;font-weight:600;color:#1e40af;">{{ w.pct|default:0|floatformat:1 }}&#37;</td>
+                                                <td style="padding:12px 14px;border:1px solid #e2e8f0;text-align:center;font-weight:600;color:#1e40af;">{{ w.cum_pct|default:0|floatformat:1 }}&#37;</td>
+                                            </tr>
+                                            {% endfor %}
+                                        </table>
+                                    </td>
+                                </tr>
+                            </table>
+                            {% endfor %}
+                        </td>
+                    </tr>
+                    <!-- Footer -->
+                    <tr>
+                        <td style="background:linear-gradient(135deg,#f1f5f9 0%,#e2e8f0 100%); padding:24px 28px; border-top:1px solid #e2e8f0; text-align:center;">
+                            <p style="margin:0;font-size:0.95rem;font-weight:700;color:#334155;">LJIET Attendance Portal</p>
+                            <p style="margin:6px 0 0;font-size:0.85rem;color:#64748b;">{{ department.name }} • {{ phase }} • Up to Week {{ week_num }}</p>
+                            <p style="margin:6px 0 0;font-size:0.75rem;color:#94a3b8;">This is an automated report. Please do not reply.</p>
+                        </td>
+                    </tr>
+                </table>
+            </td>
+        </tr>
+    </table>
+</body>
+</html>

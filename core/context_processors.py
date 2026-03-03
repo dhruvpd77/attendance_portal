@@ -50,6 +50,8 @@ def sidebar_links(request):
             _make_link(request, 'Attendance Sheet', 'core:attendance_sheet_manager', 'fa-table', 'attendance_sheet_manager'),
             _make_link(request, 'Lecture Adjustment', 'core:lecture_adjustment', 'fa-exchange-alt', 'lecture_adjustment'),
             _make_link(request, 'Compile Attendance', 'core:compile_attendance', 'fa-file-alt', 'compile_attendance'),
+            _make_link(request, 'Notifications', 'core:admin_notifications', 'fa-bell', 'admin_notifications'),
+            _make_link(request, 'Student Analytics', 'core:admin_student_analytics', 'fa-chart-bar', 'admin_student_analytics'),
         ]
         if is_super_admin:
             links.insert(2, _make_link(request, 'Departmental admins', 'core:departmental_admin_list', 'fa-user-shield', 'departmental_admin_list'))
@@ -58,6 +60,7 @@ def sidebar_links(request):
             _make_link(request, 'Dashboard', 'core:faculty_dashboard', 'fa-tachometer-alt', 'faculty_dashboard'),
             _make_link(request, 'Mark Attendance', 'core:faculty_attendance_entry', 'fa-edit', 'faculty_attendance_entry'),
             _make_link(request, 'Mentorship Students', 'core:faculty_mentorship', 'fa-users', 'faculty_mentorship'),
+            _make_link(request, 'Student Analytics', 'core:faculty_student_analytics', 'fa-chart-bar', 'faculty_student_analytics'),
         ]
     elif role == 'student':
         links = [

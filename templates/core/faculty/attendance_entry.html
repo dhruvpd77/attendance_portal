@@ -193,7 +193,7 @@
                 absent.sort(function(a, b) { return parseInt(a, 10) - parseInt(b, 10); });
                 absentLines.push('Lec ' + lecNo + ': ' + (absent.length ? absent.join(', ') : '—'));
             });
-            var block = '*Fac Initials :* ' + facInitials + '\n*Date:* ' + dateDmy + '\n*LEC No:* ' + lecNumbers.join(',') + '\n*Div:* ' + divName + '\n*Absent numbers* -\n' + absentLines.join('\n');
+            var block = '**Fac Initials:** ' + facInitials + '\n**Date:** ' + dateDmy + '\n**LEC No:** ' + lecNumbers.join(',') + '\n**Div:** ' + divName + '\n**Absent numbers** -\n' + absentLines.join('\n');
             blocks.push(block);
         });
         return blocks.join('\n\n');

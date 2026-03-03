@@ -13,7 +13,7 @@ env/
 # Django
 *.log
 logs/
-# db.sqlite3  # Uncomment to exclude; included for project setup
+db.sqlite3
 media/
 staticfiles/
 
