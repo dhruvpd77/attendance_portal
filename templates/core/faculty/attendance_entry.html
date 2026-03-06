@@ -13,14 +13,45 @@
 .faculty-att-filters .form-label { font-weight: 600; color: #475569; font-size: 0.85rem; }
 .faculty-att-filters .form-select { min-width: 200px; }
 
-.faculty-batch-card { border: none; border-radius: 14px; box-shadow: 0 4px 20px rgba(0,0,0,0.08); overflow: hidden; margin-bottom: 1.5rem; }
-.faculty-batch-card .card-header { background: linear-gradient(90deg, #1e293b 0%, #334155 100%); color: #fff; font-weight: 600; padding: 0.9rem 1.25rem; border: none; display: flex; justify-content: space-between; align-items: center; }
-.faculty-batch-card .slot-attendance-form { border-bottom: 1px solid #e2e8f0; padding: 1.25rem 1.5rem; }
+.faculty-batch-card { border: none; border-radius: 16px; box-shadow: 0 4px 24px rgba(0,0,0,0.06), 0 1px 3px rgba(0,0,0,0.04); overflow: hidden; margin-bottom: 1.75rem; transition: box-shadow 0.3s ease; }
+.faculty-batch-card:hover { box-shadow: 0 8px 32px rgba(0,0,0,0.1), 0 2px 8px rgba(0,0,0,0.06); }
+.faculty-batch-card .card-header { background: linear-gradient(90deg, #1e293b 0%, #334155 100%); color: #fff; font-weight: 600; padding: 1rem 1.25rem; border: none; display: flex; justify-content: space-between; align-items: center; font-size: 1rem; }
+.faculty-batch-card .card-header .btn-light { border-radius: 10px; font-weight: 600; padding: 0.4rem 0.9rem; transition: all 0.25s ease; }
+.faculty-batch-card .card-header .btn-light:hover { background: #fff !important; color: #1e293b !important; transform: translateY(-1px); box-shadow: 0 4px 12px rgba(255,255,255,0.2); }
+.faculty-batch-card .slot-attendance-form { border-bottom: 1px solid #e2e8f0; padding: 1.5rem 1.75rem; transition: background 0.2s ease; }
+.faculty-batch-card .slot-attendance-form:hover { background: #fafbfc; }
 .faculty-batch-card .slot-attendance-form:last-of-type { border-bottom: none; }
-.faculty-batch-card .slot-title { font-weight: 600; color: #1e293b; }
-.faculty-batch-card .form-label.small { color: #64748b; }
-.faculty-batch-card label.d-flex.p-2.rounded-3 { border-radius: 10px !important; transition: background 0.2s ease; }
-.faculty-batch-card label.d-flex.p-2.rounded-3:hover { background: #e0f2fe !important; }
+.faculty-batch-card .slot-title { font-weight: 600; color: #1e293b; font-size: 1.05rem; display: inline-flex; align-items: center; gap: 0.5rem; }
+.faculty-batch-card .slot-title::before { content: ''; width: 4px; height: 1.2em; background: linear-gradient(180deg, #3b82f6 0%, #8b5cf6 100%); border-radius: 2px; }
+.faculty-batch-card .form-label.small { color: #64748b; letter-spacing: 0.5px; }
+
+/* Custom checkbox roll cards */
+.faculty-roll-item { cursor: pointer; border-radius: 12px; border: 2px solid #e2e8f0; background: #fff; padding: 0.65rem 0.85rem; transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1); }
+.faculty-roll-item:hover { border-color: #94a3b8; background: #f8fafc; transform: translateY(-1px); box-shadow: 0 4px 12px rgba(0,0,0,0.06); }
+.faculty-roll-item.checked { border-color: #dc2626; background: linear-gradient(135deg, #fef2f2 0%, #fee2e2 100%); box-shadow: 0 2px 8px rgba(220, 38, 38, 0.2); }
+.faculty-roll-item.checked:hover { background: linear-gradient(135deg, #fee2e2 0%, #fecaca 100%); }
+.faculty-roll-item .form-check-input { width: 1.1em; height: 1.1em; margin-top: 0; cursor: pointer; border: 2px solid #94a3b8; border-radius: 6px; transition: all 0.2s ease; }
+.faculty-roll-item .form-check-input:checked { background-color: #dc2626; border-color: #dc2626; }
+.faculty-roll-item .form-check-input:focus { box-shadow: 0 0 0 3px rgba(220, 38, 38, 0.25); }
+.faculty-roll-item .roll-num { font-weight: 600; color: #334155; font-size: 0.9rem; }
+
+/* Action buttons */
+.faculty-slot-actions .btn { border-radius: 10px; font-weight: 600; padding: 0.45rem 1rem; transition: all 0.25s ease; }
+.faculty-slot-actions .btn-success { background: linear-gradient(135deg, #059669 0%, #047857 100%) !important; border: none !important; box-shadow: 0 4px 12px rgba(5, 150, 105, 0.35); }
+.faculty-slot-actions .btn-success:hover { transform: translateY(-1px); box-shadow: 0 6px 16px rgba(5, 150, 105, 0.45); }
+.faculty-slot-actions .btn-primary { background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%) !important; border: none !important; box-shadow: 0 4px 12px rgba(59, 130, 246, 0.35); }
+.faculty-slot-actions .btn-primary:hover { transform: translateY(-1px); box-shadow: 0 6px 16px rgba(59, 130, 246, 0.45); }
+.faculty-slot-actions .btn-outline-secondary { border: 2px solid #e2e8f0; color: #64748b; }
+.faculty-slot-actions .btn-outline-secondary:hover { background: #f1f5f9 !important; border-color: #94a3b8 !important; color: #334155 !important; transform: translateY(-1px); }
+
+/* Slot cards subtle entrance */
+.faculty-batch-card .slot-attendance-form { animation: slotFadeIn 0.4s ease backwards; }
+.faculty-batch-card .slot-attendance-form:nth-child(2) { animation-delay: 0.05s; }
+.faculty-batch-card .slot-attendance-form:nth-child(3) { animation-delay: 0.1s; }
+.faculty-batch-card .slot-attendance-form:nth-child(4) { animation-delay: 0.15s; }
+.faculty-batch-card .slot-attendance-form:nth-child(5) { animation-delay: 0.2s; }
+.faculty-batch-card .slot-attendance-form:nth-child(6) { animation-delay: 0.25s; }
+@keyframes slotFadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
 </style>
 
 <div class="faculty-att-hero d-flex flex-wrap justify-content-between align-items-start gap-3">
@@ -47,7 +78,7 @@
         {% if selected_date %}
         <div id="attendance-meta" data-date-dmy="{{ selected_date|date:'d/m/Y' }}" data-fac-initials="{{ faculty.short_name|default:'' }}" style="display:none" aria-hidden="true"></div>
         <div>
-            <button type="button" id="copy-attendance-text-btn" class="btn btn-outline-primary btn-sm"><i class="fas fa-copy me-1"></i> Copy attendance text</button>
+            <button type="button" id="copy-attendance-text-btn" class="btn btn-outline-primary btn-sm" style="border-radius:10px;font-weight:600;"><i class="fas fa-copy me-1"></i> Copy attendance text</button>
         </div>
         {% endif %}
     </div>
@@ -84,12 +115,12 @@
         <div class="slot-attendance-form" data-slot-index="{{ forloop.counter0 }}">
             <div class="d-flex flex-wrap align-items-center justify-content-between gap-3 mb-3">
                 <p class="slot-title mb-0">{{ slot.time_slot }} — {{ slot.display_subject_name|default:slot.subject.name }}</p>
-                <div class="d-flex gap-2 flex-wrap">
+                <div class="d-flex gap-2 flex-wrap faculty-slot-actions">
                     {% if not forloop.first %}
-                    <button type="button" class="btn btn-sm btn-outline-secondary copy-above-btn" data-slot-index="{{ forloop.counter0 }}">Copy above</button>
+                    <button type="button" class="btn btn-sm btn-outline-secondary copy-above-btn" data-slot-index="{{ forloop.counter0 }}"><i class="fas fa-copy me-1"></i>Copy above</button>
                     {% endif %}
-                    <button type="button" class="btn btn-sm btn-success all-present-btn" data-form-id="form-{{ batch.id }}-{{ forloop.counter0 }}">All present</button>
-                    <button type="submit" form="form-{{ batch.id }}-{{ forloop.counter0 }}" class="btn btn-sm btn-primary">Save</button>
+                    <button type="button" class="btn btn-sm btn-success all-present-btn" data-form-id="form-{{ batch.id }}-{{ forloop.counter0 }}"><i class="fas fa-check-double me-1"></i>All present</button>
+                    <button type="submit" form="form-{{ batch.id }}-{{ forloop.counter0 }}" class="btn btn-sm btn-primary"><i class="fas fa-save me-1"></i>Save</button>
                 </div>
             </div>
             <form id="form-{{ batch.id }}-{{ forloop.counter0 }}" method="post" action="{% url 'core:faculty_attendance_save' %}">
@@ -97,13 +128,13 @@
                 <input type="hidden" name="date" value="{{ selected_date|date:'Y-m-d' }}">
                 <input type="hidden" name="batch_id" value="{{ batch.id }}">
                 <input type="hidden" name="lecture_slot" value="{{ slot.time_slot }}">
-                <label class="form-label small text-uppercase fw-semibold mb-2">Tick absent students</label>
+                <label class="form-label small text-uppercase fw-semibold mb-3">Tick absent students</label>
                 <div class="row g-2 row-cols-3 row-cols-sm-5">
                     {% for s in batch.students_sorted %}
                     <div class="col">
-                        <label class="d-flex align-items-center gap-2 p-2 rounded-3 border border-light bg-light bg-opacity-50 mb-0" style="cursor:pointer;">
+                        <label class="faculty-roll-item d-flex align-items-center gap-2 mb-0{% if s.roll_no in slot.prefill_absent_set %} checked{% endif %}">
                             <input type="checkbox" name="absent_roll_numbers" value="{{ s.roll_no }}" {% if s.roll_no in slot.prefill_absent_set %}checked{% endif %} class="form-check-input">
-                            <span class="small text-truncate" title="{{ s.roll_no }} — {{ s.name }}">{{ s.roll_no }}</span>
+                            <span class="roll-num text-truncate" title="{{ s.roll_no }} — {{ s.name }}">{{ s.roll_no }}</span>
                         </label>
                     </div>
                     {% endfor %}
@@ -119,6 +150,15 @@
 
 <script>
 (function() {
+    // Toggle 'checked' class on roll items when checkbox state changes
+    document.querySelectorAll('.faculty-roll-item').forEach(function(label) {
+        var cb = label.querySelector('input[type="checkbox"]');
+        if (!cb) return;
+        function updateClass() { label.classList.toggle('checked', cb.checked); }
+        cb.addEventListener('change', updateClass);
+        updateClass();
+    });
+
     document.querySelectorAll('.copy-above-btn').forEach(function(btn) {
         btn.addEventListener('click', function() {
             var slotIndex = parseInt(this.getAttribute('data-slot-index'), 10);
@@ -137,6 +177,8 @@
             });
             currForm.querySelectorAll('input[name="absent_roll_numbers"]').forEach(function(cb) {
                 cb.checked = checkedValues.indexOf(cb.value) !== -1;
+                var label = cb.closest('.faculty-roll-item');
+                if (label) label.classList.toggle('checked', cb.checked);
             });
         });
     });
