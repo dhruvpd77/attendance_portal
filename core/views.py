@@ -21,7 +21,8 @@ from django.urls import reverse
 from django.contrib.auth.decorators import login_required
 from django.contrib import messages
 from django.http import HttpResponse
-from django.db.models import Count, Q
+from django.db.models import Count, Q, IntegerField
+from django.db.models.functions import Cast
 from openpyxl import Workbook
 from openpyxl.styles import Font, Alignment, Border, Side, PatternFill
 from openpyxl.utils import get_column_letter
@@ -715,6 +716,96 @@ def download_credentials_file(request, filename):
     return response
 
 
+@login_required
+def download_faculty_credentials_excel(request):
+    """Download Excel of all faculty credentials (username, name, etc.) in the department. Passwords cannot be exported."""
+    if not user_can_admin(request):
+        raise Http404()
+    dept = get_admin_department(request)
+    if not dept:
+        messages.error(request, 'Select a department first from Dashboard.')
+        return redirect('core:generate_credentials_choice')
+    faculties = Faculty.objects.filter(department=dept, user__isnull=False).select_related('user').order_by('short_name')
+    wb = Workbook()
+    ws = wb.active
+    ws.title = 'Faculty Credentials'
+    thin_border = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
+    header_fill = PatternFill(start_color='4F81BD', end_color='4F81BD', fill_type='solid')
+    header_font = Font(bold=True, color='FFFFFF')
+    headers = ['Department', 'Full Name', 'Short Name', 'Username', 'Note']
+    for c, h in enumerate(headers, 1):
+        cell = ws.cell(1, c, h)
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.border = thin_border
+    for row_idx, f in enumerate(faculties, 2):
+        ws.cell(row_idx, 1, f.department.name).border = thin_border
+        ws.cell(row_idx, 2, f.full_name).border = thin_border
+        ws.cell(row_idx, 3, f.short_name or '').border = thin_border
+        ws.cell(row_idx, 4, f.user.username).border = thin_border
+        ws.cell(row_idx, 5, 'Password set at creation. Use Change Password to reset.').border = thin_border
+    ws.column_dimensions['A'].width = 18
+    ws.column_dimensions['B'].width = 28
+    ws.column_dimensions['C'].width = 14
+    ws.column_dimensions['D'].width = 20
+    ws.column_dimensions['E'].width = 42
+    bio = BytesIO()
+    wb.save(bio)
+    bio.seek(0)
+    safe_dept = re.sub(r'[^\w\-]', '_', dept.name)[:50]
+    fname = f'Faculty_Credentials_{safe_dept}.xlsx'
+    resp = HttpResponse(bio.getvalue(), content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+    resp['Content-Disposition'] = f'attachment; filename="{fname}"'
+    return resp
+
+
+@login_required
+def download_student_credentials_excel(request):
+    """Download Excel of all student credentials (username, roll_no, name, etc.) in the department. Passwords cannot be exported."""
+    if not user_can_admin(request):
+        raise Http404()
+    dept = get_admin_department(request)
+    if not dept:
+        messages.error(request, 'Select a department first from Dashboard.')
+        return redirect('core:generate_credentials_choice')
+    students = Student.objects.filter(department=dept, user__isnull=False).select_related('user', 'batch').order_by('batch__name', 'roll_no')
+    wb = Workbook()
+    ws = wb.active
+    ws.title = 'Student Credentials'
+    thin_border = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
+    header_fill = PatternFill(start_color='4F81BD', end_color='4F81BD', fill_type='solid')
+    header_font = Font(bold=True, color='FFFFFF')
+    headers = ['Department', 'Batch', 'Roll No', 'Enrollment No', 'Name', 'Username', 'Note']
+    for c, h in enumerate(headers, 1):
+        cell = ws.cell(1, c, h)
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.border = thin_border
+    for row_idx, s in enumerate(students, 2):
+        ws.cell(row_idx, 1, s.department.name).border = thin_border
+        ws.cell(row_idx, 2, s.batch.name).border = thin_border
+        ws.cell(row_idx, 3, s.roll_no).border = thin_border
+        ws.cell(row_idx, 4, s.enrollment_no or '').border = thin_border
+        ws.cell(row_idx, 5, s.name).border = thin_border
+        ws.cell(row_idx, 6, s.user.username).border = thin_border
+        ws.cell(row_idx, 7, 'Password set at creation. Use Change Password to reset.').border = thin_border
+    ws.column_dimensions['A'].width = 18
+    ws.column_dimensions['B'].width = 12
+    ws.column_dimensions['C'].width = 12
+    ws.column_dimensions['D'].width = 18
+    ws.column_dimensions['E'].width = 28
+    ws.column_dimensions['F'].width = 20
+    ws.column_dimensions['G'].width = 42
+    bio = BytesIO()
+    wb.save(bio)
+    bio.seek(0)
+    safe_dept = re.sub(r'[^\w\-]', '_', dept.name)[:50]
+    fname = f'Student_Credentials_{safe_dept}.xlsx'
+    resp = HttpResponse(bio.getvalue(), content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+    resp['Content-Disposition'] = f'attachment; filename="{fname}"'
+    return resp
+
+
 # ---------- Admin: Students ----------
 
 @login_required
@@ -732,7 +823,9 @@ def student_list(request):
         students = students.filter(
             Q(roll_no__icontains=q) | Q(name__icontains=q) | Q(enrollment_no__icontains=q)
         )
-    students = students.select_related('batch', 'mentor').order_by('batch__name', 'roll_no')
+    students = students.select_related('batch', 'mentor').annotate(
+        roll_no_int=Cast('roll_no', IntegerField())
+    ).order_by('batch__name', 'roll_no_int', 'roll_no')
     from django.core.paginator import Paginator
     paginator = Paginator(students, 25)
     page = request.GET.get('page', 1)
@@ -2894,7 +2987,12 @@ def faculty_attendance_entry(request):
         except Exception:
             selected_date = available_dates[0] if available_dates else None
     else:
-        selected_date = available_dates[0] if available_dates else None
+        # When no date in URL: auto-select today if available, else first available
+        today = datetime.now().date()
+        if available_dates and today in available_dates:
+            selected_date = today
+        else:
+            selected_date = available_dates[0] if available_dates else None
 
     slots_by_batch = defaultdict(list)
     if selected_date:

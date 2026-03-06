@@ -7,7 +7,8 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 BASE_DIR = Path(__file__).resolve().parent.parent
-load_dotenv(BASE_DIR / '.env')
+_env_path = BASE_DIR / '.env'
+load_dotenv(dotenv_path=str(_env_path))
 
 SECRET_KEY = os.environ.get('SECRET_KEY', 'django-insecure-change-in-production-attendance-portal')
 DEBUG = os.environ.get('DEBUG', 'True').lower() in ('true', '1', 'yes')
