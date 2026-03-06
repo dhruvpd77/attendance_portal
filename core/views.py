@@ -47,6 +47,12 @@ def handler500(request):
 
 # ---------- Helpers ----------
 
+def _roll_sort_key(s):
+    """Sort key for students: ascending numeric roll_no (75 before 109). Non-numeric sorts last."""
+    r = str(getattr(s, 'roll_no', '') or '').strip()
+    return (int(r) if r.isdigit() else 999999, r)
+
+
 def get_phase_holidays(dept, phase):
     """Return set of holiday dates for this department and phase (T1, T2, T3, T4)."""
     if not dept or not phase:
@@ -693,7 +699,7 @@ def student_generate_credentials(request):
         return redirect('core:admin_dashboard')
 
     if request.method == 'POST':
-        students_without_user = Student.objects.filter(department=dept, user__isnull=True).select_related('batch').order_by('batch__name', 'roll_no')
+        students_without_user = Student.objects.filter(department=dept, user__isnull=True).select_related('batch').annotate(roll_no_int=Cast('roll_no', IntegerField())).order_by('batch__name', 'roll_no_int', 'roll_no')
         if not students_without_user.exists():
             messages.warning(request, 'All students in this department already have login credentials.')
             return redirect('core:generate_credentials_choice')
@@ -1001,7 +1007,7 @@ def download_student_credentials_excel(request):
     if not dept:
         messages.error(request, 'Select a department first from Dashboard.')
         return redirect('core:generate_credentials_choice')
-    students = Student.objects.filter(department=dept, user__isnull=False).select_related('user', 'batch').order_by('batch__name', 'roll_no')
+    students = Student.objects.filter(department=dept, user__isnull=False).select_related('user', 'batch').annotate(roll_no_int=Cast('roll_no', IntegerField())).order_by('batch__name', 'roll_no_int', 'roll_no')
     wb = Workbook()
     ws = wb.active
     ws.title = 'Student Credentials'
@@ -2287,7 +2293,7 @@ def attendance_sheet_excel(request):
             ws = wb.create_sheet(title=(batch.name[:31] if batch.name else 'Sheet'))
 
         students = list(Student.objects.filter(department=dept, batch=batch))
-        students.sort(key=lambda s: (int(str(s.roll_no).strip()) if str(s.roll_no).strip().isdigit() else 999999, str(s.roll_no)))
+        students.sort(key=_roll_sort_key)
         date_slots_list = _build_date_slots_list_for_batch(dept, batch, dates)
         overall_segments = build_overall_segments(batch, date_slots_list, None)
 
@@ -2351,6 +2357,7 @@ def _admin_analytics_data(dept, phase=None, week=None):
         }
     batches = list(Batch.objects.filter(department=dept).select_related('department'))
     students = list(Student.objects.filter(department=dept).select_related('batch'))
+    students.sort(key=lambda s: (s.batch.name if s.batch else '', _roll_sort_key(s)))
     batch_scheduled = defaultdict(set)
     for batch in batches:
         for d in all_dates:
@@ -2627,7 +2634,8 @@ def _admin_notifications_build_mentor_data(dept, phase, week_idx):
     students = list(
         Student.objects.filter(department=dept, mentor__isnull=False)
         .select_related('batch', 'mentor')
-        .order_by('mentor__full_name', 'batch__name', 'roll_no')
+        .annotate(roll_no_int=Cast('roll_no', IntegerField()))
+        .order_by('mentor__full_name', 'batch__name', 'roll_no_int', 'roll_no')
     )
     if not students:
         return []
@@ -2879,7 +2887,7 @@ def _student_analytics_build_data(dept, phase, week_idx, batch_id, roll_search=N
             cum_dates.update(phase_dates.get(phases[i], []))
         for i in range(week_idx + 1):
             cum_dates.update(weeks[i])
-    students = Student.objects.filter(department=dept, batch=batch).select_related('batch', 'mentor').order_by('roll_no')
+    students = Student.objects.filter(department=dept, batch=batch).select_related('batch', 'mentor').annotate(roll_no_int=Cast('roll_no', IntegerField())).order_by('roll_no_int', 'roll_no')
     if roll_search:
         q = Q(roll_no__icontains=roll_search) | Q(name__icontains=roll_search) | Q(enrollment_no__icontains=roll_search)
         students = students.filter(q)
@@ -2948,14 +2956,14 @@ def _student_analytics_build_data_by_roll_search(dept, phase, week_idx, roll_sea
     if not weeks or week_idx < 0 or week_idx >= len(weeks):
         return [], batches
     q = Q(roll_no__icontains=roll_search) | Q(name__icontains=roll_search) | Q(enrollment_no__icontains=roll_search)
-    students = list(Student.objects.filter(department=dept).filter(q).select_related('batch', 'mentor').order_by('batch__name', 'roll_no'))
+    students = list(Student.objects.filter(department=dept).filter(q).select_related('batch', 'mentor').annotate(roll_no_int=Cast('roll_no', IntegerField())).order_by('batch__name', 'roll_no_int', 'roll_no'))
     if not students:
         return [], batches
     result = []
     for bid in {s.batch_id for s in students}:
         part, _ = _student_analytics_build_data(dept, phase, week_idx, bid, roll_search)
         result.extend(part)
-    result.sort(key=lambda x: (x['student'].batch.name, str(x['student'].roll_no)))
+    result.sort(key=lambda x: (x['student'].batch.name, _roll_sort_key(x['student'])))
     return result, batches
 
 
@@ -3060,11 +3068,8 @@ def compile_attendance_excel(request):
     cumulative_dates = []
     for i in range(week_idx + 1):
         cumulative_dates.append(set(weeks[i]) if i == 0 else cumulative_dates[-1] | set(weeks[i]))
-    # All students, all batches, sorted by batch then roll_no (numeric)
+    # All students, all batches, sorted by batch then roll_no (numeric ascending)
     students = list(Student.objects.filter(department=dept).select_related('batch').order_by('batch__name'))
-    def _roll_sort_key(s):
-        r = str(s.roll_no).strip()
-        return (int(r) if r.isdigit() else 999999, r)
     students.sort(key=lambda s: (s.batch.name, _roll_sort_key(s)))
     if not students:
         messages.error(request, 'No students in this department.')
@@ -3269,10 +3274,6 @@ def faculty_attendance_entry(request):
         for a in FacultyAttendance.objects.filter(faculty=faculty, date=selected_date):
             attendance_prefill[a.batch.id][a.lecture_slot] = [x.strip() for x in (a.absent_roll_numbers or '').split(',') if x.strip()]
 
-    def _roll_sort_key(s):
-        r = str(s.roll_no).strip()
-        return (int(r) if r.isdigit() else 999999, r)
-
     batch_students_sorted = {}
     for batch, slots in slots_by_batch.items():
         sorted_students = sorted(batch.student_set.all(), key=_roll_sort_key)
@@ -3354,7 +3355,7 @@ def faculty_report_excel(request):
     ).select_related('subject').order_by('time_slot'))
     atts = FacultyAttendance.objects.filter(faculty=faculty, date=selected_date, batch=batch).order_by('lecture_slot')
     att_map = {a.lecture_slot: set(x.strip() for x in (a.absent_roll_numbers or '').split(',') if x.strip()) for a in atts}
-    students = list(Student.objects.filter(department=faculty.department, batch=batch).order_by('roll_no'))
+    students = list(Student.objects.filter(department=faculty.department, batch=batch).annotate(roll_no_int=Cast('roll_no', IntegerField())).order_by('roll_no_int', 'roll_no'))
 
     wb = Workbook()
     ws = wb.active
@@ -3441,7 +3442,8 @@ def faculty_mentorship(request):
     mentorship_students = list(
         Student.objects.filter(mentor=faculty, department=dept)
         .select_related('batch')
-        .order_by('batch__name', 'roll_no')
+        .annotate(roll_no_int=Cast('roll_no', IntegerField()))
+        .order_by('batch__name', 'roll_no_int', 'roll_no')
     )
     if not mentorship_students:
         ctx = {'faculty': faculty, 'mentorship_students': [], 'student_stats': [], 'at_risk': [], 'phase': 'T1', 'phases': ['T1', 'T2', 'T3', 'T4'], 'week_range': [], 'selected_week': 'all'}
