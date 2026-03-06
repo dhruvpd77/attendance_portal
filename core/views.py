@@ -563,6 +563,73 @@ def faculty_generate_credentials(request):
         return redirect('core:admin_dashboard')
 
     if request.method == 'POST':
+        if request.POST.get('action') in ('reset_passwords', 'reset_and_send_email'):
+            faculties_with_user = Faculty.objects.filter(department=dept, user__isnull=False).select_related('user').order_by('short_name')
+            if not faculties_with_user.exists():
+                messages.warning(request, 'No faculty with credentials to reset.')
+                return redirect('core:faculty_generate_credentials')
+            rows = []
+            for faculty in faculties_with_user:
+                password = str(random.randint(0, 9999)).zfill(4)
+                faculty.user.set_password(password)
+                faculty.user.save()
+                rows.append({
+                    'department': dept.name,
+                    'full_name': faculty.full_name,
+                    'short_name': faculty.short_name,
+                    'username': faculty.user.username,
+                    'password': password,
+                    'email': (faculty.email or getattr(faculty.user, 'email', '') or '').strip(),
+                })
+            cred_dir = os.path.join(settings.MEDIA_ROOT, 'credentials')
+            os.makedirs(cred_dir, exist_ok=True)
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            safe_dept = re.sub(r'[^\w\-]', '_', dept.name)[:50]
+            filename = f'faculty_credentials_reset_{safe_dept}_{timestamp}.csv'
+            filepath = os.path.join(cred_dir, filename)
+            with open(filepath, 'w', newline='', encoding='utf-8') as f:
+                w = csv.DictWriter(f, fieldnames=['department', 'full_name', 'short_name', 'username', 'password', 'email'])
+                w.writeheader()
+                w.writerows(rows)
+            if request.POST.get('action') == 'reset_and_send_email':
+                login_url = (settings.SITE_URL + reverse('accounts:login')) if settings.SITE_URL else request.build_absolute_uri(reverse('accounts:login'))
+                sent = 0
+                skipped = []
+                for row in rows:
+                    email = row.get('email', '').strip()
+                    if not email:
+                        skipped.append(row.get('full_name', 'Unknown'))
+                        continue
+                    html = render(request, 'core/admin/email_faculty_credentials.html', {
+                        'full_name': row.get('full_name', 'User'),
+                        'username': row.get('username', ''),
+                        'password': row.get('password', ''),
+                        'login_url': login_url,
+                    }).content.decode('utf-8')
+                    try:
+                        plain_msg = f"Username: {row.get('username', '')}\nPassword: {row.get('password', '')}\n\nSign in at: {login_url}\n\nKeep these credentials secure. Use Change Password on the login page to reset."
+                        send_mail(
+                            subject='Your LJIET Attendance Portal Login Credentials',
+                            message=plain_msg,
+                            from_email=settings.DEFAULT_FROM_EMAIL,
+                            recipient_list=[email],
+                            html_message=html,
+                            fail_silently=False,
+                        )
+                        sent += 1
+                    except Exception:
+                        skipped.append(row.get('full_name', 'Unknown'))
+                if sent:
+                    messages.success(request, f'Passwords reset. Email sent to {sent} faculty with their new username and password.')
+                if skipped:
+                    messages.warning(request, f'Could not email {len(skipped)} (no email or failed): {", ".join(skipped[:5])}{"..." if len(skipped) > 5 else ""}')
+            else:
+                messages.success(request, f'Passwords reset for {len(rows)} faculty. Download the file below — it contains the new passwords.')
+            request.session['credentials_filename'] = filename
+            request.session['credentials_count'] = len(rows)
+            request.session['credentials_type'] = 'faculty'
+            return redirect('core:credentials_result')
+
         faculties_without_user = Faculty.objects.filter(department=dept, user__isnull=True).order_by('short_name')
         if not faculties_without_user.exists():
             messages.warning(request, 'All faculties in this department already have login credentials.')
@@ -588,6 +655,7 @@ def faculty_generate_credentials(request):
                 'short_name': faculty.short_name,
                 'username': username,
                 'password': password,
+                'email': faculty.email or '',
             })
 
         cred_dir = os.path.join(settings.MEDIA_ROOT, 'credentials')
@@ -598,7 +666,7 @@ def faculty_generate_credentials(request):
         filepath = os.path.join(cred_dir, filename)
 
         with open(filepath, 'w', newline='', encoding='utf-8') as f:
-            w = csv.DictWriter(f, fieldnames=['department', 'full_name', 'short_name', 'username', 'password'])
+            w = csv.DictWriter(f, fieldnames=['department', 'full_name', 'short_name', 'username', 'password', 'email'])
             w.writeheader()
             w.writerows(rows)
 
@@ -654,6 +722,7 @@ def student_generate_credentials(request):
                 'name': student.name,
                 'username': username,
                 'password': password,
+                'email': student.email or '',
             })
 
         cred_dir = os.path.join(settings.MEDIA_ROOT, 'credentials')
@@ -664,7 +733,7 @@ def student_generate_credentials(request):
         filepath = os.path.join(cred_dir, filename)
 
         with open(filepath, 'w', newline='', encoding='utf-8') as f:
-            w = csv.DictWriter(f, fieldnames=['department', 'batch', 'roll_no', 'enrollment_no', 'name', 'username', 'password'])
+            w = csv.DictWriter(f, fieldnames=['department', 'batch', 'roll_no', 'enrollment_no', 'name', 'username', 'password', 'email'])
             w.writeheader()
             w.writerows(rows)
 
@@ -717,6 +786,168 @@ def download_credentials_file(request, filename):
 
 
 @login_required
+def download_credentials_excel(request, filename):
+    """Download Excel from the credentials CSV (includes passwords - only available right after generation)."""
+    if not user_can_admin(request):
+        raise Http404()
+    if not filename or not re.match(r'^[a-zA-Z0-9_.\-]+\.csv$', filename):
+        raise Http404()
+    filepath = os.path.join(settings.MEDIA_ROOT, 'credentials', filename)
+    if not os.path.isfile(filepath):
+        raise Http404()
+    cred_type = 'Faculty' if 'faculty' in filename.lower() else 'Student'
+    wb = Workbook()
+    ws = wb.active
+    ws.title = f'{cred_type} Credentials'
+    thin_border = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
+    header_fill = PatternFill(start_color='4F81BD', end_color='4F81BD', fill_type='solid')
+    header_font = Font(bold=True, color='FFFFFF')
+    with open(filepath, 'r', encoding='utf-8-sig') as f:
+        reader = csv.DictReader(f)
+        rows = list(reader)
+    if not rows:
+        raise Http404()
+    fieldnames = list(rows[0].keys())
+    for c, h in enumerate(fieldnames, 1):
+        cell = ws.cell(1, c, h.replace('_', ' ').title())
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.border = thin_border
+    for row_idx, row in enumerate(rows, 2):
+        for col_idx, key in enumerate(fieldnames, 1):
+            ws.cell(row_idx, col_idx, row.get(key, '')).border = thin_border
+    for c in range(1, len(fieldnames) + 1):
+        ws.column_dimensions[get_column_letter(c)].width = 18
+    bio = BytesIO()
+    wb.save(bio)
+    bio.seek(0)
+    xlsx_name = filename.replace('.csv', '.xlsx')
+    resp = HttpResponse(bio.getvalue(), content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+    resp['Content-Disposition'] = f'attachment; filename="{xlsx_name}"'
+    return resp
+
+
+@login_required
+def send_credentials_emails(request):
+    """Send credentials email to each faculty/student from the CSV (after generation)."""
+    if not user_can_admin(request):
+        return redirect('accounts:role_redirect')
+    if request.method != 'POST':
+        return redirect('core:generate_credentials_choice')
+    filename = request.POST.get('filename', '').strip()
+    if not filename or not re.match(r'^[a-zA-Z0-9_.\-]+\.csv$', filename):
+        messages.error(request, 'Invalid file.')
+        return redirect('core:generate_credentials_choice')
+    filepath = os.path.join(settings.MEDIA_ROOT, 'credentials', filename)
+    if not os.path.isfile(filepath):
+        messages.error(request, 'Credentials file not found.')
+        return redirect('core:generate_credentials_choice')
+    cred_type = 'faculty' if 'faculty' in filename.lower() else 'student'
+    login_url = (settings.SITE_URL + reverse('accounts:login')) if settings.SITE_URL else request.build_absolute_uri(reverse('accounts:login'))
+    sent = 0
+    skipped = []
+    try:
+        with open(filepath, 'r', encoding='utf-8-sig') as f:
+            reader = csv.DictReader(f)
+            rows = list(reader)
+        for row in rows:
+            email = row.get('email', '').strip()
+            if not email and cred_type == 'faculty':
+                try:
+                    user = User.objects.get(username=row.get('username', ''))
+                    faculty = getattr(user, 'faculty_profile', None)
+                    if faculty:
+                        email = (faculty.email or getattr(user, 'email', '') or '').strip()
+                except User.DoesNotExist:
+                    pass
+            if not email:
+                skipped.append(row.get('full_name') or row.get('name', 'Unknown'))
+                continue
+            full_name = row.get('full_name') or row.get('name', 'User')
+            username = row.get('username', '')
+            password = row.get('password', '')
+            if cred_type == 'faculty':
+                html = render(request, 'core/admin/email_faculty_credentials.html', {
+                    'full_name': full_name,
+                    'username': username,
+                    'password': password,
+                    'login_url': login_url,
+                }).content.decode('utf-8')
+                subject = 'Your LJIET Attendance Portal Login Credentials'
+            else:
+                html = render(request, 'core/admin/email_student_credentials.html', {
+                    'full_name': full_name,
+                    'username': username,
+                    'password': password,
+                    'login_url': login_url,
+                }).content.decode('utf-8')
+                subject = 'Your LJIET Attendance Portal Login Credentials'
+            try:
+                plain_msg = f"Username: {username}\nPassword: {password}\n\nSign in at: {login_url}\n\nKeep these credentials secure. Use Change Password on the login page to reset."
+                send_mail(
+                    subject=subject,
+                    message=plain_msg,
+                    from_email=settings.DEFAULT_FROM_EMAIL,
+                    recipient_list=[email],
+                    html_message=html,
+                    fail_silently=False,
+                )
+                sent += 1
+            except Exception:
+                skipped.append(full_name)
+    except Exception as e:
+        messages.error(request, f'Error: {e}')
+        return redirect('core:generate_credentials_choice')
+    if sent:
+        messages.success(request, f'Email sent to {sent} {cred_type}(s).')
+    if skipped:
+        messages.warning(request, f'Skipped (no email or failed): {", ".join(skipped[:5])}{"..." if len(skipped) > 5 else ""}')
+    return redirect('core:faculty_generate_credentials' if cred_type == 'faculty' else 'core:student_generate_credentials')
+
+
+@login_required
+def send_faculty_existing_emails(request):
+    """Send username-only email to all faculty with credentials in the department."""
+    if not user_can_admin(request):
+        return redirect('accounts:role_redirect')
+    dept = get_admin_department(request)
+    if not dept:
+        messages.error(request, 'Select a department first.')
+        return redirect('core:generate_credentials_choice')
+    faculties = Faculty.objects.filter(department=dept, user__isnull=False).select_related('user')
+    login_url = (settings.SITE_URL + reverse('accounts:login')) if settings.SITE_URL else request.build_absolute_uri(reverse('accounts:login'))
+    sent = 0
+    skipped = []
+    for faculty in faculties:
+        email = (faculty.email or getattr(faculty.user, 'email', '') or '').strip()
+        if not email:
+            skipped.append(faculty.full_name)
+            continue
+        html = render(request, 'core/admin/email_faculty_username_only.html', {
+            'full_name': faculty.full_name,
+            'username': faculty.user.username,
+            'login_url': login_url,
+        }).content.decode('utf-8')
+        try:
+            send_mail(
+                subject='Your LJIET Attendance Portal Login',
+                message='Please view this email in HTML format.',
+                from_email=settings.DEFAULT_FROM_EMAIL,
+                recipient_list=[email],
+                html_message=html,
+                fail_silently=False,
+            )
+            sent += 1
+        except Exception:
+            skipped.append(faculty.full_name)
+    if sent:
+        messages.success(request, f'Email sent to {sent} faculty.')
+    if skipped:
+        messages.warning(request, f'Skipped (no email or failed): {", ".join(skipped[:5])}{"..." if len(skipped) > 5 else ""}')
+    return redirect('core:faculty_generate_credentials')
+
+
+@login_required
 def download_faculty_credentials_excel(request):
     """Download Excel of all faculty credentials (username, name, etc.) in the department. Passwords cannot be exported."""
     if not user_can_admin(request):
@@ -732,7 +963,7 @@ def download_faculty_credentials_excel(request):
     thin_border = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
     header_fill = PatternFill(start_color='4F81BD', end_color='4F81BD', fill_type='solid')
     header_font = Font(bold=True, color='FFFFFF')
-    headers = ['Department', 'Full Name', 'Short Name', 'Username', 'Note']
+    headers = ['Department', 'Full Name', 'Short Name', 'Username', 'Password', 'Note']
     for c, h in enumerate(headers, 1):
         cell = ws.cell(1, c, h)
         cell.font = header_font
@@ -743,12 +974,14 @@ def download_faculty_credentials_excel(request):
         ws.cell(row_idx, 2, f.full_name).border = thin_border
         ws.cell(row_idx, 3, f.short_name or '').border = thin_border
         ws.cell(row_idx, 4, f.user.username).border = thin_border
-        ws.cell(row_idx, 5, 'Password set at creation. Use Change Password to reset.').border = thin_border
+        ws.cell(row_idx, 5, '—').border = thin_border  # Passwords are hashed, not retrievable
+        ws.cell(row_idx, 6, 'Use Change Password on login page to reset.').border = thin_border
     ws.column_dimensions['A'].width = 18
     ws.column_dimensions['B'].width = 28
     ws.column_dimensions['C'].width = 14
     ws.column_dimensions['D'].width = 20
-    ws.column_dimensions['E'].width = 42
+    ws.column_dimensions['E'].width = 12
+    ws.column_dimensions['F'].width = 38
     bio = BytesIO()
     wb.save(bio)
     bio.seek(0)

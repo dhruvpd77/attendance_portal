@@ -1,5 +1,21 @@
 # Deploy LJIET_Attendance on PythonAnywhere
 
+## 0. Update Existing Deployment (fetch latest code from GitHub)
+
+If the app is already deployed and you want to pull the latest changes:
+
+```bash
+cd ~/attendance_portal
+git pull origin main
+pip install -r requirements.txt
+python manage.py migrate
+python manage.py collectstatic --noinput
+```
+
+Then go to **Web** tab → click **Reload** to restart the app.
+
+---
+
 ## 1. General Setup
 
 ### 1.1 Create PythonAnywhere account

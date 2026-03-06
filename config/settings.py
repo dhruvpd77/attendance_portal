@@ -112,6 +112,9 @@ LOGGING = {
     'root': {'handlers': ['console'], 'level': 'INFO'},
 }
 
+# Site URL for email links (Sign In button, etc.). Used when sending credentials emails.
+SITE_URL = (os.environ.get('SITE_URL', 'https://ljiet.pythonanywhere.com') or '').rstrip('/')
+
 # Email (for attendance notifications and mentor reports)
 # Development: emails printed to console. Production: set EMAIL_BACKEND to smtp.
 EMAIL_BACKEND = os.environ.get('EMAIL_BACKEND', 'django.core.mail.backends.console.EmailBackend')
