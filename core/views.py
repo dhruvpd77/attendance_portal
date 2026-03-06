@@ -2161,7 +2161,11 @@ def _write_one_batch_attendance_sheet(ws, batch, date_slots_list, students, att_
                 pct = round(attended / held * 100, 1) if held else 0
                 ws.cell(idx, c, held).border = thin_border
                 ws.cell(idx, c + 1, attended).border = thin_border
-                ws.cell(idx, c + 2, f'{pct}%').border = thin_border
+                pct_cell = ws.cell(idx, c + 2, f'{pct}%')
+                pct_cell.border = thin_border
+                if pct < 75 and held:
+                    pct_cell.font = Font(color='FFFFFF', bold=True)
+                    pct_cell.fill = PatternFill(start_color='DC3545', end_color='DC3545', fill_type='solid')
                 c += 3
     ws.column_dimensions['A'].width = 12
     ws.column_dimensions['B'].width = 20
@@ -2282,7 +2286,8 @@ def attendance_sheet_excel(request):
         else:
             ws = wb.create_sheet(title=(batch.name[:31] if batch.name else 'Sheet'))
 
-        students = list(Student.objects.filter(department=dept, batch=batch).order_by('roll_no'))
+        students = list(Student.objects.filter(department=dept, batch=batch))
+        students.sort(key=lambda s: (int(str(s.roll_no).strip()) if str(s.roll_no).strip().isdigit() else 999999, str(s.roll_no)))
         date_slots_list = _build_date_slots_list_for_batch(dept, batch, dates)
         overall_segments = build_overall_segments(batch, date_slots_list, None)
 
@@ -3055,8 +3060,12 @@ def compile_attendance_excel(request):
     cumulative_dates = []
     for i in range(week_idx + 1):
         cumulative_dates.append(set(weeks[i]) if i == 0 else cumulative_dates[-1] | set(weeks[i]))
-    # All students, all batches, sorted by batch then roll_no
-    students = list(Student.objects.filter(department=dept).select_related('batch').order_by('batch__name', 'roll_no'))
+    # All students, all batches, sorted by batch then roll_no (numeric)
+    students = list(Student.objects.filter(department=dept).select_related('batch').order_by('batch__name'))
+    def _roll_sort_key(s):
+        r = str(s.roll_no).strip()
+        return (int(r) if r.isdigit() else 999999, r)
+    students.sort(key=lambda s: (s.batch.name, _roll_sort_key(s)))
     if not students:
         messages.error(request, 'No students in this department.')
         return redirect('core:compile_attendance')
@@ -3147,14 +3156,22 @@ def compile_attendance_excel(request):
             c += 1
             ws.cell(row_idx, c, a).border = thin_border
             c += 1
-            ws.cell(row_idx, c, f'{pct}%').border = thin_border
+            pct_cell = ws.cell(row_idx, c, f'{pct}%')
+            pct_cell.border = thin_border
+            if pct < 75 and h:
+                pct_cell.font = Font(bold=True, color='FFFFFF')
+                pct_cell.fill = PatternFill(start_color='DC3545', end_color='DC3545', fill_type='solid')
             c += 1
             if i == week_idx:
                 total_held, total_attended = h, a
         ws.cell(row_idx, total_col, total_held).border = thin_border
         ws.cell(row_idx, total_col + 1, total_attended).border = thin_border
         tpct = round(total_attended / total_held * 100, 1) if total_held else 0
-        ws.cell(row_idx, total_col + 2, f'{tpct}%').border = thin_border
+        tpct_cell = ws.cell(row_idx, total_col + 2, f'{tpct}%')
+        tpct_cell.border = thin_border
+        if tpct < 75 and total_held:
+            tpct_cell.font = Font(bold=True, color='FFFFFF')
+            tpct_cell.fill = PatternFill(start_color='DC3545', end_color='DC3545', fill_type='solid')
     ws.column_dimensions['A'].width = 12
     ws.column_dimensions['B'].width = 28
     ws.column_dimensions['C'].width = 10

@@ -62,7 +62,7 @@
                 <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
             </div>
             <div class="modal-body">
-                <pre id="attendance-text-preview" class="bg-light p-3 rounded small mb-0" style="white-space: pre-wrap; max-height: 50vh; overflow-y: auto;"></pre>
+                <div id="attendance-text-preview" class="bg-light p-3 rounded small mb-0" style="max-height: 50vh; overflow-y: auto; line-height: 1.6;"></div>
             </div>
             <div class="modal-footer">
                 <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
@@ -165,15 +165,16 @@
         return map[n] || null;
     }
 
-    function buildAttendanceText() {
-        if (!meta) return '';
+    function buildAttendanceData() {
+        if (!meta) return { plain: '', html: '' };
         var dateDmy = meta.getAttribute('data-date-dmy') || '';
         var facInitials = meta.getAttribute('data-fac-initials') || '';
         var batchCards = document.querySelectorAll('.batch-slots');
-        var blocks = [];
+        var plainBlocks = [];
+        var htmlBlocks = [];
         batchCards.forEach(function(card) {
-            var batchLabel = card.querySelector('.card-header span.fw-bold');
-            var divName = batchLabel ? batchLabel.textContent.replace(/^Batch:\s*/i, '').trim() : '';
+            var batchSpan = card.querySelector('.card-header span');
+            var divName = batchSpan ? batchSpan.textContent.replace(/^Batch:\s*/i, '').trim() : '';
             var slotForms = card.querySelectorAll('.slot-attendance-form');
             var lecNumbers = [];
             var absentLines = [];
@@ -191,19 +192,29 @@
                     });
                 }
                 absent.sort(function(a, b) { return parseInt(a, 10) - parseInt(b, 10); });
-                absentLines.push('Lec ' + lecNo + ': ' + (absent.length ? absent.join(', ') : '—'));
+                var absentStr = absent.length ? absent.join(', ') : '—';
+                absentLines.push({ lecNo: lecNo, absent: absentStr });
             });
-            var block = '**Fac Initials:** ' + facInitials + '\n**Date:** ' + dateDmy + '\n**LEC No:** ' + lecNumbers.join(',') + '\n**Div:** ' + divName + '\n**Absent numbers** -\n' + absentLines.join('\n');
-            blocks.push(block);
+            var plainBlock = 'Fac Initials: ' + facInitials + '\nDate: ' + dateDmy + '\nLEC No: ' + lecNumbers.join(',') + '\nDiv: ' + divName + '\nAbsent numbers -\n' + absentLines.map(function(l) { return 'Lec ' + l.lecNo + ': ' + l.absent; }).join('\n');
+            var htmlBlock = '<strong>Fac Initials:</strong> ' + escapeHtml(facInitials) + '<br><strong>Date:</strong> ' + escapeHtml(dateDmy) + '<br><strong>LEC No:</strong> ' + escapeHtml(lecNumbers.join(',')) + '<br><strong>Div:</strong> ' + escapeHtml(divName) + '<br><strong>Absent numbers</strong> -<br>' + absentLines.map(function(l) { return 'Lec ' + l.lecNo + ': ' + escapeHtml(l.absent); }).join('<br>');
+            plainBlocks.push(plainBlock);
+            htmlBlocks.push(htmlBlock);
         });
-        return blocks.join('\n\n');
+        var plain = plainBlocks.join('\n\n');
+        var html = '<div style="font-family:inherit;font-size:14px;line-height:1.5;">' + htmlBlocks.join('<br><br>') + '</div>';
+        return { plain: plain, html: html };
+    }
+    function escapeHtml(s) {
+        var div = document.createElement('div');
+        div.textContent = s;
+        return div.innerHTML;
     }
 
     if (copyBtn && meta && modalEl && previewEl) {
         copyBtn.addEventListener('click', function() {
-            var text = buildAttendanceText();
-            if (!text.trim()) return;
-            previewEl.textContent = text;
+            var data = buildAttendanceData();
+            if (!data.plain.trim()) return;
+            previewEl.innerHTML = data.html;
             var modal = typeof bootstrap !== 'undefined' && bootstrap.Modal ? new bootstrap.Modal(modalEl) : null;
             if (modal) modal.show(); else { modalEl.classList.add('show'); modalEl.style.display = 'block'; modalEl.classList.add('d-block'); }
         });
@@ -211,23 +222,44 @@
 
     if (modalCopyBtn && previewEl) {
         modalCopyBtn.addEventListener('click', function() {
-            var text = previewEl.textContent || '';
-            if (!text.trim()) return;
-            navigator.clipboard.writeText(text).then(function() {
-                var orig = modalCopyBtn.textContent;
-                modalCopyBtn.textContent = 'Copied!';
-                setTimeout(function() { modalCopyBtn.textContent = orig; }, 2000);
-            }).catch(function() {
-                var ta = document.createElement('textarea');
-                ta.value = text;
-                document.body.appendChild(ta);
-                ta.select();
-                document.execCommand('copy');
-                document.body.removeChild(ta);
-                var orig = modalCopyBtn.textContent;
-                modalCopyBtn.textContent = 'Copied!';
-                setTimeout(function() { modalCopyBtn.textContent = orig; }, 2000);
-            });
+            var data = buildAttendanceData();
+            if (!data.plain.trim()) return;
+            var html = data.html;
+            var plain = data.plain;
+            if (navigator.clipboard && navigator.clipboard.write) {
+                navigator.clipboard.write([
+                    new ClipboardItem({
+                        'text/html': new Blob([html], { type: 'text/html' }),
+                        'text/plain': new Blob([plain], { type: 'text/plain' })
+                    })
+                ]).then(function() {
+                    var orig = modalCopyBtn.textContent;
+                    modalCopyBtn.textContent = 'Copied!';
+                    setTimeout(function() { modalCopyBtn.textContent = orig; }, 2000);
+                }).catch(function() {
+                    navigator.clipboard.writeText(plain).then(function() {
+                        var orig = modalCopyBtn.textContent;
+                        modalCopyBtn.textContent = 'Copied!';
+                        setTimeout(function() { modalCopyBtn.textContent = orig; }, 2000);
+                    });
+                });
+            } else {
+                navigator.clipboard.writeText(plain).then(function() {
+                    var orig = modalCopyBtn.textContent;
+                    modalCopyBtn.textContent = 'Copied!';
+                    setTimeout(function() { modalCopyBtn.textContent = orig; }, 2000);
+                }).catch(function() {
+                    var ta = document.createElement('textarea');
+                    ta.value = plain;
+                    document.body.appendChild(ta);
+                    ta.select();
+                    document.execCommand('copy');
+                    document.body.removeChild(ta);
+                    var orig = modalCopyBtn.textContent;
+                    modalCopyBtn.textContent = 'Copied!';
+                    setTimeout(function() { modalCopyBtn.textContent = orig; }, 2000);
+                });
+            }
         });
     }
 })();
