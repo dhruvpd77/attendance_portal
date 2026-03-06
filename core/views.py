@@ -3252,7 +3252,15 @@ def faculty_attendance_entry(request):
         for a in FacultyAttendance.objects.filter(faculty=faculty, date=selected_date):
             attendance_prefill[a.batch.id][a.lecture_slot] = [x.strip() for x in (a.absent_roll_numbers or '').split(',') if x.strip()]
 
+    def _roll_sort_key(s):
+        r = str(s.roll_no).strip()
+        return (int(r) if r.isdigit() else 999999, r)
+
+    batch_students_sorted = {}
     for batch, slots in slots_by_batch.items():
+        sorted_students = sorted(batch.student_set.all(), key=_roll_sort_key)
+        batch_students_sorted[batch.id] = sorted_students
+        batch.students_sorted = sorted_students
         for slot in slots:
             slot.prefill_absent_set = set(attendance_prefill.get(batch.id, {}).get(slot.time_slot, []))
             if selected_date:
@@ -3265,6 +3273,7 @@ def faculty_attendance_entry(request):
         'available_dates': available_dates,
         'selected_date': selected_date,
         'slots_by_batch': dict(slots_by_batch),
+        'batch_students_sorted': batch_students_sorted,
     }
     return render(request, 'core/faculty/attendance_entry.html', ctx)
 

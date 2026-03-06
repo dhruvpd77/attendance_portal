@@ -98,9 +98,9 @@
                 <input type="hidden" name="batch_id" value="{{ batch.id }}">
                 <input type="hidden" name="lecture_slot" value="{{ slot.time_slot }}">
                 <label class="form-label small text-uppercase fw-semibold mb-2">Tick absent students</label>
-                <div class="row g-2">
-                    {% for s in batch.student_set.all %}
-                    <div class="col-4 col-sm-3 col-md-2">
+                <div class="row g-2 row-cols-3 row-cols-sm-5">
+                    {% for s in batch.students_sorted %}
+                    <div class="col">
                         <label class="d-flex align-items-center gap-2 p-2 rounded-3 border border-light bg-light bg-opacity-50 mb-0" style="cursor:pointer;">
                             <input type="checkbox" name="absent_roll_numbers" value="{{ s.roll_no }}" {% if s.roll_no in slot.prefill_absent_set %}checked{% endif %} class="form-check-input">
                             <span class="small text-truncate" title="{{ s.roll_no }} — {{ s.name }}">{{ s.roll_no }}</span>
