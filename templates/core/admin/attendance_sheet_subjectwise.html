@@ -1,21 +1,21 @@
 {% extends 'core/admin/base_admin.html' %}
 {% load static %}
-{% block title %}Attendance Sheet - LJIET_Attendance{% endblock %}
+{% block title %}Subject-wise Attendance - LJIET_Attendance{% endblock %}
 {% block content %}
 <div class="d-flex flex-wrap justify-content-between align-items-center mb-4 gap-3">
     <div>
-        <h1 class="page-title mb-1">Attendance Sheet Manager</h1>
-        <p class="page-subtitle mb-0">Download attendance sheet Excel by batch — daily, weekly, or full phase.</p>
+        <h1 class="page-title mb-1">Subject-wise Attendance</h1>
+        <p class="page-subtitle mb-0">Download attendance sheet Excel by batch — one tab per subject. Same filters: batch, type, date.</p>
     </div>
     <a href="{% url 'core:admin_dashboard' %}" class="btn btn-outline-app"><i class="fas fa-arrow-left me-1"></i> Dashboard</a>
 </div>
 <div class="d-flex flex-wrap gap-3 mb-4">
-    <a href="{% url 'core:attendance_sheet_manager' %}" class="btn btn-primary-app btn-sm">Batch-wise Attendance</a>
-    <a href="{% url 'core:attendance_sheet_subjectwise_manager' %}" class="btn btn-outline-secondary btn-sm">Subject-wise Attendance</a>
+    <a href="{% url 'core:attendance_sheet_manager' %}" class="btn btn-outline-secondary btn-sm">Batch-wise Attendance Sheet</a>
+    <a href="{% url 'core:attendance_sheet_subjectwise_manager' %}" class="btn btn-primary-app btn-sm">Subject-wise Attendance</a>
 </div>
 <div class="card card-app mb-4" style="max-width: 480px;">
     <div class="card-body p-4">
-        <form method="get" action="{% url 'core:attendance_sheet_excel' %}" id="sheetForm">
+        <form method="get" action="{% url 'core:attendance_sheet_subjectwise_excel' %}" id="sheetForm">
             <div class="mb-3">
                 <label class="form-label fw-semibold text-secondary">Batch</label>
                 <select name="batch" required class="form-select form-select-app">
@@ -59,7 +59,7 @@
                 </select>
             </div>
             <button type="submit" class="btn btn-primary-app w-100 w-md-auto">
-                <i class="fas fa-download me-1"></i> Download Excel
+                <i class="fas fa-download me-1"></i> Download Excel (Subject-wise)
             </button>
         </form>
     </div>

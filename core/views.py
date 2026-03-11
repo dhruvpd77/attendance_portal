@@ -24,6 +24,8 @@ from django.http import HttpResponse
 from django.db.models import Count, Q, IntegerField
 from django.db.models.functions import Cast
 from openpyxl import Workbook
+from openpyxl.cell.rich_text import CellRichText, TextBlock
+from openpyxl.cell.text import InlineFont
 from openpyxl.styles import Font, Alignment, Border, Side, PatternFill
 from openpyxl.utils import get_column_letter
 
@@ -1768,11 +1770,11 @@ def daily_absent(request):
                 slot.subject = subj
             if fac is not None:
                 slot.faculty = fac
-            rec = FacultyAttendance.objects.filter(
-                faculty=effective_faculty, date=selected_date,
-                batch_id=batch_id, lecture_slot=slot.time_slot
-            ).first()
-            slot.absent_list = attendance_map.get(batch_id, {}).get(slot.time_slot, [])
+            att_qs = FacultyAttendance.objects.filter(
+                date=selected_date, batch_id=batch_id, lecture_slot=slot.time_slot
+            )
+            rec = att_qs.filter(faculty=effective_faculty).first() or att_qs.first()
+            slot.absent_list = [x.strip() for x in (rec.absent_roll_numbers or '').split(',') if x.strip()] if rec else []
             # Only "missing" when no attendance record; saved "all present" (empty absent) is valid
             if not rec:
                 missing.append((effective_faculty.full_name, batch_name, slot.time_slot))
@@ -1816,7 +1818,6 @@ def daily_absent_excel(request):
     ws = wb.active
     ws.title = 'Daily Absent'
 
-    title = f'Daily Absent Report - {dept.name} - {selected_date.strftime("%d-%m-%Y")}'
     max_batches_per_row = 2
     headers = ['No', 'Subject', 'Faculty', 'Absent Nos']
     header_fill = PatternFill(start_color='1F497D', end_color='1F497D', fill_type='solid')
@@ -1825,18 +1826,31 @@ def daily_absent_excel(request):
         left=Side(style='thin'), right=Side(style='thin'),
         top=Side(style='thin'), bottom=Side(style='thin')
     )
+    bottom_line = Border(bottom=Side(style='thin'))
 
     batch_names = sorted(lectures_by_batch.keys())
     pairs = [batch_names[i:i + max_batches_per_row] for i in range(0, len(batch_names), max_batches_per_row)]
-    current_row = 1
-
     n_cols = (len(pairs[0]) * 5) if pairs else 5
-    if n_cols > 1:
+
+    # Header block: institution, dept, legend, date (all bold, large font)
+    header_font_style = Font(size=13, bold=True)
+    header_rows = [
+        'L J Institute of Engineering and Technology',
+        dept.name,
+        'FONT COLOUR: BLACK (Absent in all Lectures)',
+        'RED (Not attended all Lectures)',
+        'BLUE (DOING Mischief/Chatting/Laughing in Lectures)',
+        f"Date-{selected_date.strftime('%d-%m-%Y')}. Day:- {selected_date.strftime('%A').upper()}",
+    ]
+    current_row = 1
+    for text in header_rows:
         ws.merge_cells(start_row=current_row, start_column=1, end_row=current_row, end_column=n_cols)
-    cell = ws.cell(row=current_row, column=1, value=title)
-    cell.font = Font(size=14, bold=True)
-    cell.alignment = Alignment(horizontal='center', vertical='center')
-    current_row += 2
+        cell = ws.cell(row=current_row, column=1, value=text)
+        cell.font = header_font_style
+        cell.alignment = Alignment(horizontal='center', vertical='center')
+        cell.border = bottom_line
+        current_row += 1
+    current_row += 1
 
     for pair in pairs:
         col = 1
@@ -1863,6 +1877,8 @@ def daily_absent_excel(request):
         to_continue = []
         for batch in pair:
             lec_list = lectures_by_batch[batch]
+            # Collect absent sets per lecture to find "absent in some, present in others" (red)
+            lec_absents = []
             rows = []
             for idx, lec in enumerate(lec_list, 1):
                 fac, subj = get_faculty_subject_for_slot(selected_date, lec.batch, lec.time_slot)
@@ -1883,10 +1899,34 @@ def daily_absent_excel(request):
                     ).first()
                 absent_nos = (att.absent_roll_numbers or '').strip() if att else ''
                 absents = [a.strip() for a in absent_nos.split(',') if a.strip()]
+                lec_absents.append(set(absents))
                 if not absents:
                     rows.append([idx, subj_name, fac_name, 'NIL'])
                 else:
-                    rows.append([idx, subj_name, fac_name, ', '.join(absents)])
+                    rows.append([idx, subj_name, fac_name, absents])
+            # Compute: absent_in_all = absent in every lecture (black); absent_in_some = present in at least one (red)
+            num_lects = len(lec_absents)
+            all_absent = set()
+            for s in lec_absents:
+                all_absent.update(s)
+            absent_in_all = {r for r in all_absent if sum(1 for lec in lec_absents if r in lec) == num_lects}
+            absent_in_some = all_absent - absent_in_all
+            # Build rich text for each row's absent cell
+            red_font = InlineFont(color='00FF0000')
+            black_font = InlineFont(color='00000000')
+            for i, row in enumerate(rows):
+                if row[3] == 'NIL':
+                    continue
+                absents = row[3]
+                blocks = []
+                for j, r in enumerate(absents):
+                    if r in absent_in_some:
+                        blocks.append(TextBlock(red_font, r))
+                    else:
+                        blocks.append(TextBlock(black_font, r))
+                    if j < len(absents) - 1:
+                        blocks.append(TextBlock(black_font, ', '))
+                row[3] = CellRichText(*blocks) if blocks else 'NIL'
             to_continue.append(rows)
         block_height = max(len(x) for x in to_continue)
         for data_rows in to_continue:
@@ -1991,6 +2031,262 @@ def _build_date_slots_list_for_batch(dept, batch, dates):
     return out
 
 
+def _filter_date_slots_by_subject(date_slots_list, subject_id):
+    """Filter date_slots_list to only slots for the given subject. Returns [(date, slots), ...]."""
+    return [(d, [s for s in slots if s.subject_id == subject_id]) for d, slots in date_slots_list]
+
+
+def _write_all_batches_combined_sheet(ws, batches, all_students, date_slots_union, batch_att_map, batch_date_slots_set, styles, overall_segments_per_batch):
+    """Write one sheet with all batches combined. Roll No, Name, Batch, then (date, slot) columns, then Overall.
+    date_slots_union: [(d, slots), ...] slots have .time_slot. batch_date_slots_set: batch_id -> set of (d, time_slot).
+    overall_segments_per_batch: [(batch, [(label, seg), ...]), ...]
+    """
+    thin_border = styles['thin_border']
+    date_fill = styles['date_fill']
+    date_font = styles['date_font']
+    date_align = styles['date_align']
+    header_font = styles['header_font']
+    lect_fill = styles['lect_fill']
+    lect_font = styles['lect_font']
+    lect_align = styles['lect_align']
+    red_font = styles['red_font']
+    ws.title = 'All Batches'[:31]
+    ws.cell(1, 1, 'Roll No').font = header_font
+    ws.cell(1, 2, 'Student Name').font = header_font
+    ws.cell(1, 3, 'Batch').font = header_font
+    for c in range(1, 4):
+        ws.cell(1, c).border = thin_border
+        ws.cell(2, c).border = thin_border
+    col = 4
+    for d, slots in date_slots_union:
+        n_lec = max(len(slots), 1)
+        if n_lec > 1:
+            ws.merge_cells(start_row=1, start_column=col, end_row=1, end_column=col + n_lec - 1)
+        for c in range(col, col + n_lec):
+            cell = ws.cell(row=1, column=c, value=d.strftime('%d-%b') if c == col else None)
+            cell.border = thin_border
+            cell.fill = date_fill
+            cell.font = date_font
+            cell.alignment = date_align
+        for i, slot in enumerate(slots, start=1):
+            subj_name = getattr(slot, 'subject', None) and getattr(slot.subject, 'name', None) or 'Lec'
+            cell = ws.cell(row=2, column=col + i - 1, value=f'Lect {i}\n{subj_name}')
+            cell.alignment = lect_align
+            cell.fill = lect_fill
+            cell.font = lect_font
+            cell.border = thin_border
+        if not slots:
+            ws.cell(2, col, '').border = thin_border
+        col += n_lec
+    n_overall = len(overall_segments_per_batch[0][1]) * 3 if overall_segments_per_batch else 0
+    if n_overall:
+        overall_col_start = col
+        ws.merge_cells(start_row=1, start_column=overall_col_start, end_row=1, end_column=overall_col_start + n_overall - 1)
+        cell = ws.cell(row=1, column=overall_col_start, value='Overall Attendance')
+        cell.border = thin_border
+        cell.fill = date_fill
+        cell.font = date_font
+        cell.alignment = date_align
+        seg_col = overall_col_start
+        for label, _ in overall_segments_per_batch[0][1]:
+            ws.merge_cells(start_row=2, start_column=seg_col, end_row=2, end_column=seg_col + 2)
+            c = ws.cell(row=2, column=seg_col, value=label)
+            c.border = thin_border
+            c.fill = lect_fill
+            c.font = lect_font
+            c.alignment = date_align
+            for i, sub in enumerate(('Total Lecture', 'Attended', '%')):
+                cc = ws.cell(row=3, column=seg_col + i, value=sub)
+                cc.border = thin_border
+                cc.fill = lect_fill
+                cc.font = lect_font
+                cc.alignment = lect_align
+            seg_col += 3
+        col = overall_col_start + n_overall
+    data_start_row = 4 if n_overall else 3
+    for idx, s in enumerate(all_students, start=data_start_row):
+        ws.cell(idx, 1, s.roll_no).border = thin_border
+        ws.cell(idx, 2, s.name).border = thin_border
+        ws.cell(idx, 3, s.batch.name).border = thin_border
+        str_roll = str(s.roll_no)
+        bid = s.batch_id
+        att_map = batch_att_map.get(bid, {})
+        batch_has = batch_date_slots_set.get(bid, set())
+        c = 4
+        for d, slots in date_slots_union:
+            for slot in slots:
+                key = (d, slot.time_slot)
+                if key not in batch_has:
+                    val = '—'
+                elif key not in att_map:
+                    val = '—'
+                else:
+                    val = 'A' if str_roll in att_map[key] else 'P'
+                cell = ws.cell(idx, c, value=val)
+                cell.border = thin_border
+                if val == 'A':
+                    cell.font = red_font
+                c += 1
+            if not slots:
+                ws.cell(idx, c, '').border = thin_border
+                c += 1
+        if n_overall and overall_segments_per_batch:
+            segs = next((segs for b, segs in overall_segments_per_batch if b.id == bid), [])
+            for label, date_slots_seg in segs:
+                held, attended = _student_held_attended_for_segment(date_slots_seg, att_map, str_roll)
+                pct = round(attended / held * 100, 1) if held else 0
+                ws.cell(idx, c, held).border = thin_border
+                ws.cell(idx, c + 1, attended).border = thin_border
+                pct_cell = ws.cell(idx, c + 2, f'{pct}%')
+                pct_cell.border = thin_border
+                if pct < 75 and held:
+                    pct_cell.font = Font(color='FFFFFF', bold=True)
+                    pct_cell.fill = PatternFill(start_color='DC3545', end_color='DC3545', fill_type='solid')
+                c += 3
+    ws.column_dimensions['A'].width = 10
+    ws.column_dimensions['B'].width = 22
+    ws.column_dimensions['C'].width = 10
+    ws.freeze_panes = f'D{data_start_row}'
+
+
+def _write_subject_all_batches_sheet(ws, subject_name, batches, all_students, batch_date_slots_subject, batch_att_map, styles, build_overall_fn):
+    """Write one sheet per subject with students from all batches. Same format as individual batch subject sheet.
+    Roll No, Name, Batch (extra), date+lecture columns (date merged when multiple lectures), Overall.
+    Only difference from individual: Batch column + all batches' students in one sheet."""
+    # Build date_slots_union: [(date, n_lec), ...] - same structure as individual batch, n_lec = max slots per date
+    date_to_nlec = {}
+    for batch in batches:
+        for d, slots in batch_date_slots_subject.get(batch.id, []):
+            if slots:
+                date_to_nlec[d] = max(date_to_nlec.get(d, 0), len(slots))
+    date_slots_union = [(d, date_to_nlec[d]) for d in sorted(date_to_nlec.keys())]
+    if not date_slots_union:
+        return False
+    # batch_slots_by_date: batch_id -> date -> [slot1, slot2, ...] for attendance lookup
+    batch_slots_by_date = {}
+    for batch in batches:
+        d2slots = {}
+        for d, slots in batch_date_slots_subject.get(batch.id, []):
+            d2slots[d] = list(slots)
+        batch_slots_by_date[batch.id] = d2slots
+    thin_border = styles['thin_border']
+    date_fill = styles['date_fill']
+    date_font = styles['date_font']
+    date_align = styles['date_align']
+    header_font = styles['header_font']
+    lect_fill = styles['lect_fill']
+    lect_font = styles['lect_font']
+    lect_align = styles['lect_align']
+    red_font = styles['red_font']
+    ws.title = (subject_name[:31] if subject_name else 'Subject')
+    ws.cell(1, 1, 'Roll No').font = header_font
+    ws.cell(1, 2, 'Student Name').font = header_font
+    ws.cell(1, 3, 'Batch').font = header_font
+    for c in range(1, 4):
+        ws.cell(1, c).border = thin_border
+        ws.cell(2, c).border = thin_border
+        ws.cell(3, c).border = thin_border
+    col = 4
+    for d, n_lec in date_slots_union:
+        if n_lec == 1:
+            ws.merge_cells(start_row=1, start_column=col, end_row=2, end_column=col)
+            cell = ws.cell(row=1, column=col, value=f"{d.strftime('%d-%b')}\nLect 1")
+            cell.border = thin_border
+            cell.fill = date_fill
+            cell.font = date_font
+            cell.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
+        else:
+            if n_lec > 1:
+                ws.merge_cells(start_row=1, start_column=col, end_row=1, end_column=col + n_lec - 1)
+            for c in range(col, col + n_lec):
+                cell = ws.cell(row=1, column=c, value=d.strftime('%d-%b') if c == col else None)
+                cell.border = thin_border
+                cell.fill = date_fill
+                cell.font = date_font
+                cell.alignment = date_align
+            for i in range(1, n_lec + 1):
+                cell = ws.cell(row=2, column=col + i - 1, value=f'Lect {i}\n{subject_name}')
+                cell.alignment = lect_align
+                cell.fill = lect_fill
+                cell.font = lect_font
+                cell.border = thin_border
+        col += n_lec
+    overall_segments_per_batch = []
+    for batch in batches:
+        segs = build_overall_fn(batch)
+        if segs:
+            overall_segments_per_batch.append((batch, segs))
+    n_overall = len(overall_segments_per_batch[0][1]) * 3 if overall_segments_per_batch else 0
+    if n_overall:
+        overall_col_start = col
+        for c in range(4, overall_col_start):
+            ws.cell(3, c, '').border = thin_border
+        ws.merge_cells(start_row=1, start_column=overall_col_start, end_row=1, end_column=overall_col_start + n_overall - 1)
+        cell = ws.cell(row=1, column=overall_col_start, value='Overall Attendance')
+        cell.border = thin_border
+        cell.fill = date_fill
+        cell.font = date_font
+        cell.alignment = date_align
+        seg_col = overall_col_start
+        for label, _ in overall_segments_per_batch[0][1]:
+            ws.merge_cells(start_row=2, start_column=seg_col, end_row=2, end_column=seg_col + 2)
+            c = ws.cell(row=2, column=seg_col, value=label)
+            c.border = thin_border
+            c.fill = lect_fill
+            c.font = lect_font
+            c.alignment = date_align
+            for i, sub in enumerate(('Total Lecture', 'Attended', '%')):
+                cc = ws.cell(row=3, column=seg_col + i, value=sub)
+                cc.border = thin_border
+                cc.fill = lect_fill
+                cc.font = lect_font
+                cc.alignment = lect_align
+            seg_col += 3
+        col = overall_col_start + n_overall
+    data_start_row = 4 if n_overall else 3
+    for idx, s in enumerate(all_students, start=data_start_row):
+        ws.cell(idx, 1, s.roll_no).border = thin_border
+        ws.cell(idx, 2, s.name).border = thin_border
+        ws.cell(idx, 3, s.batch.name).border = thin_border
+        str_roll = str(s.roll_no)
+        bid = s.batch_id
+        att_map = batch_att_map.get(bid, {})
+        batch_slots = batch_slots_by_date.get(bid, {})
+        c = 4
+        for d, n_lec in date_slots_union:
+            slots_for_date = batch_slots.get(d, [])
+            for col_idx in range(n_lec):
+                if col_idx < len(slots_for_date):
+                    slot = slots_for_date[col_idx]
+                    key = (d, slot.time_slot)
+                    val = '—' if key not in att_map else ('A' if str_roll in att_map[key] else 'P')
+                else:
+                    val = '—'
+                cell = ws.cell(idx, c, value=val)
+                cell.border = thin_border
+                if val == 'A':
+                    cell.font = red_font
+                c += 1
+        if n_overall and overall_segments_per_batch:
+            segs = next((segs for b, segs in overall_segments_per_batch if b.id == bid), [])
+            for label, date_slots_seg in segs:
+                held, attended = _student_held_attended_for_segment(date_slots_seg, att_map, str_roll)
+                pct = round(attended / held * 100, 1) if held else 0
+                ws.cell(idx, c, held).border = thin_border
+                ws.cell(idx, c + 1, attended).border = thin_border
+                pct_cell = ws.cell(idx, c + 2, f'{pct}%')
+                pct_cell.border = thin_border
+                if pct < 75 and held:
+                    pct_cell.font = Font(color='FFFFFF', bold=True)
+                    pct_cell.fill = PatternFill(start_color='DC3545', end_color='DC3545', fill_type='solid')
+                c += 3
+    ws.column_dimensions['A'].width = 10
+    ws.column_dimensions['B'].width = 22
+    ws.column_dimensions['C'].width = 10
+    ws.freeze_panes = f'D{data_start_row}'
+    return True
+
+
 def _attendance_sheet_dates_for_period(dept, period_type, phase, week_index=None, single_date=None):
     """Return list of dates for the chosen period (excluding holidays). week_index is 0-based index into week_map[phase]."""
     tp = TermPhase.objects.filter(department=dept).first()
@@ -2057,10 +2353,15 @@ def _student_held_attended_for_segment(date_slots_segment, att_map, str_roll):
     return held, attended
 
 
-def _write_one_batch_attendance_sheet(ws, batch, date_slots_list, students, att_map, styles, overall_segments=None):
+def _write_one_batch_attendance_sheet(ws, batch, date_slots_list, students, att_map, styles, overall_segments=None, sheet_title=None):
     """Write one batch's attendance data into worksheet ws. If overall_segments is given, append Overall Attendance block.
     overall_segments: list of (label, date_slots_sub_list) e.g. [('Week 1', w1_list), ('Week 2', w2_list), ('Overall', all_list)].
+    sheet_title: optional custom title for the sheet (default: batch.name).
+    Only includes dates that have lectures (skips dates with no slots).
     """
+    date_slots_list = [(d, s) for d, s in date_slots_list if s]
+    if overall_segments:
+        overall_segments = [(label, [(d, s) for d, s in seg if s]) for label, seg in overall_segments]
     thin_border = styles['thin_border']
     date_fill = styles['date_fill']
     date_font = styles['date_font']
@@ -2077,7 +2378,7 @@ def _write_one_batch_attendance_sheet(ws, batch, date_slots_list, students, att_
         header_rows = 3
         data_start_row = 4
 
-    ws.title = (batch.name[:31] if batch.name else 'Sheet')
+    ws.title = ((sheet_title or batch.name or 'Sheet')[:31])
     ws.cell(1, 1, 'Roll No').font = header_font
     ws.cell(1, 2, 'Student Name').font = header_font
     ws.cell(1, 1).border = thin_border
@@ -2088,26 +2389,35 @@ def _write_one_batch_attendance_sheet(ws, batch, date_slots_list, students, att_
         ws.cell(3, 1, '').border = thin_border
         ws.cell(3, 2, '').border = thin_border
     col = 3
+    is_subject_sheet = bool(sheet_title)
     for d, slots in date_slots_list:
         n_lec = max(len(slots), 1)
-        if n_lec > 1:
-            ws.merge_cells(start_row=1, start_column=col, end_row=1, end_column=col + n_lec - 1)
-        for c in range(col, col + n_lec):
-            cell = ws.cell(row=1, column=c, value=d.strftime('%d-%b') if c == col else None)
+        if is_subject_sheet and n_lec == 1:
+            ws.merge_cells(start_row=1, start_column=col, end_row=2, end_column=col)
+            cell = ws.cell(row=1, column=col, value=f"{d.strftime('%d-%b')}\nLect 1")
             cell.border = thin_border
             cell.fill = date_fill
             cell.font = date_font
-            cell.alignment = date_align
-        for i, slot in enumerate(slots, start=1):
-            fac, subj = get_faculty_subject_for_slot(d, batch, slot.time_slot)
-            subj_name = subj.name if subj else (slot.subject.name if slot.subject else 'N/A')
-            cell = ws.cell(row=2, column=col + i - 1, value=f'Lect {i}\n{subj_name}')
-            cell.alignment = lect_align
-            cell.fill = lect_fill
-            cell.font = lect_font
-            cell.border = thin_border
-        if not slots:
-            ws.cell(2, col, '').border = thin_border
+            cell.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
+        else:
+            if n_lec > 1:
+                ws.merge_cells(start_row=1, start_column=col, end_row=1, end_column=col + n_lec - 1)
+            for c in range(col, col + n_lec):
+                cell = ws.cell(row=1, column=c, value=d.strftime('%d-%b') if c == col else None)
+                cell.border = thin_border
+                cell.fill = date_fill
+                cell.font = date_font
+                cell.alignment = date_align
+            for i, slot in enumerate(slots, start=1):
+                fac, subj = get_faculty_subject_for_slot(d, batch, slot.time_slot)
+                subj_name = subj.name if subj else (slot.subject.name if slot.subject else 'N/A')
+                cell = ws.cell(row=2, column=col + i - 1, value=f'Lect {i}\n{subj_name}')
+                cell.alignment = lect_align
+                cell.fill = lect_fill
+                cell.font = lect_font
+                cell.border = thin_border
+            if not slots:
+                ws.cell(2, col, '').border = thin_border
         col += n_lec
 
     if overall_segments:
@@ -2328,6 +2638,274 @@ def attendance_sheet_excel(request):
             fname = f'Attendance_{batch.name}_{phase}_week{week_idx + 1}.xlsx'
         else:
             fname = f'Attendance_{batch.name}_{phase}.xlsx'
+    resp = HttpResponse(bio.getvalue(), content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+    resp['Content-Disposition'] = f'attachment; filename={fname}'
+    return resp
+
+
+@login_required
+def attendance_sheet_subjectwise_manager(request):
+    """Admin: Subject-wise Attendance — same form as Attendance Sheet but Excel has one tab per subject."""
+    if not user_can_admin(request):
+        return redirect('accounts:role_redirect')
+    dept = get_admin_department(request)
+    if not dept:
+        messages.error(request, 'Select a department first.')
+        return redirect('core:admin_dashboard')
+    tp = TermPhase.objects.filter(department=dept).first()
+    batches = Batch.objects.filter(department=dept)
+    phases = ['T1', 'T2', 'T3', 'T4']
+    week_map = {}
+    for p in phases:
+        start = getattr(tp, f'{p.lower()}_start', None) if tp else None
+        end = getattr(tp, f'{p.lower()}_end', None) if tp else None
+        if not start or not end:
+            week_map[p] = []
+            continue
+        days_set = set(ScheduleSlot.objects.filter(department=dept).values_list('day', flat=True).distinct())
+        days_set = {d.lower() for d in days_set if d}
+        dates = []
+        cur = start
+        while cur <= end:
+            if cur.strftime('%A').lower() in days_set:
+                dates.append(cur)
+            cur += timedelta(days=1)
+        weeks = []
+        week = []
+        last_w = None
+        for d in sorted(dates):
+            w = d.isocalendar()[1]
+            if last_w is not None and w != last_w and week:
+                weeks.append(week)
+                week = []
+            week.append(d)
+            last_w = w
+        if week:
+            weeks.append(week)
+        week_map[p] = [[d.isoformat() for d in w] for w in weeks]
+    all_dates = []
+    for p in phases:
+        for week_dates in week_map.get(p, []):
+            for d_str in week_dates:
+                try:
+                    all_dates.append(datetime.strptime(d_str, '%Y-%m-%d').date())
+                except Exception:
+                    pass
+    available_dates = sorted(set(all_dates))
+    ctx = {
+        'department': dept, 'batches': batches, 'phases': phases,
+        'week_map': week_map, 'week_map_json': json.dumps(week_map),
+        'available_dates': available_dates,
+    }
+    return render(request, 'core/admin/attendance_sheet_subjectwise.html', ctx)
+
+
+@login_required
+def attendance_sheet_subjectwise_excel(request):
+    """Export subject-wise attendance: one Excel tab per subject for the selected batch."""
+    if not user_can_admin(request):
+        return redirect('core:admin_dashboard')
+    dept = get_admin_department(request)
+    batch_id = request.GET.get('batch')
+    period_type = request.GET.get('period_type', 'phase')
+    phase = request.GET.get('phase')
+    week_index = request.GET.get('week')
+    date_str = request.GET.get('date')
+    if not dept or not batch_id:
+        messages.error(request, 'Select a batch.')
+        return redirect('core:attendance_sheet_subjectwise_manager')
+    all_batches = batch_id == 'all'
+    if all_batches:
+        batches = list(Batch.objects.filter(department=dept).order_by('name'))
+        if not batches:
+            messages.error(request, 'No batches in this department.')
+            return redirect('core:attendance_sheet_subjectwise_manager')
+    else:
+        batch = Batch.objects.filter(pk=batch_id, department=dept).first()
+        if not batch:
+            return redirect('core:attendance_sheet_subjectwise_manager')
+        batches = [batch]
+    single_date = None
+    if period_type == 'daily' and date_str:
+        try:
+            single_date = datetime.strptime(date_str, '%Y-%m-%d').date()
+        except Exception:
+            pass
+    week_idx = None
+    if period_type == 'weekly' and week_index is not None:
+        try:
+            week_idx = int(week_index)
+        except Exception:
+            pass
+    if period_type in ('weekly', 'phase') and not phase:
+        return redirect('core:attendance_sheet_subjectwise_manager')
+    weeks_current_phase = _compile_phase_weeks_date_objects(dept, phase) if phase else []
+    if period_type == 'weekly' and week_idx is not None and 0 <= week_idx < len(weeks_current_phase):
+        dates = []
+        for w in weeks_current_phase[: week_idx + 1]:
+            dates.extend(w)
+        dates = sorted(set(dates))
+    else:
+        dates = _attendance_sheet_dates_for_period(dept, period_type, phase, week_idx, single_date)
+    if not dates:
+        messages.error(request, 'No dates in selected period.')
+        return redirect('core:attendance_sheet_subjectwise_manager')
+    styles = {
+        'thin_border': Border(
+            left=Side(style='thin'), right=Side(style='thin'),
+            top=Side(style='thin'), bottom=Side(style='thin')
+        ),
+        'date_fill': PatternFill(start_color='4F81BD', end_color='4F81BD', fill_type='solid'),
+        'date_font': Font(bold=True, color='FFFFFF'),
+        'date_align': Alignment(horizontal='center', vertical='center'),
+        'header_font': Font(bold=True),
+        'lect_fill': PatternFill(start_color='4F81BD', end_color='4F81BD', fill_type='solid'),
+        'lect_font': Font(bold=True, color='FFFFFF'),
+        'lect_align': Alignment(horizontal='center', vertical='center', wrap_text=True),
+        'red_font': Font(color='FF0000'),
+    }
+
+    def build_overall_segments_subject(batch, date_slots_list, subject_id):
+        base_segments = []
+        if period_type == 'daily':
+            base_segments = [('Overall', date_slots_list)]
+        elif period_type == 'weekly' and weeks_current_phase:
+            phase_order = ['T1', 'T2', 'T3', 'T4']
+            try:
+                pi = phase_order.index(phase)
+            except ValueError:
+                pi = 0
+            if pi > 0:
+                for prev_i in range(pi):
+                    prev_phase = phase_order[prev_i]
+                    prev_weeks = _compile_phase_weeks_date_objects(dept, prev_phase)
+                    prev_dates = []
+                    for w in prev_weeks:
+                        prev_dates.extend(w)
+                    prev_dates = sorted(set(prev_dates))
+                    prev_slots = _build_date_slots_list_for_batch(dept, batch, prev_dates)
+                    base_segments.append((f'{prev_phase} Overall', prev_slots))
+            for i in range(week_idx + 1):
+                w_dates = weeks_current_phase[i]
+                w_slots = _build_date_slots_list_for_batch(dept, batch, w_dates)
+                label = f'Week {i + 1}' if pi == 0 else f'{phase} Week {i + 1}'
+                base_segments.append((label, w_slots))
+            base_segments.append(('Overall', date_slots_list))
+        elif period_type == 'phase' and weeks_current_phase:
+            for i, w in enumerate(weeks_current_phase):
+                w_slots = _build_date_slots_list_for_batch(dept, batch, w)
+                base_segments.append((f'Week {i + 1}', w_slots))
+            base_segments.append(('Overall', date_slots_list))
+        return [(label, _filter_date_slots_by_subject(seg, subject_id) if subject_id else seg) for label, seg in base_segments]
+
+    wb = Workbook()
+    first = True
+    if all_batches:
+        all_students = []
+        batch_date_slots = {}
+        batch_att_map = {}
+        batch_date_slots_set = {}
+        all_date_slots_pairs = set()
+        slot_by_key = {}
+        overall_segments_per_batch = []
+        subjects_all = set()
+        for batch in batches:
+            date_slots_list = _build_date_slots_list_for_batch(dept, batch, dates)
+            date_slots_list = [(d, s) for d, s in date_slots_list if s]
+            batch_date_slots[batch.id] = date_slots_list
+            students = list(Student.objects.filter(department=dept, batch=batch))
+            students.sort(key=_roll_sort_key)
+            all_students.extend(students)
+            s_set = set()
+            for d, slots in date_slots_list:
+                for slot in slots:
+                    key = (d, slot.time_slot)
+                    all_date_slots_pairs.add(key)
+                    if key not in slot_by_key:
+                        slot_by_key[key] = slot
+                    s_set.add(key)
+            batch_date_slots_set[batch.id] = s_set
+            all_dates_for_att = set(d for d, _ in date_slots_list)
+            att_map = {}
+            for d in all_dates_for_att:
+                for att in FacultyAttendance.objects.filter(batch=batch, date=d):
+                    key = (d, att.lecture_slot)
+                    att_map[key] = set(x.strip() for x in (att.absent_roll_numbers or '').split(',') if x.strip())
+            batch_att_map[batch.id] = att_map
+            segs = build_overall_segments_subject(batch, date_slots_list, None)
+            if segs:
+                segs = [(label, [(d, s) for d, s in seg if s]) for label, seg in segs]
+            overall_segments_per_batch.append((batch, segs or []))
+            for d, slots in date_slots_list:
+                for slot in slots:
+                    if slot.subject_id:
+                        subjects_all.add((slot.subject_id, slot.subject.name if slot.subject else 'Subject'))
+        all_students.sort(key=lambda s: (s.batch.name, _roll_sort_key(s)))
+        date_slots_union = [(d, [slot_by_key[(d, t)]]) for (d, t) in sorted(all_date_slots_pairs)]
+        if date_slots_union:
+            ws = wb.active
+            first = False
+            _write_all_batches_combined_sheet(
+                ws, batches, all_students, date_slots_union, batch_att_map, batch_date_slots_set,
+                styles, overall_segments_per_batch
+            )
+        for subject_id, subject_name in sorted(subjects_all, key=lambda x: x[1]):
+            batch_date_slots_subject = {}
+            for batch in batches:
+                dsl = batch_date_slots.get(batch.id, [])
+                batch_date_slots_subject[batch.id] = [(d, s) for d, s in _filter_date_slots_by_subject(dsl, subject_id) if s]
+            if not any(batch_date_slots_subject.values()):
+                continue
+            def build_fn(b):
+                return build_overall_segments_subject(b, batch_date_slots.get(b.id, []), subject_id)
+            ws_subj = wb.create_sheet(title=(subject_name[:31] if subject_name else 'Subject'))
+            _write_subject_all_batches_sheet(
+                ws_subj, subject_name, batches, all_students, batch_date_slots_subject, batch_att_map, styles, build_fn
+            )
+    else:
+        batch = batches[0]
+        date_slots_list = _build_date_slots_list_for_batch(dept, batch, dates)
+        subjects_in_batch = set()
+        for d, slots in date_slots_list:
+            for s in slots:
+                if s.subject_id:
+                    subjects_in_batch.add((s.subject_id, s.subject.name if s.subject else 'Subject'))
+        subjects_in_batch = sorted(subjects_in_batch, key=lambda x: x[1])
+        students = list(Student.objects.filter(department=dept, batch=batch))
+        students.sort(key=_roll_sort_key)
+        all_dates_for_att = set(d for d, _ in date_slots_list)
+        att_map = {}
+        for d in all_dates_for_att:
+            for att in FacultyAttendance.objects.filter(batch=batch, date=d):
+                key = (d, att.lecture_slot)
+                att_map[key] = set(x.strip() for x in (att.absent_roll_numbers or '').split(',') if x.strip())
+        for subject_id, subject_name in subjects_in_batch:
+            date_slots_subject = _filter_date_slots_by_subject(date_slots_list, subject_id)
+            if not any(slots for _, slots in date_slots_subject):
+                continue
+            overall_segments = build_overall_segments_subject(batch, date_slots_list, subject_id)
+            if first:
+                ws = wb.active
+                first = False
+            else:
+                ws = wb.create_sheet(title=(subject_name[:31] if subject_name else 'Sheet'))
+            _write_one_batch_attendance_sheet(
+                ws, batch, date_slots_subject, students, att_map, styles,
+                overall_segments=overall_segments, sheet_title=subject_name
+            )
+    if first:
+        messages.warning(request, 'No subject data found for the selected period.')
+        return redirect('core:attendance_sheet_subjectwise_manager')
+    bio = BytesIO()
+    wb.save(bio)
+    bio.seek(0)
+    batch_label = 'All' if all_batches else batches[0].name
+    if period_type == 'daily':
+        fname = f'Attendance_Subjectwise_{batch_label}_{dates[0]:%Y-%m-%d}.xlsx'
+    elif period_type == 'weekly':
+        fname = f'Attendance_Subjectwise_{batch_label}_{phase}_week{week_idx + 1}.xlsx'
+    else:
+        fname = f'Attendance_Subjectwise_{batch_label}_{phase}.xlsx'
     resp = HttpResponse(bio.getvalue(), content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
     resp['Content-Disposition'] = f'attachment; filename={fname}'
     return resp
@@ -3252,7 +3830,13 @@ def faculty_attendance_entry(request):
     slots_by_batch = defaultdict(list)
     if selected_date:
         weekday = selected_date.strftime('%A')
+        # Exclude slots where this faculty was original but lecture was adjusted to another faculty
+        excluded_by_adj = set(
+            LectureAdjustment.objects.filter(date=selected_date, original_faculty=faculty).values_list('batch_id', 'time_slot')
+        )
         for s in ScheduleSlot.objects.filter(faculty=faculty, day=weekday).select_related('batch', 'subject').order_by('time_slot'):
+            if (s.batch_id, s.time_slot) in excluded_by_adj:
+                continue
             slots_by_batch[s.batch].append(s)
         # Add slots where this faculty is substitute (LectureAdjustment) for this date
         existing_pairs = {(b, sl.time_slot) for b, slots in slots_by_batch.items() for sl in slots}
