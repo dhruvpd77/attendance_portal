@@ -114,7 +114,7 @@
         {% for slot in slots %}
         <div class="slot-attendance-form" data-slot-index="{{ forloop.counter0 }}">
             <div class="d-flex flex-wrap align-items-center justify-content-between gap-3 mb-3">
-                <p class="slot-title mb-0">{{ slot.time_slot }} — {{ slot.display_subject_name|default:slot.subject.name }}</p>
+                <p class="slot-title mb-0">{{ slot.time_slot }} — {{ slot.display_subject_name|default:slot.subject.name }}{% if slot.last_updated %} <span class="text-muted small fw-normal ms-2">(Last updated: {{ slot.last_updated|date:"d M Y" }} {{ slot.last_updated|time:"H:i" }})</span>{% endif %}</p>
                 <div class="d-flex gap-2 flex-wrap faculty-slot-actions">
                     {% if not forloop.first %}
                     <button type="button" class="btn btn-sm btn-outline-secondary copy-above-btn" data-slot-index="{{ forloop.counter0 }}"><i class="fas fa-copy me-1"></i>Copy above</button>

@@ -3854,9 +3854,11 @@ def faculty_attendance_entry(request):
             slots_by_batch[b].sort(key=lambda s: s.time_slot or '')
 
     attendance_prefill = defaultdict(lambda: defaultdict(list))
+    attendance_updated_at = {}  # (batch_id, lecture_slot) -> updated_at
     if selected_date:
         for a in FacultyAttendance.objects.filter(faculty=faculty, date=selected_date):
             attendance_prefill[a.batch.id][a.lecture_slot] = [x.strip() for x in (a.absent_roll_numbers or '').split(',') if x.strip()]
+            attendance_updated_at[(a.batch.id, a.lecture_slot)] = a.updated_at
 
     batch_students_sorted = {}
     for batch, slots in slots_by_batch.items():
@@ -3865,6 +3867,7 @@ def faculty_attendance_entry(request):
         batch.students_sorted = sorted_students
         for slot in slots:
             slot.prefill_absent_set = set(attendance_prefill.get(batch.id, {}).get(slot.time_slot, []))
+            slot.last_updated = attendance_updated_at.get((batch.id, slot.time_slot))
             if selected_date:
                 fac, subj = get_faculty_subject_for_slot(selected_date, batch, slot.time_slot)
                 slot.display_subject_name = subj.name if subj else (slot.subject.name if slot.subject else 'N/A')
@@ -4118,9 +4121,11 @@ def admin_manual_attendance(request):
             slots_by_batch[b].sort(key=lambda s: s.time_slot or '')
 
     attendance_prefill = defaultdict(lambda: defaultdict(list))
+    attendance_updated_at = {}
     if selected_date and faculty:
         for a in FacultyAttendance.objects.filter(faculty=faculty, date=selected_date):
             attendance_prefill[a.batch.id][a.lecture_slot] = [x.strip() for x in (a.absent_roll_numbers or '').split(',') if x.strip()]
+            attendance_updated_at[(a.batch.id, a.lecture_slot)] = a.updated_at
 
     batch_students_sorted = {}
     if faculty:
@@ -4130,6 +4135,7 @@ def admin_manual_attendance(request):
             batch.students_sorted = sorted_students
             for slot in slots:
                 slot.prefill_absent_set = set(attendance_prefill.get(batch.id, {}).get(slot.time_slot, []))
+                slot.last_updated = attendance_updated_at.get((batch.id, slot.time_slot))
                 if selected_date:
                     fac, subj = get_faculty_subject_for_slot(selected_date, batch, slot.time_slot)
                     slot.display_subject_name = subj.name if subj else (slot.subject.name if slot.subject else 'N/A')
