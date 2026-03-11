@@ -4014,6 +4014,272 @@ def faculty_report_excel(request):
     return resp
 
 
+# ---------- Admin: Manual Attendance (mark on behalf of faculty) ----------
+
+def _dates_for_department(dept):
+    """Return sorted list of dates that have lectures in this department (from term phases, excluding holidays)."""
+    tp = TermPhase.objects.filter(department=dept).first()
+    if not tp:
+        return []
+    holidays = get_all_holiday_dates(dept)
+    day_set = set(ScheduleSlot.objects.filter(department=dept).values_list('day', flat=True).distinct())
+    day_set = {d.lower() for d in day_set if d}
+    out = []
+    for i in range(1, 5):
+        start = getattr(tp, f't{i}_start', None)
+        end = getattr(tp, f't{i}_end', None)
+        if not start or not end:
+            continue
+        cur = start
+        while cur <= end:
+            if cur not in holidays and cur.strftime('%A').lower() in day_set:
+                out.append(cur)
+            cur += timedelta(days=1)
+    adj_dates = LectureAdjustment.objects.filter(batch__department=dept).values_list('date', flat=True).distinct()
+    for d in adj_dates:
+        if d in holidays:
+            continue
+        for i in range(1, 5):
+            start = getattr(tp, f't{i}_start', None)
+            end = getattr(tp, f't{i}_end', None)
+            if start and end and start <= d <= end:
+                out.append(d)
+                break
+    return sorted(set(out))
+
+
+def _faculties_for_date(dept, selected_date):
+    """Return faculties who have lectures on this date in this department."""
+    weekday = selected_date.strftime('%A')
+    faculty_ids = set(
+        ScheduleSlot.objects.filter(department=dept, day=weekday)
+        .values_list('faculty_id', flat=True).distinct()
+    )
+    for adj in LectureAdjustment.objects.filter(date=selected_date, batch__department=dept).select_related('new_faculty', 'original_faculty'):
+        if adj.new_faculty_id:
+            faculty_ids.add(adj.new_faculty_id)
+        if adj.original_faculty_id:
+            faculty_ids.add(adj.original_faculty_id)
+    return Faculty.objects.filter(pk__in=faculty_ids).order_by('short_name')
+
+
+@login_required
+def admin_manual_attendance(request):
+    """Admin marks attendance on behalf of faculty. Step 1: select date. Step 2: select faculty. Then show same attendance page."""
+    if not user_can_admin(request):
+        return redirect('accounts:role_redirect')
+    dept = get_admin_department(request)
+    if not dept:
+        messages.error(request, 'Select a department first from Dashboard.')
+        return redirect('core:admin_dashboard')
+
+    available_dates = _dates_for_department(dept)
+    date_str = request.GET.get('date')
+    faculty_id = request.GET.get('faculty_id')
+    selected_date = None
+    selected_faculty = None
+    faculties_for_date = []
+
+    if date_str:
+        try:
+            selected_date = datetime.strptime(date_str, '%Y-%m-%d').date()
+            if selected_date not in available_dates:
+                selected_date = None
+        except Exception:
+            pass
+        if selected_date:
+            faculties_for_date = _faculties_for_date(dept, selected_date)
+            if faculty_id:
+                selected_faculty = faculties_for_date.filter(pk=faculty_id).first()
+                if not selected_faculty:
+                    selected_faculty = faculties_for_date.first() if faculties_for_date else None
+
+    faculty = selected_faculty
+    slots_by_batch = defaultdict(list)
+    if selected_date and faculty:
+        weekday = selected_date.strftime('%A')
+        excluded_by_adj = set(
+            LectureAdjustment.objects.filter(date=selected_date, original_faculty=faculty).values_list('batch_id', 'time_slot')
+        )
+        for s in ScheduleSlot.objects.filter(faculty=faculty, day=weekday).select_related('batch', 'subject').order_by('time_slot'):
+            if (s.batch_id, s.time_slot) in excluded_by_adj:
+                continue
+            slots_by_batch[s.batch].append(s)
+        for adj in LectureAdjustment.objects.filter(date=selected_date, new_faculty=faculty).select_related('batch', 'new_subject', 'new_faculty'):
+            existing_pairs = {(b, sl.time_slot) for b, slots in slots_by_batch.items() for sl in slots}
+            if (adj.batch, adj.time_slot) in existing_pairs:
+                continue
+            virtual = type('Slot', (), {
+                'batch': adj.batch, 'time_slot': adj.time_slot,
+                'subject': adj.new_subject, 'faculty': adj.new_faculty,
+            })()
+            slots_by_batch[adj.batch].append(virtual)
+        for b in slots_by_batch:
+            slots_by_batch[b].sort(key=lambda s: s.time_slot or '')
+
+    attendance_prefill = defaultdict(lambda: defaultdict(list))
+    if selected_date and faculty:
+        for a in FacultyAttendance.objects.filter(faculty=faculty, date=selected_date):
+            attendance_prefill[a.batch.id][a.lecture_slot] = [x.strip() for x in (a.absent_roll_numbers or '').split(',') if x.strip()]
+
+    batch_students_sorted = {}
+    if faculty:
+        for batch, slots in slots_by_batch.items():
+            sorted_students = sorted(batch.student_set.all(), key=_roll_sort_key)
+            batch_students_sorted[batch.id] = sorted_students
+            batch.students_sorted = sorted_students
+            for slot in slots:
+                slot.prefill_absent_set = set(attendance_prefill.get(batch.id, {}).get(slot.time_slot, []))
+                if selected_date:
+                    fac, subj = get_faculty_subject_for_slot(selected_date, batch, slot.time_slot)
+                    slot.display_subject_name = subj.name if subj else (slot.subject.name if slot.subject else 'N/A')
+                    slot.display_faculty_name = fac.short_name if fac else (slot.faculty.short_name if slot.faculty else '—')
+
+    ctx = {
+        'available_dates': available_dates,
+        'selected_date': selected_date,
+        'faculties_for_date': faculties_for_date,
+        'selected_faculty': selected_faculty,
+        'faculty': faculty,
+        'slots_by_batch': dict(slots_by_batch),
+        'batch_students_sorted': batch_students_sorted,
+        'is_admin_manual': True,
+    }
+    return render(request, 'core/admin/manual_attendance.html', ctx)
+
+
+@login_required
+def admin_manual_attendance_save(request):
+    """Save attendance on behalf of faculty. Admin only."""
+    if not request.method == 'POST' or not user_can_admin(request):
+        return redirect('core:admin_manual_attendance')
+    dept = get_admin_department(request)
+    if not dept:
+        return redirect('core:admin_dashboard')
+    faculty_id = request.POST.get('faculty_id')
+    batch_id = request.POST.get('batch_id')
+    lecture_slot = request.POST.get('lecture_slot', '').strip()
+    date_str = request.POST.get('date')
+    absent_list = request.POST.getlist('absent_roll_numbers')
+    if not faculty_id or not batch_id or not date_str:
+        messages.error(request, 'Missing data.')
+        return redirect('core:admin_manual_attendance')
+    faculty = Faculty.objects.filter(pk=faculty_id, department=dept).first()
+    if not faculty:
+        messages.error(request, 'Invalid faculty.')
+        return redirect('core:admin_manual_attendance')
+    try:
+        selected_date = datetime.strptime(date_str, '%Y-%m-%d').date()
+    except Exception:
+        messages.error(request, 'Invalid date.')
+        return redirect('core:admin_manual_attendance')
+    batch = Batch.objects.filter(pk=batch_id, department=dept).first()
+    if not batch:
+        messages.error(request, 'Invalid batch.')
+        return redirect('core:admin_manual_attendance')
+    absent_roll_numbers = ','.join(x.strip() for x in absent_list if x.strip())
+    FacultyAttendance.objects.update_or_create(
+        faculty=faculty, date=selected_date, batch=batch, lecture_slot=lecture_slot,
+        defaults={'absent_roll_numbers': absent_roll_numbers}
+    )
+    messages.success(request, f'Attendance saved for {faculty.short_name}.')
+    url = reverse('core:admin_manual_attendance') + f'?date={date_str}&faculty_id={faculty_id}'
+    return redirect(url)
+
+
+@login_required
+def admin_manual_attendance_excel(request):
+    """Export attendance Excel for admin manual attendance (on behalf of faculty)."""
+    if not user_can_admin(request):
+        return redirect('core:admin_dashboard')
+    dept = get_admin_department(request)
+    if not dept:
+        return redirect('core:admin_dashboard')
+    date_str = request.GET.get('date')
+    batch_id = request.GET.get('batch_id')
+    faculty_id = request.GET.get('faculty_id')
+    if not date_str or not batch_id or not faculty_id:
+        messages.error(request, 'Select date, faculty and batch.')
+        return redirect('core:admin_manual_attendance')
+    faculty = Faculty.objects.filter(pk=faculty_id, department=dept).first()
+    if not faculty:
+        return redirect('core:admin_manual_attendance')
+    try:
+        selected_date = datetime.strptime(date_str, '%Y-%m-%d').date()
+    except Exception:
+        return redirect('core:admin_manual_attendance')
+    batch = Batch.objects.filter(pk=batch_id, department=dept).first()
+    if not batch:
+        return redirect('core:admin_manual_attendance')
+    weekday = selected_date.strftime('%A')
+    slots = list(ScheduleSlot.objects.filter(
+        faculty=faculty, batch=batch, day=weekday
+    ).select_related('subject').order_by('time_slot'))
+    atts = FacultyAttendance.objects.filter(faculty=faculty, date=selected_date, batch=batch).order_by('lecture_slot')
+    att_map = {a.lecture_slot: set(x.strip() for x in (a.absent_roll_numbers or '').split(',') if x.strip()) for a in atts}
+    students = list(Student.objects.filter(department=dept, batch=batch).annotate(roll_no_int=Cast('roll_no', IntegerField())).order_by('roll_no_int', 'roll_no'))
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = (f'{batch.name} {date_str}')[:31]
+    thin_border = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
+    red_font = Font(color='FF0000')
+    date_fill = PatternFill(start_color='4F81BD', end_color='4F81BD', fill_type='solid')
+    date_font = Font(bold=True, color='FFFFFF')
+    date_align = Alignment(horizontal='center', vertical='center')
+    header_font = Font(bold=True)
+    lect_fill = PatternFill(start_color='4F81BD', end_color='4F81BD', fill_type='solid')
+    lect_font = Font(bold=True, color='FFFFFF')
+    lect_align = Alignment(horizontal='center', vertical='center', wrap_text=True)
+
+    ws.cell(row=1, column=1, value='Roll No').font = header_font
+    ws.cell(row=1, column=2, value='Student Name').font = header_font
+    n_lec = max(len(slots), 1)
+    if n_lec > 1:
+        ws.merge_cells(start_row=1, start_column=3, end_row=1, end_column=2 + n_lec)
+    for c in range(1, 3):
+        ws.cell(1, c).border = thin_border
+    for c in range(3, 3 + n_lec):
+        cell = ws.cell(row=1, column=c, value=selected_date.strftime('%d-%b') if c == 3 else None)
+        cell.border = thin_border
+        cell.fill = date_fill
+        cell.font = date_font
+        cell.alignment = date_align
+    for c in range(1, 3):
+        ws.cell(row=2, column=c, value='').border = thin_border
+    for i, slot in enumerate(slots, start=1):
+        fac, subj = get_faculty_subject_for_slot(selected_date, batch, slot.time_slot)
+        subj_name = subj.name if subj else (slot.subject.name if slot.subject else 'N/A')
+        cell = ws.cell(row=2, column=2 + i, value=f'Lect {i}\n{subj_name}')
+        cell.alignment = lect_align
+        cell.fill = lect_fill
+        cell.font = lect_font
+        cell.border = thin_border
+    if not slots:
+        ws.cell(row=2, column=3, value='').border = thin_border
+    for idx, s in enumerate(students, start=3):
+        ws.cell(row=idx, column=1, value=s.roll_no).border = thin_border
+        ws.cell(row=idx, column=2, value=s.name).border = thin_border
+        str_roll = str(s.roll_no)
+        for i, slot in enumerate(slots, start=1):
+            is_absent = str_roll in att_map.get(slot.time_slot, set())
+            cell = ws.cell(row=idx, column=2 + i, value='A' if is_absent else 'P')
+            cell.border = thin_border
+            if is_absent:
+                cell.font = red_font
+    ws.column_dimensions['A'].width = 12
+    ws.column_dimensions['B'].width = 20
+    for c in range(3, 3 + n_lec):
+        ws.column_dimensions[get_column_letter(c)].width = 12
+    ws.freeze_panes = 'C3'
+    bio = BytesIO()
+    wb.save(bio)
+    bio.seek(0)
+    resp = HttpResponse(bio.getvalue(), content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+    resp['Content-Disposition'] = f'attachment; filename=Attendance_{batch.name}_{date_str}.xlsx'
+    return resp
+
+
 @login_required
 def faculty_mentorship(request):
     """Faculty view: mentorship students with week-wise attendance and at-risk list."""

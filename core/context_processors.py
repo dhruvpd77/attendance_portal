@@ -46,6 +46,7 @@ def sidebar_links(request):
             _make_link(request, 'Schedule', 'core:schedule_list', 'fa-calendar-alt', 'schedule_list'),
             _make_link(request, 'Upload Timetable', 'core:upload_timetable', 'fa-file-upload', 'upload_timetable'),
             _make_link(request, 'Term Phases', 'core:term_phases', 'fa-calendar-week', 'term_phases'),
+            _make_link(request, 'Manual Attendance', 'core:admin_manual_attendance', 'fa-edit', 'admin_manual_attendance'),
             _make_link(request, 'Daily Absent', 'core:daily_absent', 'fa-file-excel', 'daily_absent'),
             _make_link(request, 'Attendance Sheet', 'core:attendance_sheet_manager', 'fa-table', 'attendance_sheet_manager'),
             _make_link(request, 'Subject-wise Attendance', 'core:attendance_sheet_subjectwise_manager', 'fa-book-open', 'attendance_sheet_subjectwise_manager'),

@@ -1,0 +1,249 @@
+{% extends 'base.html' %}
+{% load static %}
+{% block title %}Manual Attendance (Admin) - LJIET_Attendance{% endblock %}
+{% block content %}
+<style>
+.faculty-att-hero { background: linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #334155 100%); border-radius: 16px; padding: 1.25rem 1.5rem; margin-bottom: 1.5rem; color: #fff; box-shadow: 0 10px 40px rgba(15, 23, 42, 0.25); }
+.faculty-att-hero .page-title { color: #fff !important; font-size: 1.5rem; margin-bottom: 0.35rem !important; }
+.faculty-att-hero .page-subtitle { color: #94a3b8 !important; font-size: 0.9rem; }
+.faculty-att-hero .hero-logo { height: 44px; width: auto; max-width: 90px; object-fit: contain; filter: drop-shadow(0 2px 8px rgba(0,0,0,0.4)); }
+.faculty-att-hero .faculty-badges .badge { font-weight: 500; padding: 0.35rem 0.65rem; border-radius: 8px; }
+
+.faculty-att-filters { background: linear-gradient(180deg, #f8fafc 0%, #f1f5f9 100%); border: 1px solid #e2e8f0; border-radius: 14px; padding: 1.25rem 1.5rem; margin-bottom: 1.5rem; }
+.faculty-att-filters .form-label { font-weight: 600; color: #475569; font-size: 0.85rem; }
+.faculty-att-filters .form-select { min-width: 200px; }
+
+.faculty-batch-card { border: none; border-radius: 16px; box-shadow: 0 4px 24px rgba(0,0,0,0.06), 0 1px 3px rgba(0,0,0,0.04); overflow: hidden; margin-bottom: 1.75rem; transition: box-shadow 0.3s ease; }
+.faculty-batch-card:hover { box-shadow: 0 8px 32px rgba(0,0,0,0.1), 0 2px 8px rgba(0,0,0,0.06); }
+.faculty-batch-card .card-header { background: linear-gradient(90deg, #1e293b 0%, #334155 100%); color: #fff; font-weight: 600; padding: 1rem 1.25rem; border: none; display: flex; justify-content: space-between; align-items: center; font-size: 1rem; }
+.faculty-batch-card .card-header .btn-light { border-radius: 10px; font-weight: 600; padding: 0.4rem 0.9rem; transition: all 0.25s ease; }
+.faculty-batch-card .slot-attendance-form { border-bottom: 1px solid #e2e8f0; padding: 1.5rem 1.75rem; transition: background 0.2s ease; }
+.faculty-batch-card .slot-attendance-form:last-of-type { border-bottom: none; }
+.faculty-batch-card .slot-title { font-weight: 600; color: #1e293b; font-size: 1.05rem; display: inline-flex; align-items: center; gap: 0.5rem; }
+.faculty-batch-card .slot-title::before { content: ''; width: 4px; height: 1.2em; background: linear-gradient(180deg, #3b82f6 0%, #8b5cf6 100%); border-radius: 2px; }
+.faculty-roll-item { cursor: pointer; border-radius: 12px; border: 2px solid #e2e8f0; background: #fff; padding: 0.65rem 0.85rem; transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1); }
+.faculty-roll-item:hover { border-color: #94a3b8; background: #f8fafc; transform: translateY(-1px); box-shadow: 0 4px 12px rgba(0,0,0,0.06); }
+.faculty-roll-item.checked { border-color: #dc2626; background: linear-gradient(135deg, #fef2f2 0%, #fee2e2 100%); }
+.faculty-roll-item .form-check-input { width: 1.1em; height: 1.1em; margin-top: 0; cursor: pointer; border-radius: 6px; }
+.faculty-slot-actions .btn { border-radius: 10px; font-weight: 600; padding: 0.45rem 1rem; }
+.admin-manual-badge { background: rgba(234, 179, 8, 0.2); color: #ca8a04; }
+</style>
+
+<div class="faculty-att-hero d-flex flex-wrap justify-content-between align-items-start gap-3">
+    <div class="d-flex align-items-center gap-3">
+        <img src="{% static 'images/ljiet-logo.png' %}" alt="LJIET" class="hero-logo">
+        <div>
+            <h1 class="page-title mb-1">Manual Attendance (Admin)</h1>
+            <p class="page-subtitle mb-2">Mark attendance on behalf of faculty. Select <strong>date</strong> first, then <strong>faculty</strong>. Tick checkboxes for <strong>absent</strong> students.</p>
+            {% if faculty %}<div class="faculty-badges"><span class="badge admin-manual-badge">On behalf of {{ faculty.short_name }}</span></div>{% endif %}
+        </div>
+    </div>
+</div>
+
+<form method="get" class="card faculty-att-filters">
+    <div class="card-body d-flex flex-wrap align-items-end gap-3">
+        <div>
+            <label class="form-label mb-1">Date</label>
+            <select name="date" onchange="this.form.submit()" class="form-select form-select-app">
+                <option value="">-- Select date --</option>
+                {% for d in available_dates %}
+                <option value="{{ d|date:'Y-m-d' }}" {% if d == selected_date %}selected{% endif %}>{{ d|date:"D, d M Y" }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        {% if selected_date and faculties_for_date %}
+        <div>
+            <label class="form-label mb-1">Faculty</label>
+            <select name="faculty_id" onchange="this.form.submit()" class="form-select form-select-app">
+                <option value="">-- Select faculty --</option>
+                {% for f in faculties_for_date %}
+                <option value="{{ f.id }}" {% if selected_faculty and f.id == selected_faculty.id %}selected{% endif %}>{{ f.short_name }} ({{ f.full_name }})</option>
+                {% endfor %}
+            </select>
+        </div>
+        {% endif %}
+        {% if selected_date and faculty %}
+        <div id="attendance-meta" data-date-dmy="{{ selected_date|date:'d/m/Y' }}" data-fac-initials="{{ faculty.short_name|default:'' }}" style="display:none" aria-hidden="true"></div>
+        <div>
+            <button type="button" id="copy-attendance-text-btn" class="btn btn-outline-primary btn-sm" style="border-radius:10px;font-weight:600;"><i class="fas fa-copy me-1"></i> Copy attendance text</button>
+        </div>
+        {% endif %}
+    </div>
+</form>
+
+<!-- Modal: show attendance text -->
+<div class="modal fade" id="attendance-text-modal" tabindex="-1" aria-labelledby="attendance-text-modal-label" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="attendance-text-modal-label">Attendance text</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div id="attendance-text-preview" class="bg-light p-3 rounded small mb-0" style="max-height: 50vh; overflow-y: auto; line-height: 1.6;"></div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                <button type="button" class="btn btn-primary-app" id="attendance-text-copy-btn">Copy text</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% if selected_date and faculty %}
+<div class="mb-4">
+    {% for batch, slots in slots_by_batch.items %}
+    <div class="card faculty-batch-card batch-slots">
+        <div class="card-header">
+            <span>Batch: {{ batch.name }}</span>
+            <a href="{% url 'core:admin_manual_attendance_excel' %}?date={{ selected_date|date:'Y-m-d' }}&batch_id={{ batch.id }}&faculty_id={{ faculty.id }}" class="btn btn-sm btn-light">Download Excel</a>
+        </div>
+        {% for slot in slots %}
+        <div class="slot-attendance-form" data-slot-index="{{ forloop.counter0 }}">
+            <div class="d-flex flex-wrap align-items-center justify-content-between gap-3 mb-3">
+                <p class="slot-title mb-0">{{ slot.time_slot }} — {{ slot.display_subject_name|default:slot.subject.name }}</p>
+                <div class="d-flex gap-2 flex-wrap faculty-slot-actions">
+                    {% if not forloop.first %}
+                    <button type="button" class="btn btn-sm btn-outline-secondary copy-above-btn" data-slot-index="{{ forloop.counter0 }}"><i class="fas fa-copy me-1"></i>Copy above</button>
+                    {% endif %}
+                    <button type="button" class="btn btn-sm btn-success all-present-btn" data-form-id="form-{{ batch.id }}-{{ forloop.counter0 }}"><i class="fas fa-check-double me-1"></i>All present</button>
+                    <button type="submit" form="form-{{ batch.id }}-{{ forloop.counter0 }}" class="btn btn-sm btn-primary"><i class="fas fa-save me-1"></i>Save</button>
+                </div>
+            </div>
+            <form id="form-{{ batch.id }}-{{ forloop.counter0 }}" method="post" action="{% url 'core:admin_manual_attendance_save' %}">
+                {% csrf_token %}
+                <input type="hidden" name="faculty_id" value="{{ faculty.id }}">
+                <input type="hidden" name="date" value="{{ selected_date|date:'Y-m-d' }}">
+                <input type="hidden" name="batch_id" value="{{ batch.id }}">
+                <input type="hidden" name="lecture_slot" value="{{ slot.time_slot }}">
+                <label class="form-label small text-uppercase fw-semibold mb-3">Tick absent students</label>
+                <div class="row g-2 row-cols-3 row-cols-sm-5">
+                    {% for s in batch.students_sorted %}
+                    <div class="col">
+                        <label class="faculty-roll-item d-flex align-items-center gap-2 mb-0{% if s.roll_no in slot.prefill_absent_set %} checked{% endif %}">
+                            <input type="checkbox" name="absent_roll_numbers" value="{{ s.roll_no }}" {% if s.roll_no in slot.prefill_absent_set %}checked{% endif %} class="form-check-input">
+                            <span class="roll-num text-truncate" title="{{ s.roll_no }} — {{ s.name }}">{{ s.roll_no }}</span>
+                        </label>
+                    </div>
+                    {% endfor %}
+                </div>
+            </form>
+        </div>
+        {% endfor %}
+    </div>
+    {% empty %}
+    <p class="text-secondary">No lectures for this faculty on this date.</p>
+    {% endfor %}
+</div>
+
+<script>
+(function() {
+    document.querySelectorAll('.faculty-roll-item').forEach(function(label) {
+        var cb = label.querySelector('input[type="checkbox"]');
+        if (!cb) return;
+        function updateClass() { label.classList.toggle('checked', cb.checked); }
+        cb.addEventListener('change', updateClass);
+        updateClass();
+    });
+    document.querySelectorAll('.copy-above-btn').forEach(function(btn) {
+        btn.addEventListener('click', function() {
+            var slotIndex = parseInt(this.getAttribute('data-slot-index'), 10);
+            var batchContainer = this.closest('.batch-slots');
+            if (!batchContainer) return;
+            var allSlots = batchContainer.querySelectorAll('.slot-attendance-form');
+            var currentSlot = allSlots[slotIndex];
+            var prevSlot = allSlots[slotIndex - 1];
+            if (!currentSlot || !prevSlot) return;
+            var prevForm = prevSlot.querySelector('form');
+            var currForm = currentSlot.querySelector('form');
+            if (!prevForm || !currForm) return;
+            var checkedValues = [];
+            prevForm.querySelectorAll('input[name="absent_roll_numbers"]:checked').forEach(function(cb) { checkedValues.push(cb.value); });
+            currForm.querySelectorAll('input[name="absent_roll_numbers"]').forEach(function(cb) {
+                cb.checked = checkedValues.indexOf(cb.value) !== -1;
+                var label = cb.closest('.faculty-roll-item');
+                if (label) label.classList.toggle('checked', cb.checked);
+            });
+        });
+    });
+    document.querySelectorAll('.all-present-btn').forEach(function(btn) {
+        btn.addEventListener('click', function() {
+            var formId = this.getAttribute('data-form-id');
+            var form = document.getElementById(formId);
+            if (!form) return;
+            form.querySelectorAll('input[name="absent_roll_numbers"]').forEach(function(cb) { cb.checked = false; });
+            form.submit();
+        });
+    });
+    var copyBtn = document.getElementById('copy-attendance-text-btn');
+    var meta = document.getElementById('attendance-meta');
+    var modalEl = document.getElementById('attendance-text-modal');
+    var previewEl = document.getElementById('attendance-text-preview');
+    var modalCopyBtn = document.getElementById('attendance-text-copy-btn');
+    function getLecNoFromTimeSlot(slotStr) {
+        if (!slotStr) return null;
+        var n = (slotStr + '').replace(/\s+to\s+/gi, '-').replace(/\s*-\s*/g, '-').replace(/\s+/g, '').trim();
+        var map = { '08:45-09:45': 1, '09:45-10:45': 2, '11:30-12:30': 3, '12:30-13:30': 4, '13:45-14:45': 5 };
+        return map[n] || null;
+    }
+    function buildAttendanceData() {
+        if (!meta) return { plain: '', html: '' };
+        var dateDmy = meta.getAttribute('data-date-dmy') || '';
+        var facInitials = meta.getAttribute('data-fac-initials') || '';
+        var batchCards = document.querySelectorAll('.batch-slots');
+        var plainBlocks = [], htmlBlocks = [];
+        batchCards.forEach(function(card) {
+            var batchSpan = card.querySelector('.card-header span');
+            var divName = batchSpan ? batchSpan.textContent.replace(/^Batch:\s*/i, '').trim() : '';
+            var slotForms = card.querySelectorAll('.slot-attendance-form');
+            var lecNumbers = [], absentLines = [];
+            slotForms.forEach(function(slotDiv, idx) {
+                var form = slotDiv.querySelector('form');
+                var slotInput = form ? form.querySelector('input[name="lecture_slot"]') : null;
+                var timeSlot = slotInput ? slotInput.value : '';
+                var lecNo = getLecNoFromTimeSlot(timeSlot);
+                if (lecNo == null) lecNo = idx + 1;
+                lecNumbers.push(String(lecNo));
+                var absent = [];
+                if (form) form.querySelectorAll('input[name="absent_roll_numbers"]:checked').forEach(function(cb) { absent.push(cb.value); });
+                absent.sort(function(a, b) { return parseInt(a, 10) - parseInt(b, 10); });
+                absentLines.push({ lecNo: lecNo, absent: absent.length ? absent.join(', ') : '—' });
+            });
+            plainBlocks.push('Fac Initials: ' + facInitials + '\nDate: ' + dateDmy + '\nLEC No: ' + lecNumbers.join(',') + '\nDiv: ' + divName + '\nAbsent numbers -\n' + absentLines.map(function(l) { return 'Lec ' + l.lecNo + ': ' + l.absent; }).join('\n'));
+            htmlBlocks.push('<strong>Fac Initials:</strong> ' + facInitials + '<br><strong>Date:</strong> ' + dateDmy + '<br><strong>LEC No:</strong> ' + lecNumbers.join(',') + '<br><strong>Div:</strong> ' + divName + '<br><strong>Absent numbers</strong> -<br>' + absentLines.map(function(l) { return 'Lec ' + l.lecNo + ': ' + l.absent; }).join('<br>'));
+        });
+        return { plain: plainBlocks.join('\n\n'), html: '<div style="font-family:inherit;font-size:14px;line-height:1.5;">' + htmlBlocks.join('<br><br>') + '</div>' };
+    }
+    if (copyBtn && meta && modalEl && previewEl) {
+        copyBtn.addEventListener('click', function() {
+            var data = buildAttendanceData();
+            if (!data.plain.trim()) return;
+            previewEl.innerHTML = data.html;
+            var modal = typeof bootstrap !== 'undefined' && bootstrap.Modal ? new bootstrap.Modal(modalEl) : null;
+            if (modal) modal.show(); else { modalEl.classList.add('show'); modalEl.style.display = 'block'; modalEl.classList.add('d-block'); }
+        });
+    }
+    if (modalCopyBtn && previewEl) {
+        modalCopyBtn.addEventListener('click', function() {
+            var data = buildAttendanceData();
+            if (!data.plain.trim()) return;
+            var plain = data.plain, html = data.html;
+            if (navigator.clipboard && navigator.clipboard.write) {
+                navigator.clipboard.write([new ClipboardItem({ 'text/html': new Blob([html], { type: 'text/html' }), 'text/plain': new Blob([plain], { type: 'text/plain' }) })])
+                    .then(function() { var o = modalCopyBtn.textContent; modalCopyBtn.textContent = 'Copied!'; setTimeout(function() { modalCopyBtn.textContent = o; }, 2000); })
+                    .catch(function() { navigator.clipboard.writeText(plain).then(function() { var o = modalCopyBtn.textContent; modalCopyBtn.textContent = 'Copied!'; setTimeout(function() { modalCopyBtn.textContent = o; }, 2000); }); });
+            } else {
+                navigator.clipboard.writeText(plain).then(function() { var o = modalCopyBtn.textContent; modalCopyBtn.textContent = 'Copied!'; setTimeout(function() { modalCopyBtn.textContent = o; }, 2000); });
+            }
+        });
+    }
+})();
+</script>
+{% elif selected_date and not faculty %}
+<p class="text-secondary">Select a faculty who has lectures on {{ selected_date|date:"D, d M Y" }}.</p>
+{% elif not available_dates %}
+<p class="text-secondary">Set term phases and schedule so that lecture dates are available.</p>
+{% else %}
+<p class="text-secondary">Select a date to mark attendance on behalf of a faculty.</p>
+{% endif %}
+{% endblock %}
