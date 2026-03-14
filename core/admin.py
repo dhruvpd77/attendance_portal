@@ -1,7 +1,7 @@
 from django.contrib import admin
 from .models import (
     Department, Batch, Subject, Faculty, Student,
-    ScheduleSlot, TermPhase, PhaseHoliday, FacultyAttendance,
+    ScheduleSlot, TermPhase, PhaseHoliday, FacultyAttendance, LectureCancellation,
 )
 
 @admin.register(Department)
@@ -46,3 +46,11 @@ class PhaseHolidayAdmin(admin.ModelAdmin):
 class FacultyAttendanceAdmin(admin.ModelAdmin):
     list_display = ('faculty', 'date', 'batch', 'lecture_slot')
     list_filter = ('date', 'faculty')
+    search_fields = ('faculty__short_name', 'batch__name', 'lecture_slot')
+
+
+@admin.register(LectureCancellation)
+class LectureCancellationAdmin(admin.ModelAdmin):
+    list_display = ('date', 'batch', 'time_slot')
+    list_filter = ('date', 'batch__department')
+    search_fields = ('batch__name', 'time_slot')

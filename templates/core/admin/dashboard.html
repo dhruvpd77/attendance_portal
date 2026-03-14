@@ -117,6 +117,16 @@
                         </a>
                     </li>
                     <li class="list-group-item border-0 px-0 py-2">
+                        <a href="{% url 'core:attendance_lock_setting' %}" class="text-primary text-decoration-none fw-medium">
+                            <i class="fas fa-lock me-2"></i> Lock attendance time
+                        </a>
+                    </li>
+                    <li class="list-group-item border-0 px-0 py-2">
+                        <a href="{% url 'core:lecture_cancellation' %}" class="text-primary text-decoration-none fw-medium">
+                            <i class="fas fa-times-circle me-2"></i> Lecture cancellation
+                        </a>
+                    </li>
+                    <li class="list-group-item border-0 px-0 py-2">
                         <a href="{% url 'core:student_upload' %}" class="text-primary text-decoration-none fw-medium">
                             <i class="fas fa-upload me-2"></i> Upload students (CSV)
                         </a>

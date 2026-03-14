@@ -29,10 +29,14 @@
 .faculty-roll-item { cursor: pointer; border-radius: 12px; border: 2px solid #e2e8f0; background: #fff; padding: 0.65rem 0.85rem; transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1); }
 .faculty-roll-item:hover { border-color: #94a3b8; background: #f8fafc; transform: translateY(-1px); box-shadow: 0 4px 12px rgba(0,0,0,0.06); }
 .faculty-roll-item.checked { border-color: #dc2626; background: linear-gradient(135deg, #fef2f2 0%, #fee2e2 100%); box-shadow: 0 2px 8px rgba(220, 38, 38, 0.2); }
+.faculty-roll-item.checked.checked-blue { border-color: #2563eb; background: linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%); box-shadow: 0 2px 8px rgba(37, 99, 235, 0.2); }
+.faculty-roll-item.checked.checked-blue:hover { background: linear-gradient(135deg, #dbeafe 0%, #bfdbfe 100%); }
 .faculty-roll-item.checked:hover { background: linear-gradient(135deg, #fee2e2 0%, #fecaca 100%); }
 .faculty-roll-item .form-check-input { width: 1.1em; height: 1.1em; margin-top: 0; cursor: pointer; border: 2px solid #94a3b8; border-radius: 6px; transition: all 0.2s ease; }
 .faculty-roll-item .form-check-input:checked { background-color: #dc2626; border-color: #dc2626; }
+.faculty-roll-item.checked-blue .form-check-input:checked { background-color: #2563eb; border-color: #2563eb; }
 .faculty-roll-item .form-check-input:focus { box-shadow: 0 0 0 3px rgba(220, 38, 38, 0.25); }
+.faculty-roll-item .absent-reason-select { font-size: 0.75rem; padding: 0.2rem 0.4rem; min-width: 90px; border-radius: 6px; }
 .faculty-roll-item .roll-num { font-weight: 600; color: #334155; font-size: 0.9rem; }
 
 /* Action buttons */
@@ -52,14 +56,36 @@
 .faculty-batch-card .slot-attendance-form:nth-child(5) { animation-delay: 0.2s; }
 .faculty-batch-card .slot-attendance-form:nth-child(6) { animation-delay: 0.25s; }
 @keyframes slotFadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+
+/* Locked state: dim and disable interaction */
+.attendance-locked-overlay .faculty-roll-item { pointer-events: none; opacity: 0.85; }
+.attendance-locked-overlay .faculty-slot-actions .btn { pointer-events: none; opacity: 0.6; }
+.attendance-locked-overlay .card-header .btn-light { pointer-events: none; opacity: 0.6; }
+
+/* Mobile: 2 columns, larger touch targets, flexible dropdowns */
+@media (max-width: 575.98px) {
+    .faculty-att-hero { padding: 1rem 1.25rem; }
+    .faculty-att-hero .page-title { font-size: 1.25rem !important; }
+    .faculty-att-hero .page-subtitle { font-size: 0.8rem !important; }
+    .faculty-att-filters { padding: 1rem 1.25rem; }
+    .faculty-att-filters .form-select { min-width: 100%; width: 100%; }
+    .faculty-batch-card .slot-attendance-form { padding: 1rem 1.25rem; }
+    .faculty-batch-card .slot-title { font-size: 0.95rem; flex-wrap: wrap; }
+    .faculty-batch-card .slot-title .slot-last-updated { display: block; width: 100%; margin-top: 0.25rem; margin-left: 0 !important; }
+    .faculty-slot-actions { width: 100%; justify-content: flex-start; }
+    .faculty-roll-item .form-check-input { width: 1.35em; height: 1.35em; min-width: 22px; min-height: 22px; }
+    .faculty-roll-item .absent-reason-select { min-width: 0; font-size: 0.7rem; padding: 0.25rem 0.35rem; flex: 1; max-width: 85px; }
+    .faculty-roll-item { padding: 0.6rem 0.7rem; gap: 0.5rem; }
+    .attendance-grid-mobile { row-gap: 0.5rem !important; }
+}
 </style>
 
 <div class="faculty-att-hero d-flex flex-wrap justify-content-between align-items-start gap-3">
     <div class="d-flex align-items-center gap-3">
         <img src="{% static 'images/ljiet-logo.png' %}" alt="LJIET" class="hero-logo">
         <div>
-            <h1 class="page-title mb-1">Mark Attendance</h1>
-        <p class="page-subtitle mb-2">Select date and batch. Tick checkboxes for <strong>absent</strong> students. If no one is absent, click <strong>All present</strong>.</p>
+            <h1 class="page-title mb-1">Mark Attendance {% if attendance_locked %}<span class="badge bg-warning text-dark ms-2"><i class="fas fa-lock me-1"></i>Locked</span>{% endif %}</h1>
+        <p class="page-subtitle mb-2">Select date and batch. Tick checkboxes for <strong>absent</strong> students. If no one is absent, click <strong>All present</strong>.{% if attendance_locked %} <strong class="text-warning">Attendance is locked for this date. Admin can update via Manual Attendance.</strong>{% elif lock_time_warning %} <strong class="text-warning"><i class="fas fa-exclamation-triangle me-1"></i>Fill attendance before {{ lock_time_warning }}. After that time you cannot edit or change attendance.</strong>{% endif %}</p>
         {% if faculty %}<div class="faculty-badges"><span class="badge bg-primary bg-opacity-25 text-white">{{ faculty.short_name }}</span></div>{% endif %}
         </div>
     </div>
@@ -104,17 +130,26 @@
 </div>
 
 {% if selected_date %}
-<div class="mb-4">
+{% if attendance_locked %}
+<div class="alert alert-warning d-flex align-items-center gap-2 mb-3" role="alert">
+    <i class="fas fa-lock fa-lg"></i>
+    <div>
+        <strong>Attendance locked</strong> — You cannot edit or change attendance for this date. Admin can mark attendance via <strong>Manual Attendance</strong>.
+    </div>
+</div>
+{% endif %}
+<div class="mb-4 {% if attendance_locked %}attendance-locked-overlay{% endif %}">
     {% for batch, slots in slots_by_batch.items %}
     <div class="card faculty-batch-card batch-slots">
         <div class="card-header">
             <span>Batch: {{ batch.name }}</span>
-            <a href="{% url 'core:faculty_report_excel' %}?date={{ selected_date|date:'Y-m-d' }}&batch_id={{ batch.id }}" class="btn btn-sm btn-light">Download Excel</a>
+            {% if not attendance_locked %}<a href="{% url 'core:faculty_report_excel' %}?date={{ selected_date|date:'Y-m-d' }}&batch_id={{ batch.id }}" class="btn btn-sm btn-light">Download Excel</a>{% endif %}
         </div>
         {% for slot in slots %}
         <div class="slot-attendance-form" data-slot-index="{{ forloop.counter0 }}">
             <div class="d-flex flex-wrap align-items-center justify-content-between gap-3 mb-3">
-                <p class="slot-title mb-0">{{ slot.time_slot }} — {{ slot.display_subject_name|default:slot.subject.name }}{% if slot.last_updated %} <span class="text-muted small fw-normal ms-2">(Last updated: {{ slot.last_updated|date:"d M Y" }} {{ slot.last_updated|time:"H:i" }})</span>{% endif %}</p>
+                <p class="slot-title mb-0">{{ slot.time_slot }} — {{ slot.display_subject_name|default:slot.subject.name }}{% if slot.last_updated %} <span class="text-muted small fw-normal ms-2 slot-last-updated">(Last updated: {{ slot.last_updated|date:"d M Y" }} {{ slot.last_updated|time:"H:i" }})</span>{% endif %}</p>
+                {% if not attendance_locked %}
                 <div class="d-flex gap-2 flex-wrap faculty-slot-actions">
                     {% if not forloop.first %}
                     <button type="button" class="btn btn-sm btn-outline-secondary copy-above-btn" data-slot-index="{{ forloop.counter0 }}"><i class="fas fa-copy me-1"></i>Copy above</button>
@@ -122,20 +157,31 @@
                     <button type="button" class="btn btn-sm btn-success all-present-btn" data-form-id="form-{{ batch.id }}-{{ forloop.counter0 }}"><i class="fas fa-check-double me-1"></i>All present</button>
                     <button type="submit" form="form-{{ batch.id }}-{{ forloop.counter0 }}" class="btn btn-sm btn-primary"><i class="fas fa-save me-1"></i>Save</button>
                 </div>
+                {% else %}
+                <span class="text-muted small"><i class="fas fa-lock me-1"></i>Locked</span>
+                {% endif %}
             </div>
             <form id="form-{{ batch.id }}-{{ forloop.counter0 }}" method="post" action="{% url 'core:faculty_attendance_save' %}">
                 {% csrf_token %}
                 <input type="hidden" name="date" value="{{ selected_date|date:'Y-m-d' }}">
                 <input type="hidden" name="batch_id" value="{{ batch.id }}">
                 <input type="hidden" name="lecture_slot" value="{{ slot.time_slot }}">
-                <label class="form-label small text-uppercase fw-semibold mb-3">Tick absent students</label>
-                <div class="row g-2 row-cols-3 row-cols-sm-5">
-                    {% for s in batch.students_sorted %}
+                <label class="form-label small text-uppercase fw-semibold mb-3">Tick absent students & select reason</label>
+                <div class="row g-2 row-cols-2 row-cols-sm-5 attendance-grid-mobile">
+                    {% for s, prefill_reason in slot.students_with_reasons %}
                     <div class="col">
-                        <label class="faculty-roll-item d-flex align-items-center gap-2 mb-0{% if s.roll_no in slot.prefill_absent_set %} checked{% endif %}">
-                            <input type="checkbox" name="absent_roll_numbers" value="{{ s.roll_no }}" {% if s.roll_no in slot.prefill_absent_set %}checked{% endif %} class="form-check-input">
-                            <span class="roll-num text-truncate" title="{{ s.roll_no }} — {{ s.name }}">{{ s.roll_no }}</span>
-                        </label>
+                        <div class="faculty-roll-item d-flex align-items-center gap-2 mb-0{% if s.roll_no in slot.prefill_absent_set %} checked{% if prefill_reason != 'general' %} checked-blue{% endif %}{% endif %}" data-roll="{{ s.roll_no }}">
+                            <label class="d-flex align-items-center gap-2 mb-0 flex-grow-1" style="cursor:{% if attendance_locked %}default{% else %}pointer{% endif %};">
+                                <input type="checkbox" name="absent_roll_numbers" value="{{ s.roll_no }}" {% if s.roll_no in slot.prefill_absent_set %}checked{% endif %} {% if attendance_locked %}disabled{% endif %} class="form-check-input roll-cb">
+                                <span class="roll-num text-truncate" title="{{ s.roll_no }} — {{ s.name }}">{{ s.roll_no }}</span>
+                            </label>
+                            <select name="absent_reason_{{ s.roll_no }}" class="form-select form-select-sm absent-reason-select" title="Absent reason" {% if attendance_locked %}disabled{% endif %}>
+                                <option value="general" {% if prefill_reason == 'general' %}selected{% endif %}>general</option>
+                                <option value="washroom" {% if prefill_reason == 'washroom' %}selected{% endif %}>washroom</option>
+                                <option value="playing game" {% if prefill_reason == 'playing game' %}selected{% endif %}>playing game</option>
+                                <option value="others" {% if prefill_reason == 'others' %}selected{% endif %}>others</option>
+                            </select>
+                        </div>
                     </div>
                     {% endfor %}
                 </div>
@@ -150,12 +196,18 @@
 
 <script>
 (function() {
-    // Toggle 'checked' class on roll items when checkbox state changes
-    document.querySelectorAll('.faculty-roll-item').forEach(function(label) {
-        var cb = label.querySelector('input[type="checkbox"]');
+    // Toggle 'checked' and 'checked-blue' on roll items
+    document.querySelectorAll('.faculty-roll-item').forEach(function(item) {
+        var cb = item.querySelector('input[type="checkbox"]');
+        var sel = item.querySelector('select.absent-reason-select');
         if (!cb) return;
-        function updateClass() { label.classList.toggle('checked', cb.checked); }
+        function updateClass() {
+            item.classList.toggle('checked', cb.checked);
+            var reason = sel ? sel.value : 'general';
+            item.classList.toggle('checked-blue', cb.checked && reason !== 'general');
+        }
         cb.addEventListener('change', updateClass);
+        if (sel) sel.addEventListener('change', updateClass);
         updateClass();
     });
 
@@ -171,14 +223,26 @@
             var prevForm = prevSlot.querySelector('form');
             var currForm = currentSlot.querySelector('form');
             if (!prevForm || !currForm) return;
-            var checkedValues = [];
-            prevForm.querySelectorAll('input[name="absent_roll_numbers"]:checked').forEach(function(cb) {
-                checkedValues.push(cb.value);
+            var checkedWithReasons = {};
+            prevSlot.querySelectorAll('.faculty-roll-item').forEach(function(item) {
+                var cb = item.querySelector('input[name="absent_roll_numbers"]:checked');
+                var sel = item.querySelector('select.absent-reason-select');
+                if (cb && cb.checked) checkedWithReasons[cb.value] = sel ? sel.value : 'general';
             });
-            currForm.querySelectorAll('input[name="absent_roll_numbers"]').forEach(function(cb) {
-                cb.checked = checkedValues.indexOf(cb.value) !== -1;
-                var label = cb.closest('.faculty-roll-item');
-                if (label) label.classList.toggle('checked', cb.checked);
+            currForm.querySelectorAll('.faculty-roll-item').forEach(function(item) {
+                var cb = item.querySelector('input[name="absent_roll_numbers"]');
+                var sel = item.querySelector('select.absent-reason-select');
+                if (!cb) return;
+                var reason = checkedWithReasons[cb.value];
+                if (reason !== undefined) {
+                    cb.checked = true;
+                    if (sel) sel.value = reason;
+                } else {
+                    cb.checked = false;
+                    if (sel) sel.value = 'general';
+                }
+                item.classList.toggle('checked', cb.checked);
+                item.classList.toggle('checked-blue', cb.checked && sel && sel.value !== 'general');
             });
         });
     });

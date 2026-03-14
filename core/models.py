@@ -135,6 +135,7 @@ class FacultyAttendance(models.Model):
     batch = models.ForeignKey(Batch, on_delete=models.CASCADE)
     lecture_slot = models.CharField(max_length=50)  # same as ScheduleSlot.time_slot or "Lec 1"
     absent_roll_numbers = models.TextField(blank=True)  # comma-separated
+    absent_reasons = models.TextField(blank=True)  # JSON: {"176":"washroom","177":"general"} default general
     remarks = models.CharField(max_length=200, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -158,6 +159,38 @@ class AttendanceNotificationLog(models.Model):
 
     def __str__(self):
         return f"{self.student.roll_no} {self.notification_type} @ {self.sent_at}"
+
+
+class AttendanceLockSetting(models.Model):
+    """Global setting: after this time (IST) each day, faculty cannot edit attendance. Admin manual attendance is never locked."""
+    lock_hour = models.PositiveSmallIntegerField(default=17)  # 0-23, default 5 PM
+    lock_minute = models.PositiveSmallIntegerField(default=0)  # 0-59
+    enabled = models.BooleanField(default=False)
+
+    class Meta:
+        verbose_name = 'Attendance lock time'
+        verbose_name_plural = 'Attendance lock time'
+
+    def __str__(self):
+        if not self.enabled:
+            return 'Lock disabled'
+        return f'{self.lock_hour:02d}:{self.lock_minute:02d} IST (locked after this time each day)'
+
+
+class LectureCancellation(models.Model):
+    """Lecture cancelled on this date. Excluded from lecture counts and all attendance records."""
+    date = models.DateField()
+    batch = models.ForeignKey(Batch, on_delete=models.CASCADE)
+    time_slot = models.CharField(max_length=50)  # same as ScheduleSlot.time_slot
+
+    class Meta:
+        ordering = ['-date', 'batch', 'time_slot']
+        unique_together = ('date', 'batch', 'time_slot')
+        verbose_name = 'Lecture cancellation'
+        verbose_name_plural = 'Lecture cancellations'
+
+    def __str__(self):
+        return f"{self.date} {self.batch.name} {self.time_slot} (cancelled)"
 
 
 class LectureAdjustment(models.Model):

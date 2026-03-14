@@ -44,7 +44,15 @@ python manage.py createsuperuser   # for Django admin and default admin role
 python manage.py runserver
 ```
 
-Open **http://127.0.0.1:8000/** and log in with a user that has a role. Superuser/staff are treated as admin and redirected to the admin dashboard. After login, all app pages (dashboard, departments, batches, etc.) are under **/portal/** (e.g. `/portal/admin-dashboard/`, `/portal/admin/departments/`).
+Open **http://127.0.0.1:8000/** and log in with a user that has a role.
+
+## Run on mobile (hotspot / same Wi‑Fi)
+
+1. Connect your PC and phone to the **same network** (e.g. phone hotspot, or PC and phone on same Wi‑Fi).
+2. Double‑click **`run_for_mobile.bat`** (or run `python manage.py runserver 0.0.0.0:8000`).
+3. On your phone browser, open the URL shown (e.g. `http://192.168.43.1:8000`).
+
+The script uses `0.0.0.0` so the server listens on all interfaces and is reachable from your phone. Superuser/staff are treated as admin and redirected to the admin dashboard. After login, all app pages (dashboard, departments, batches, etc.) are under **/portal/** (e.g. `/portal/admin-dashboard/`, `/portal/admin/departments/`).
 
 ## Quick start (data)
 

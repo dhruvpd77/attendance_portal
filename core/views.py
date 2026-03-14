@@ -23,6 +23,8 @@ from django.contrib import messages
 from django.http import HttpResponse
 from django.db.models import Count, Q, IntegerField
 from django.db.models.functions import Cast
+from django.utils import timezone
+import zoneinfo
 from openpyxl import Workbook
 from openpyxl.cell.rich_text import CellRichText, TextBlock
 from openpyxl.cell.text import InlineFont
@@ -31,8 +33,8 @@ from openpyxl.utils import get_column_letter
 
 from .models import (
     Department, Batch, Subject, Faculty, Student,
-    ScheduleSlot, TermPhase, FacultyAttendance, LectureAdjustment, PhaseHoliday,
-    AttendanceNotificationLog,
+    ScheduleSlot, TermPhase, FacultyAttendance, LectureAdjustment, LectureCancellation, PhaseHoliday,
+    AttendanceNotificationLog, AttendanceLockSetting,
 )
 from accounts.models import UserRole
 
@@ -71,6 +73,33 @@ def get_all_holiday_dates(dept):
     return set(
         PhaseHoliday.objects.filter(department=dept).values_list('date', flat=True)
     )
+
+
+def get_cancelled_lectures_set(dept):
+    """Return set of (date, batch_id, time_slot) for cancelled lectures in this department."""
+    if not dept:
+        return set()
+    return set(
+        LectureCancellation.objects.filter(batch__department=dept)
+        .values_list('date', 'batch_id', 'time_slot')
+    )
+
+
+def _is_attendance_locked_for_date(target_date):
+    """Return True if faculty cannot edit attendance for this date. Uses IST. Admin manual attendance never calls this."""
+    lock = AttendanceLockSetting.objects.filter(pk=1).first()
+    if not lock or not lock.enabled:
+        return False
+    ist = zoneinfo.ZoneInfo('Asia/Kolkata')
+    now_ist = timezone.now().astimezone(ist)
+    today_ist = now_ist.date()
+    if target_date < today_ist:
+        return True  # past date always locked
+    if target_date > today_ist:
+        return False  # future date not locked
+    lock_minutes = lock.lock_hour * 60 + lock.lock_minute
+    now_minutes = now_ist.hour * 60 + now_ist.minute
+    return now_minutes >= lock_minutes
 
 
 # ----------
@@ -188,6 +217,127 @@ def admin_dashboard(request):
         'is_super_admin': super_admin,
     }
     return render(request, 'core/admin/dashboard.html', ctx)
+
+
+@login_required
+def attendance_lock_setting(request):
+    """Admin: set lock time after which faculty cannot edit attendance. Uses IST."""
+    if not user_can_admin(request):
+        return redirect('accounts:role_redirect')
+    lock_setting, _ = AttendanceLockSetting.objects.get_or_create(
+        pk=1, defaults={'lock_hour': 17, 'lock_minute': 0, 'enabled': False}
+    )
+    if request.method == 'POST':
+        lock_setting.enabled = request.POST.get('enabled') == 'on'
+        try:
+            lock_setting.lock_hour = int(request.POST.get('lock_hour', 17))
+            lock_setting.lock_minute = int(request.POST.get('lock_minute', 0))
+        except (TypeError, ValueError):
+            pass
+        lock_setting.lock_hour = max(0, min(23, lock_setting.lock_hour))
+        lock_setting.lock_minute = max(0, min(59, lock_setting.lock_minute))
+        lock_setting.save()
+        messages.success(request, 'Lock time saved.')
+        return redirect('core:attendance_lock_setting')
+    minute_options = list(range(0, 60, 5))  # 0, 5, 10, ..., 55
+    ctx = {'lock_setting': lock_setting, 'minute_options': minute_options}
+    return render(request, 'core/admin/attendance_lock_setting.html', ctx)
+
+
+def _dates_for_lecture_cancellation(dept):
+    """Dates for lecture cancellation dropdown. Uses term phases if set; otherwise a reasonable range."""
+    dates = _dates_for_department(dept)
+    if dates:
+        return dates
+    # Fallback when no term phases: wide range (past 6 months + next 18 months), weekdays with schedule
+    day_set = set(ScheduleSlot.objects.filter(department=dept).values_list('day', flat=True).distinct())
+    day_set = {d.lower() for d in day_set if d}
+    if not day_set:
+        return []
+    today = datetime.now().date()
+    out = []
+    for offset in range(-180, 550):
+        d = today + timedelta(days=offset)
+        if d.strftime('%A').lower() in day_set:
+            out.append(d)
+    return sorted(out)
+
+
+@login_required
+def lecture_cancellation(request):
+    """Admin: select date, list all lectures for that date, allow delete (cancel) each lecture."""
+    if not user_can_admin(request):
+        return redirect('accounts:role_redirect')
+    dept = get_admin_department(request)
+    if not dept:
+        messages.error(request, 'Select a department first from Dashboard.')
+        return redirect('core:admin_dashboard')
+
+    available_dates = _dates_for_lecture_cancellation(dept)
+    date_str = request.GET.get('date')
+    selected_date = None
+    lectures = []
+
+    if date_str:
+        try:
+            selected_date = datetime.strptime(date_str, '%Y-%m-d').date()
+            if selected_date not in available_dates:
+                available_dates = sorted(set(available_dates) | {selected_date})
+        except Exception:
+            pass
+
+    if selected_date:
+        cancelled_set = get_cancelled_lectures_set(dept)
+        weekday = selected_date.strftime('%A')
+        for slot in ScheduleSlot.objects.filter(department=dept, day=weekday).select_related('batch', 'subject', 'faculty').order_by('batch__name', 'time_slot'):
+            if (selected_date, slot.batch_id, slot.time_slot) in cancelled_set:
+                continue
+            fac, subj = get_faculty_subject_for_slot(selected_date, slot.batch, slot.time_slot)
+            lectures.append({
+                'slot': slot,
+                'faculty': fac or slot.faculty,
+                'subject': subj or slot.subject,
+                'batch': slot.batch,
+            })
+
+    ctx = {
+        'department': dept,
+        'available_dates': available_dates,
+        'selected_date': selected_date,
+        'lectures': lectures,
+    }
+    return render(request, 'core/admin/lecture_cancellation.html', ctx)
+
+
+@login_required
+def lecture_cancellation_delete(request):
+    """Cancel a lecture: create LectureCancellation, delete FacultyAttendance. Removes from all counts."""
+    if not request.method == 'POST' or not user_can_admin(request):
+        return redirect('core:lecture_cancellation')
+    dept = get_admin_department(request)
+    if not dept:
+        return redirect('core:admin_dashboard')
+    date_str = request.POST.get('date')
+    batch_id = request.POST.get('batch_id')
+    time_slot = request.POST.get('time_slot', '').strip()
+    if not date_str or not batch_id or not time_slot:
+        messages.error(request, 'Missing data.')
+        return redirect('core:lecture_cancellation')
+    try:
+        selected_date = datetime.strptime(date_str, '%Y-%m-%d').date()
+    except Exception:
+        messages.error(request, 'Invalid date.')
+        return redirect('core:lecture_cancellation')
+    batch = Batch.objects.filter(pk=batch_id, department=dept).first()
+    if not batch:
+        messages.error(request, 'Invalid batch.')
+        return redirect('core:lecture_cancellation')
+
+    LectureCancellation.objects.get_or_create(date=selected_date, batch=batch, time_slot=time_slot)
+    deleted = FacultyAttendance.objects.filter(date=selected_date, batch=batch, lecture_slot=time_slot).delete()
+    messages.success(request, f'Lecture cancelled: {batch.name} {time_slot}. Removed from all records and counts.')
+    url = reverse('core:lecture_cancellation') + f'?date={date_str}'
+    return redirect(url)
 
 
 @login_required
@@ -1743,12 +1893,14 @@ def daily_absent(request):
 
     lectures_by_batch = defaultdict(list)
     if selected_date:
+        cancelled_set = get_cancelled_lectures_set(dept)
         weekday = selected_date.strftime('%A')
         slots = ScheduleSlot.objects.filter(
             department=dept, day=weekday
         ).select_related('faculty', 'subject', 'batch').order_by('batch__name', 'time_slot')
         for s in slots:
-            lectures_by_batch[s.batch.name].append(s)
+            if (selected_date, s.batch_id, s.time_slot) not in cancelled_set:
+                lectures_by_batch[s.batch.name].append(s)
 
     attendance_map = defaultdict(lambda: defaultdict(list))
     if selected_date:
@@ -1807,12 +1959,14 @@ def daily_absent_excel(request):
         messages.warning(request, 'Selected date is a holiday; no lectures scheduled.')
         return redirect('core:daily_absent')
     weekday = selected_date.strftime('%A')
+    cancelled_set = get_cancelled_lectures_set(dept)
     slots = ScheduleSlot.objects.filter(
         department=dept, day=weekday
     ).select_related('faculty', 'subject', 'batch').order_by('batch__name', 'time_slot')
     lectures_by_batch = defaultdict(list)
     for s in slots:
-        lectures_by_batch[s.batch.name].append(s)
+        if (selected_date, s.batch_id, s.time_slot) not in cancelled_set:
+            lectures_by_batch[s.batch.name].append(s)
 
     wb = Workbook()
     ws = wb.active
@@ -1839,7 +1993,7 @@ def daily_absent_excel(request):
         dept.name,
         'FONT COLOUR: BLACK (Absent in all Lectures)',
         'RED (Not attended all Lectures)',
-        'BLUE (DOING Mischief/Chatting/Laughing in Lectures)',
+        'BLUE (Absent reason: washroom/playing game/others)',
         f"Date-{selected_date.strftime('%d-%m-%Y')}. Day:- {selected_date.strftime('%A').upper()}",
     ]
     current_row = 1
@@ -1901,9 +2055,9 @@ def daily_absent_excel(request):
                 absents = [a.strip() for a in absent_nos.split(',') if a.strip()]
                 lec_absents.append(set(absents))
                 if not absents:
-                    rows.append([idx, subj_name, fac_name, 'NIL'])
+                    rows.append([idx, subj_name, fac_name, 'NIL', att])
                 else:
-                    rows.append([idx, subj_name, fac_name, absents])
+                    rows.append([idx, subj_name, fac_name, absents, att])
             # Compute: absent_in_all = absent in every lecture (black); absent_in_some = present in at least one (red)
             num_lects = len(lec_absents)
             all_absent = set()
@@ -1911,22 +2065,37 @@ def daily_absent_excel(request):
                 all_absent.update(s)
             absent_in_all = {r for r in all_absent if sum(1 for lec in lec_absents if r in lec) == num_lects}
             absent_in_some = all_absent - absent_in_all
-            # Build rich text for each row's absent cell
+            # Build rich text for each row's absent cell (with reason in brackets, blue for non-general)
             red_font = InlineFont(color='00FF0000')
             black_font = InlineFont(color='00000000')
+            blue_font = InlineFont(color='000000FF')
             for i, row in enumerate(rows):
                 if row[3] == 'NIL':
                     continue
                 absents = row[3]
+                att = row[4] if len(row) > 4 else None
+                reasons = {}
+                if att and att.absent_reasons:
+                    try:
+                        reasons = json.loads(att.absent_reasons)
+                    except Exception:
+                        pass
                 blocks = []
                 for j, r in enumerate(absents):
-                    if r in absent_in_some:
+                    reason = reasons.get(str(r), 'general')
+                    display_text = f'{r} ({reason})' if reason != 'general' else r
+                    if reason != 'general':
+                        blocks.append(TextBlock(blue_font, display_text))
+                    elif r in absent_in_some:
                         blocks.append(TextBlock(red_font, r))
                     else:
                         blocks.append(TextBlock(black_font, r))
                     if j < len(absents) - 1:
                         blocks.append(TextBlock(black_font, ', '))
                 row[3] = CellRichText(*blocks) if blocks else 'NIL'
+            for row in rows:
+                if len(row) > 4:
+                    row.pop()  # remove att before writing
             to_continue.append(rows)
         block_height = max(len(x) for x in to_continue)
         for data_rows in to_continue:
@@ -2020,13 +2189,15 @@ def attendance_sheet_manager(request):
 
 
 def _build_date_slots_list_for_batch(dept, batch, dates):
-    """Return [(date, slots), ...] for this batch and list of dates (excluding holidays already in dates)."""
+    """Return [(date, slots), ...] for this batch and list of dates (excluding holidays, excluding cancelled)."""
+    cancelled_set = get_cancelled_lectures_set(dept)
     out = []
     for d in dates:
         weekday = d.strftime('%A')
         slots = list(ScheduleSlot.objects.filter(
             department=dept, batch=batch, day=weekday
         ).select_related('subject').order_by('time_slot'))
+        slots = [s for s in slots if (d, batch.id, s.time_slot) not in cancelled_set]
         out.append((d, slots))
     return out
 
@@ -2936,12 +3107,14 @@ def _admin_analytics_data(dept, phase=None, week=None):
     batches = list(Batch.objects.filter(department=dept).select_related('department'))
     students = list(Student.objects.filter(department=dept).select_related('batch'))
     students.sort(key=lambda s: (s.batch.name if s.batch else '', _roll_sort_key(s)))
+    cancelled_set = get_cancelled_lectures_set(dept)
     batch_scheduled = defaultdict(set)
     for batch in batches:
         for d in all_dates:
             weekday = d.strftime('%A')
             for slot in ScheduleSlot.objects.filter(batch=batch, day=weekday).values_list('time_slot', flat=True).distinct():
-                batch_scheduled[batch.id].add((d, slot))
+                if (d, batch.id, slot) not in cancelled_set:
+                    batch_scheduled[batch.id].add((d, slot))
     batch_att_map = defaultdict(lambda: defaultdict(set))
     for batch in batches:
         for att in FacultyAttendance.objects.filter(batch=batch, date__in=all_dates):
@@ -3217,13 +3390,15 @@ def _admin_notifications_build_mentor_data(dept, phase, week_idx):
     )
     if not students:
         return []
+    cancelled_set = get_cancelled_lectures_set(dept)
     batch_scheduled = defaultdict(set)
     for s in students:
         batch = s.batch
         for d in cum_dates:
             weekday = d.strftime('%A')
             for slot in ScheduleSlot.objects.filter(batch=batch, day=weekday).values_list('time_slot', flat=True).distinct():
-                batch_scheduled[batch.id].add((d, slot))
+                if (d, batch.id, slot) not in cancelled_set:
+                    batch_scheduled[batch.id].add((d, slot))
     batch_att_map = defaultdict(lambda: defaultdict(set))
     for batch_id in {s.batch_id for s in students}:
         batch = next(b for b in students if b.batch_id == batch_id).batch
@@ -3475,11 +3650,13 @@ def _student_analytics_build_data(dept, phase, week_idx, batch_id, roll_search=N
     day_slots = defaultdict(set)
     for day, slot in ScheduleSlot.objects.filter(batch=batch).values_list('day', 'time_slot').distinct():
         day_slots[day].add(slot)
+    cancelled_set = get_cancelled_lectures_set(dept)
     batch_scheduled = set()
     for d in cum_dates:
         weekday = d.strftime('%A')
         for slot in day_slots.get(weekday, ()):
-            batch_scheduled.add((d, slot))
+            if (d, batch.id, slot) not in cancelled_set:
+                batch_scheduled.add((d, slot))
     batch_att_map = {}
     for att in FacultyAttendance.objects.filter(batch=batch, date__in=cum_dates).only('date', 'lecture_slot', 'absent_roll_numbers'):
         key = (att.date, att.lecture_slot)
@@ -3654,13 +3831,15 @@ def compile_attendance_excel(request):
         return redirect('core:compile_attendance')
     # Scheduled slots per batch: (date, time_slot) from timetable (ScheduleSlot) for all dates in selected range
     all_dates_in_range = cumulative_dates[week_idx]  # set of dates through selected week
+    cancelled_set = get_cancelled_lectures_set(dept)
     batch_scheduled = defaultdict(set)
     for batch_id in {s.batch_id for s in students}:
         batch = next(b for b in students if b.batch_id == batch_id).batch
         for d in all_dates_in_range:
             weekday = d.strftime('%A')
             for slot in ScheduleSlot.objects.filter(batch=batch, day=weekday).values_list('time_slot', flat=True).distinct():
-                batch_scheduled[batch_id].add((d, slot))
+                if (d, batch_id, slot) not in cancelled_set:
+                    batch_scheduled[batch_id].add((d, slot))
     # Attendance: for each batch, (date, lecture_slot) -> set of absent roll numbers
     batch_att_map = defaultdict(lambda: defaultdict(set))
     for batch_id in {s.batch_id for s in students}:
@@ -3829,6 +4008,7 @@ def faculty_attendance_entry(request):
 
     slots_by_batch = defaultdict(list)
     if selected_date:
+        cancelled_set = get_cancelled_lectures_set(dept)
         weekday = selected_date.strftime('%A')
         # Exclude slots where this faculty was original but lecture was adjusted to another faculty
         excluded_by_adj = set(
@@ -3837,11 +4017,15 @@ def faculty_attendance_entry(request):
         for s in ScheduleSlot.objects.filter(faculty=faculty, day=weekday).select_related('batch', 'subject').order_by('time_slot'):
             if (s.batch_id, s.time_slot) in excluded_by_adj:
                 continue
+            if (selected_date, s.batch_id, s.time_slot) in cancelled_set:
+                continue
             slots_by_batch[s.batch].append(s)
         # Add slots where this faculty is substitute (LectureAdjustment) for this date
         existing_pairs = {(b, sl.time_slot) for b, slots in slots_by_batch.items() for sl in slots}
         for adj in LectureAdjustment.objects.filter(date=selected_date, new_faculty=faculty).select_related('batch', 'new_subject', 'new_faculty'):
             if (adj.batch, adj.time_slot) in existing_pairs:
+                continue
+            if (selected_date, adj.batch_id, adj.time_slot) in cancelled_set:
                 continue
             existing_pairs.add((adj.batch, adj.time_slot))
             virtual = type('Slot', (), {
@@ -3854,11 +4038,17 @@ def faculty_attendance_entry(request):
             slots_by_batch[b].sort(key=lambda s: s.time_slot or '')
 
     attendance_prefill = defaultdict(lambda: defaultdict(list))
+    attendance_reasons = defaultdict(lambda: defaultdict(dict))  # batch_id -> lecture_slot -> {roll_no: reason}
     attendance_updated_at = {}  # (batch_id, lecture_slot) -> updated_at
     if selected_date:
         for a in FacultyAttendance.objects.filter(faculty=faculty, date=selected_date):
             attendance_prefill[a.batch.id][a.lecture_slot] = [x.strip() for x in (a.absent_roll_numbers or '').split(',') if x.strip()]
             attendance_updated_at[(a.batch.id, a.lecture_slot)] = a.updated_at
+            try:
+                reasons = json.loads(a.absent_reasons or '{}')
+                attendance_reasons[a.batch.id][a.lecture_slot] = {k: v for k, v in reasons.items() if v}
+            except Exception:
+                pass
 
     batch_students_sorted = {}
     for batch, slots in slots_by_batch.items():
@@ -3867,18 +4057,29 @@ def faculty_attendance_entry(request):
         batch.students_sorted = sorted_students
         for slot in slots:
             slot.prefill_absent_set = set(attendance_prefill.get(batch.id, {}).get(slot.time_slot, []))
+            reasons = attendance_reasons.get(batch.id, {}).get(slot.time_slot, {})
+            slot.prefill_reasons = reasons
+            slot.students_with_reasons = [(s, reasons.get(str(s.roll_no), 'general')) for s in sorted_students]
             slot.last_updated = attendance_updated_at.get((batch.id, slot.time_slot))
             if selected_date:
                 fac, subj = get_faculty_subject_for_slot(selected_date, batch, slot.time_slot)
                 slot.display_subject_name = subj.name if subj else (slot.subject.name if slot.subject else 'N/A')
                 slot.display_faculty_name = fac.short_name if fac else (slot.faculty.short_name if slot.faculty else '—')
 
+    attendance_locked = selected_date and _is_attendance_locked_for_date(selected_date)
+    lock_time_warning = None
+    if selected_date and not attendance_locked:
+        lock = AttendanceLockSetting.objects.filter(pk=1).first()
+        if lock and lock.enabled:
+            lock_time_warning = f'{lock.lock_hour:02d}:{lock.lock_minute:02d} IST'
     ctx = {
         'faculty': faculty,
         'available_dates': available_dates,
         'selected_date': selected_date,
         'slots_by_batch': dict(slots_by_batch),
         'batch_students_sorted': batch_students_sorted,
+        'attendance_locked': attendance_locked,
+        'lock_time_warning': lock_time_warning,
     }
     return render(request, 'core/faculty/attendance_entry.html', ctx)
 
@@ -3890,11 +4091,8 @@ def faculty_attendance_save(request):
     faculty = get_faculty_user(request)
     if not faculty:
         return redirect('accounts:logout')
-    batch_id = request.POST.get('batch_id')
-    lecture_slot = request.POST.get('lecture_slot', '').strip()
     date_str = request.POST.get('date')
-    absent_list = request.POST.getlist('absent_roll_numbers')
-    if not batch_id or not date_str:
+    if not date_str:
         messages.error(request, 'Missing data.')
         return redirect('core:faculty_attendance_entry')
     try:
@@ -3902,14 +4100,36 @@ def faculty_attendance_save(request):
     except Exception:
         messages.error(request, 'Invalid date.')
         return redirect('core:faculty_attendance_entry')
+    if _is_attendance_locked_for_date(selected_date):
+        messages.error(request, 'Attendance is locked for this date. Contact admin to update via Manual Attendance.')
+        url = reverse('core:faculty_attendance_entry') + f'?date={date_str}'
+        return redirect(url)
+    batch_id = request.POST.get('batch_id')
+    lecture_slot = request.POST.get('lecture_slot', '').strip()
+    absent_list = request.POST.getlist('absent_roll_numbers')
+    if not batch_id:
+        messages.error(request, 'Missing data.')
+        return redirect('core:faculty_attendance_entry')
     batch = Batch.objects.filter(pk=batch_id, department=faculty.department).first()
     if not batch:
         messages.error(request, 'Invalid batch.')
         return redirect('core:faculty_attendance_entry')
     absent_roll_numbers = ','.join(x.strip() for x in absent_list if x.strip())
+    absent_reasons = {}
+    for r in absent_list:
+        r = str(r).strip()
+        if not r:
+            continue
+        reason = request.POST.get(f'absent_reason_{r}', 'general').strip() or 'general'
+        if reason not in ('general', 'washroom', 'playing game', 'others'):
+            reason = 'general'
+        absent_reasons[r] = reason
     FacultyAttendance.objects.update_or_create(
         faculty=faculty, date=selected_date, batch=batch, lecture_slot=lecture_slot,
-        defaults={'absent_roll_numbers': absent_roll_numbers}
+        defaults={
+            'absent_roll_numbers': absent_roll_numbers,
+            'absent_reasons': json.dumps(absent_reasons) if absent_reasons else '',
+        }
     )
     messages.success(request, 'Attendance saved.')
     url = reverse('core:faculty_attendance_entry') + f'?date={date_str}'
@@ -3937,9 +4157,11 @@ def faculty_report_excel(request):
     if not batch:
         return redirect('core:faculty_attendance_entry')
     weekday = selected_date.strftime('%A')
-    slots = list(ScheduleSlot.objects.filter(
+    cancelled_set = get_cancelled_lectures_set(faculty.department)
+    all_slots = list(ScheduleSlot.objects.filter(
         faculty=faculty, batch=batch, day=weekday
     ).select_related('subject').order_by('time_slot'))
+    slots = [s for s in all_slots if (selected_date, batch.id, s.time_slot) not in cancelled_set]
     atts = FacultyAttendance.objects.filter(faculty=faculty, date=selected_date, batch=batch).order_by('lecture_slot')
     att_map = {a.lecture_slot: set(x.strip() for x in (a.absent_roll_numbers or '').split(',') if x.strip()) for a in atts}
     students = list(Student.objects.filter(department=faculty.department, batch=batch).annotate(roll_no_int=Cast('roll_no', IntegerField())).order_by('roll_no_int', 'roll_no'))
@@ -4085,9 +4307,10 @@ def admin_manual_attendance(request):
 
     if date_str:
         try:
-            selected_date = datetime.strptime(date_str, '%Y-%m-%d').date()
+            parsed = datetime.strptime(date_str, '%Y-%m-%d').date()
+            selected_date = parsed
             if selected_date not in available_dates:
-                selected_date = None
+                available_dates = sorted(set(available_dates) | {selected_date})
         except Exception:
             pass
         if selected_date:
@@ -4100,6 +4323,7 @@ def admin_manual_attendance(request):
     faculty = selected_faculty
     slots_by_batch = defaultdict(list)
     if selected_date and faculty:
+        cancelled_set = get_cancelled_lectures_set(dept)
         weekday = selected_date.strftime('%A')
         excluded_by_adj = set(
             LectureAdjustment.objects.filter(date=selected_date, original_faculty=faculty).values_list('batch_id', 'time_slot')
@@ -4107,10 +4331,14 @@ def admin_manual_attendance(request):
         for s in ScheduleSlot.objects.filter(faculty=faculty, day=weekday).select_related('batch', 'subject').order_by('time_slot'):
             if (s.batch_id, s.time_slot) in excluded_by_adj:
                 continue
+            if (selected_date, s.batch_id, s.time_slot) in cancelled_set:
+                continue
             slots_by_batch[s.batch].append(s)
         for adj in LectureAdjustment.objects.filter(date=selected_date, new_faculty=faculty).select_related('batch', 'new_subject', 'new_faculty'):
             existing_pairs = {(b, sl.time_slot) for b, slots in slots_by_batch.items() for sl in slots}
             if (adj.batch, adj.time_slot) in existing_pairs:
+                continue
+            if (selected_date, adj.batch_id, adj.time_slot) in cancelled_set:
                 continue
             virtual = type('Slot', (), {
                 'batch': adj.batch, 'time_slot': adj.time_slot,
@@ -4121,11 +4349,17 @@ def admin_manual_attendance(request):
             slots_by_batch[b].sort(key=lambda s: s.time_slot or '')
 
     attendance_prefill = defaultdict(lambda: defaultdict(list))
+    attendance_reasons = {}  # (batch_id, lecture_slot) -> {roll_no: reason}
     attendance_updated_at = {}
     if selected_date and faculty:
         for a in FacultyAttendance.objects.filter(faculty=faculty, date=selected_date):
             attendance_prefill[a.batch.id][a.lecture_slot] = [x.strip() for x in (a.absent_roll_numbers or '').split(',') if x.strip()]
             attendance_updated_at[(a.batch.id, a.lecture_slot)] = a.updated_at
+            try:
+                reasons = json.loads(a.absent_reasons or '{}')
+                attendance_reasons[(a.batch.id, a.lecture_slot)] = {k: v for k, v in reasons.items() if v}
+            except Exception:
+                attendance_reasons[(a.batch.id, a.lecture_slot)] = {}
 
     batch_students_sorted = {}
     if faculty:
@@ -4135,6 +4369,9 @@ def admin_manual_attendance(request):
             batch.students_sorted = sorted_students
             for slot in slots:
                 slot.prefill_absent_set = set(attendance_prefill.get(batch.id, {}).get(slot.time_slot, []))
+                reasons = attendance_reasons.get((batch.id, slot.time_slot), {})
+                slot.prefill_reasons = reasons
+                slot.students_with_reasons = [(s, reasons.get(str(s.roll_no), 'general')) for s in sorted_students]
                 slot.last_updated = attendance_updated_at.get((batch.id, slot.time_slot))
                 if selected_date:
                     fac, subj = get_faculty_subject_for_slot(selected_date, batch, slot.time_slot)
@@ -4184,9 +4421,21 @@ def admin_manual_attendance_save(request):
         messages.error(request, 'Invalid batch.')
         return redirect('core:admin_manual_attendance')
     absent_roll_numbers = ','.join(x.strip() for x in absent_list if x.strip())
+    absent_reasons = {}
+    for r in absent_list:
+        r = str(r).strip()
+        if not r:
+            continue
+        reason = request.POST.get(f'absent_reason_{r}', 'general').strip() or 'general'
+        if reason not in ('general', 'washroom', 'playing game', 'others'):
+            reason = 'general'
+        absent_reasons[r] = reason
     FacultyAttendance.objects.update_or_create(
         faculty=faculty, date=selected_date, batch=batch, lecture_slot=lecture_slot,
-        defaults={'absent_roll_numbers': absent_roll_numbers}
+        defaults={
+            'absent_roll_numbers': absent_roll_numbers,
+            'absent_reasons': json.dumps(absent_reasons) if absent_reasons else '',
+        }
     )
     messages.success(request, f'Attendance saved for {faculty.short_name}.')
     url = reverse('core:admin_manual_attendance') + f'?date={date_str}&faculty_id={faculty_id}'
@@ -4218,9 +4467,11 @@ def admin_manual_attendance_excel(request):
     if not batch:
         return redirect('core:admin_manual_attendance')
     weekday = selected_date.strftime('%A')
-    slots = list(ScheduleSlot.objects.filter(
+    cancelled_set = get_cancelled_lectures_set(dept)
+    all_slots = list(ScheduleSlot.objects.filter(
         faculty=faculty, batch=batch, day=weekday
     ).select_related('subject').order_by('time_slot'))
+    slots = [s for s in all_slots if (selected_date, batch.id, s.time_slot) not in cancelled_set]
     atts = FacultyAttendance.objects.filter(faculty=faculty, date=selected_date, batch=batch).order_by('lecture_slot')
     att_map = {a.lecture_slot: set(x.strip() for x in (a.absent_roll_numbers or '').split(',') if x.strip()) for a in atts}
     students = list(Student.objects.filter(department=dept, batch=batch).annotate(roll_no_int=Cast('roll_no', IntegerField())).order_by('roll_no_int', 'roll_no'))
@@ -4341,10 +4592,12 @@ def faculty_mentorship(request):
             day_slots = defaultdict(set)
             for day, slot in ScheduleSlot.objects.filter(batch=s.batch).values_list('day', 'time_slot').distinct():
                 day_slots[day].add(slot)
+            cancelled_set = get_cancelled_lectures_set(dept)
             batch_scheduled = set()
             for d in phase_dates_set:
                 for slot in day_slots.get(d.strftime('%A'), ()):
-                    batch_scheduled.add((d, slot))
+                    if (d, bid, slot) not in cancelled_set:
+                        batch_scheduled.add((d, slot))
             batch_att_map = {}
             for att in FacultyAttendance.objects.filter(batch=s.batch, date__in=phase_dates_set).only('date', 'lecture_slot', 'absent_roll_numbers'):
                 batch_att_map[(att.date, att.lecture_slot)] = set(x.strip() for x in (att.absent_roll_numbers or '').split(',') if x.strip())
@@ -4501,11 +4754,13 @@ def student_attendance_analytics(request):
     phase_dates_all = set()
     for dates in phase_dates.values():
         phase_dates_all.update(dates)
+    cancelled_set = get_cancelled_lectures_set(dept)
     batch_scheduled = set()
     for d in phase_dates_all:
         weekday = d.strftime('%A')
         for slot in ScheduleSlot.objects.filter(batch=batch, day=weekday).values_list('time_slot', flat=True).distinct():
-            batch_scheduled.add((d, slot))
+            if (d, batch.id, slot) not in cancelled_set:
+                batch_scheduled.add((d, slot))
     batch_scheduled_upto_today = batch_scheduled  # Use all scheduled (include future for demo/test data)
     batch_att_map = {}
     for att in FacultyAttendance.objects.filter(batch=batch, date__in=phase_dates_all):
