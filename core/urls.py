@@ -64,6 +64,8 @@ urlpatterns = [
     path('admin/attendance-sheet/subjectwise/excel/', views.attendance_sheet_subjectwise_excel, name='attendance_sheet_subjectwise_excel'),
     path('admin/compile-attendance/', views.compile_attendance, name='compile_attendance'),
     path('admin/compile-attendance/excel/', views.compile_attendance_excel, name='compile_attendance_excel'),
+    path('admin/overall-attendance/', views.overall_attendance, name='overall_attendance'),
+    path('admin/overall-attendance/excel/', views.overall_attendance_excel, name='overall_attendance_excel'),
     path('admin/notifications/', views.admin_notifications, name='admin_notifications'),
     path('admin/student-analytics/', views.student_analytics, name='admin_student_analytics'),
 

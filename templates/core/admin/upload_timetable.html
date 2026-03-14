@@ -41,9 +41,9 @@
             </table>
         </div>
         {% if import_summary.replace_schedule %}
-        <p class="small text-secondary mt-3 mb-0">Existing schedule for this department was replaced before import.</p>
+        <p class="small text-secondary mt-3 mb-0">New schedule version added (effective from {{ import_summary.effective_date|date:"d M Y" }}). Past dates keep the previous timetable.</p>
         {% else %}
-        <p class="small text-secondary mt-3 mb-0">Existing slots were kept; only new slots were added (duplicates skipped).</p>
+        <p class="small text-secondary mt-3 mb-0">Slots added with effective date {{ import_summary.effective_date|date:"d M Y" }}. Existing slots were kept.</p>
         {% endif %}
         <a href="{% url 'core:schedule_list' %}" class="btn btn-outline-app btn-sm mt-3">View schedule <i class="fas fa-arrow-right ms-1"></i></a>
     </div>
@@ -57,6 +57,11 @@
             <div class="mb-4">
                 <label class="form-label fw-semibold text-secondary">Excel file</label>
                 <input type="file" name="excel_file" accept=".xlsx,.xls" required class="form-control form-control-app">
+            </div>
+            <div class="mb-4">
+                <label class="form-label fw-semibold text-secondary">Effective from date</label>
+                <input type="date" name="effective_date" id="effective_date" required class="form-control form-control-app" value="{{ today|date:'Y-m-d' }}">
+                <p class="small text-secondary mt-1 mb-0">Schedule will apply from this date. Past dates keep the previous timetable; from this date onward the new timetable applies.</p>
             </div>
             <div class="form-check mb-4">
                 <input type="checkbox" name="replace_schedule" id="replace_schedule" checked class="form-check-input">

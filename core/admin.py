@@ -30,7 +30,7 @@ class StudentAdmin(admin.ModelAdmin):
 
 @admin.register(ScheduleSlot)
 class ScheduleSlotAdmin(admin.ModelAdmin):
-    list_display = ('batch', 'day', 'time_slot', 'subject', 'faculty')
+    list_display = ('batch', 'day', 'time_slot', 'subject', 'faculty', 'effective_from')
     list_filter = ('department', 'day')
 
 @admin.register(TermPhase)

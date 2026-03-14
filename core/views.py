@@ -21,6 +21,7 @@ from django.urls import reverse
 from django.contrib.auth.decorators import login_required
 from django.contrib import messages
 from django.http import HttpResponse
+from django.db import OperationalError
 from django.db.models import Count, Q, IntegerField
 from django.db.models.functions import Cast
 from django.utils import timezone
@@ -79,15 +80,21 @@ def get_cancelled_lectures_set(dept):
     """Return set of (date, batch_id, time_slot) for cancelled lectures in this department."""
     if not dept:
         return set()
-    return set(
-        LectureCancellation.objects.filter(batch__department=dept)
-        .values_list('date', 'batch_id', 'time_slot')
-    )
+    try:
+        return set(
+            LectureCancellation.objects.filter(batch__department=dept)
+            .values_list('date', 'batch_id', 'time_slot')
+        )
+    except OperationalError:
+        return set()  # Table may not exist if migrations not run yet
 
 
 def _is_attendance_locked_for_date(target_date):
     """Return True if faculty cannot edit attendance for this date. Uses IST. Admin manual attendance never calls this."""
-    lock = AttendanceLockSetting.objects.filter(pk=1).first()
+    try:
+        lock = AttendanceLockSetting.objects.filter(pk=1).first()
+    except OperationalError:
+        return False  # Table may not exist if migrations not run yet
     if not lock or not lock.enabled:
         return False
     ist = zoneinfo.ZoneInfo('Asia/Kolkata')
@@ -104,6 +111,29 @@ def _is_attendance_locked_for_date(target_date):
 
 # ----------
 
+def _effective_slots_for_date(dept, date, extra_filters=None):
+    """Return list of ScheduleSlot objects effective on this date."""
+    from core.schedule_utils import get_effective_slots_for_date
+    return get_effective_slots_for_date(dept, date, extra_filters)
+
+
+def _effective_slots_for_faculty_on_date(faculty, date):
+    """Return list of ScheduleSlot objects for this faculty effective on date."""
+    return _effective_slots_for_date(faculty.department, date, extra_filters={'faculty': faculty})
+
+
+def _effective_day_set_for_dept(dept, date):
+    """Return set of weekday names that have schedule effective on this date."""
+    from core.schedule_utils import get_effective_day_set
+    return get_effective_day_set(dept, date)
+
+
+def _effective_day_set_for_batch(batch, date):
+    """Return set of weekday names for this batch effective on this date."""
+    slots = _effective_slots_for_date(batch.department, date, extra_filters={'batch': batch})
+    return {s.day for s in slots if s.day}
+
+
 def get_faculty_subject_for_slot(date, batch, time_slot):
     """Return (faculty, subject) for this date/batch/slot; use LectureAdjustment if exists, else ScheduleSlot."""
     from datetime import date as date_type
@@ -116,8 +146,9 @@ def get_faculty_subject_for_slot(date, batch, time_slot):
     if adj:
         return adj.new_faculty, adj.new_subject
     slot = ScheduleSlot.objects.filter(
-        batch=batch, day=weekday, time_slot=time_slot
-    ).select_related('faculty', 'subject').first()
+        batch=batch, day=weekday, time_slot=time_slot,
+        effective_from__lte=date
+    ).select_related('faculty', 'subject').order_by('-effective_from').first()
     if slot:
         return slot.faculty, slot.subject
     return None, None
@@ -224,9 +255,13 @@ def attendance_lock_setting(request):
     """Admin: set lock time after which faculty cannot edit attendance. Uses IST."""
     if not user_can_admin(request):
         return redirect('accounts:role_redirect')
-    lock_setting, _ = AttendanceLockSetting.objects.get_or_create(
-        pk=1, defaults={'lock_hour': 17, 'lock_minute': 0, 'enabled': False}
-    )
+    try:
+        lock_setting, _ = AttendanceLockSetting.objects.get_or_create(
+            pk=1, defaults={'lock_hour': 17, 'lock_minute': 0, 'enabled': False}
+        )
+    except OperationalError:
+        messages.error(request, 'Run migrations first: python manage.py migrate')
+        return redirect('core:admin_dashboard')
     if request.method == 'POST':
         lock_setting.enabled = request.POST.get('enabled') == 'on'
         try:
@@ -250,7 +285,7 @@ def _dates_for_lecture_cancellation(dept):
     if dates:
         return dates
     # Fallback when no term phases: wide range (past 6 months + next 18 months), weekdays with schedule
-    day_set = set(ScheduleSlot.objects.filter(department=dept).values_list('day', flat=True).distinct())
+    day_set = _effective_day_set_for_dept(dept, datetime.now().date())
     day_set = {d.lower() for d in day_set if d}
     if not day_set:
         return []
@@ -280,7 +315,7 @@ def lecture_cancellation(request):
 
     if date_str:
         try:
-            selected_date = datetime.strptime(date_str, '%Y-%m-d').date()
+            selected_date = datetime.strptime(date_str, '%Y-%m-%d').date()
             if selected_date not in available_dates:
                 available_dates = sorted(set(available_dates) | {selected_date})
         except Exception:
@@ -289,7 +324,8 @@ def lecture_cancellation(request):
     if selected_date:
         cancelled_set = get_cancelled_lectures_set(dept)
         weekday = selected_date.strftime('%A')
-        for slot in ScheduleSlot.objects.filter(department=dept, day=weekday).select_related('batch', 'subject', 'faculty').order_by('batch__name', 'time_slot'):
+        effective_slots = [s for s in _effective_slots_for_date(dept, selected_date) if s.day == weekday]
+        for slot in sorted(effective_slots, key=lambda s: (s.batch.name if s.batch else '', s.time_slot or '')):
             if (selected_date, slot.batch_id, slot.time_slot) in cancelled_set:
                 continue
             fac, subj = get_faculty_subject_for_slot(selected_date, slot.batch, slot.time_slot)
@@ -333,8 +369,12 @@ def lecture_cancellation_delete(request):
         messages.error(request, 'Invalid batch.')
         return redirect('core:lecture_cancellation')
 
-    LectureCancellation.objects.get_or_create(date=selected_date, batch=batch, time_slot=time_slot)
-    deleted = FacultyAttendance.objects.filter(date=selected_date, batch=batch, lecture_slot=time_slot).delete()
+    try:
+        LectureCancellation.objects.get_or_create(date=selected_date, batch=batch, time_slot=time_slot)
+        deleted = FacultyAttendance.objects.filter(date=selected_date, batch=batch, lecture_slot=time_slot).delete()
+    except OperationalError:
+        messages.error(request, 'Run migrations first: python manage.py migrate')
+        return redirect('core:lecture_cancellation')
     messages.success(request, f'Lecture cancelled: {batch.name} {time_slot}. Removed from all records and counts.')
     url = reverse('core:lecture_cancellation') + f'?date={date_str}'
     return redirect(url)
@@ -352,9 +392,10 @@ def faculty_dashboard(request):
     from datetime import date
     today = date.today()
     weekday = today.strftime('%A')
-    today_slots = ScheduleSlot.objects.filter(
-        faculty=faculty, day=weekday
-    ).select_related('batch', 'subject').order_by('time_slot')
+    today_slots = sorted(
+        [s for s in _effective_slots_for_faculty_on_date(faculty, today) if s.day == weekday],
+        key=lambda s: s.time_slot or ''
+    )
     ctx = {
         'faculty': faculty,
         'today_slots': today_slots,
@@ -376,9 +417,8 @@ def student_dashboard(request):
     from datetime import date as date_type
     today = date_type.today()
     weekday = today.strftime('%A')
-    slots = ScheduleSlot.objects.filter(
-        batch=student.batch, day=weekday
-    ).select_related('faculty', 'subject').order_by('time_slot')
+    slots = [s for s in _effective_slots_for_date(student.batch.department, today, extra_filters={'batch': student.batch}) if s.day == weekday]
+    slots = sorted(slots, key=lambda s: s.time_slot or '')
     schedule = []
     for slot in slots:
         fac, subj = get_faculty_subject_for_slot(today, student.batch, slot.time_slot)
@@ -1306,9 +1346,11 @@ def schedule_list(request):
     if not user_can_admin(request):
         return redirect('accounts:role_redirect')
     dept = get_admin_department(request)
-    slots = ScheduleSlot.objects.filter(department=dept).select_related(
-        'faculty', 'subject', 'batch'
-    ).order_by('day', 'time_slot') if dept else []
+    today = datetime.now().date()
+    slots = sorted(
+        _effective_slots_for_date(dept, today),
+        key=lambda s: (s.day or '', s.time_slot or '')
+    ) if dept else []
     ctx = {'slots': slots, 'department': dept}
     return render(request, 'core/admin/schedule_list.html', ctx)
 
@@ -1334,6 +1376,7 @@ def schedule_add(request):
             if faculty and subject and batch:
                 ScheduleSlot.objects.get_or_create(
                     department=dept, batch=batch, day=day, time_slot=time_slot,
+                    effective_from=datetime.now().date(),
                     defaults={'faculty': faculty, 'subject': subject}
                 )
                 messages.success(request, 'Schedule slot added.')
@@ -1478,9 +1521,8 @@ def lecture_adjustment(request):
             weekday = selected_date.strftime('%A')
             to_apply = [p for p in pending if p.get('_date') == date_str and str(p.get('_batch_id')) == str(batch_id)]
             for p in to_apply:
-                slot = ScheduleSlot.objects.filter(
-                    batch=batch, day=weekday, time_slot=p.get('time_slot')
-                ).select_related('faculty', 'subject').first()
+                slots = [s for s in _effective_slots_for_date(dept, selected_date, extra_filters={'batch': batch}) if s.day == weekday and s.time_slot == p.get('time_slot')]
+                slot = slots[0] if slots else None
                 if not slot:
                     continue
                 new_faculty = Faculty.objects.filter(pk=p.get('new_faculty_id'), department=dept).first()
@@ -1521,9 +1563,8 @@ def lecture_adjustment(request):
         selected_batch = Batch.objects.filter(pk=batch_id, department=dept).first()
         if selected_date and selected_batch:
             weekday = selected_date.strftime('%A')
-            slots = ScheduleSlot.objects.filter(
-                batch=selected_batch, day=weekday
-            ).select_related('faculty', 'subject').order_by('time_slot')
+            slots = [s for s in _effective_slots_for_date(dept, selected_date, extra_filters={'batch': selected_batch}) if s.day == weekday]
+            slots = sorted(slots, key=lambda s: s.time_slot or '')
             # Check existing adjustments for this date/batch
             existing_adj = {a.time_slot: (a.new_faculty, a.new_subject) for a in
                            LectureAdjustment.objects.filter(date=selected_date, batch=selected_batch).select_related('new_faculty', 'new_subject')}
@@ -1647,9 +1688,14 @@ def upload_timetable(request):
     if request.method == 'POST':
         file = request.FILES.get('excel_file')
         replace_schedule = request.POST.get('replace_schedule') == 'on'
+        effective_date_str = request.POST.get('effective_date', '').strip()
         if not file:
             messages.error(request, 'Please select an Excel file.')
             return redirect('core:upload_timetable')
+        try:
+            effective_date = datetime.strptime(effective_date_str, '%Y-%m-%d').date() if effective_date_str else datetime.now().date()
+        except (ValueError, TypeError):
+            effective_date = datetime.now().date()
         if not file.name.lower().endswith(('.xlsx', '.xls')):
             messages.error(request, 'Upload a valid Excel file (.xlsx or .xls).')
             return redirect('core:upload_timetable')
@@ -1693,9 +1739,8 @@ def upload_timetable(request):
         for _, bname in batches:
             Batch.objects.get_or_create(department=dept, name=bname)
 
-        if replace_schedule:
-            ScheduleSlot.objects.filter(department=dept).delete()
-
+        # When replace: add new version (don't delete old - they stay for past dates)
+        # When add: add slots with effective_from
         current_day = None
         created_slots = 0
         for row in sheet.iter_rows(min_row=4, values_only=True):
@@ -1733,13 +1778,14 @@ def upload_timetable(request):
                     batch=batch_obj,
                     day=current_day,
                     time_slot=time_slot,
+                    effective_from=effective_date,
                     defaults={'faculty': faculty_obj, 'subject': subject_obj}
                 )
                 if created:
                     created_slots += 1
 
         # Exact counts after import (from database)
-        slots_qs = ScheduleSlot.objects.filter(department=dept)
+        slots_qs = ScheduleSlot.objects.filter(department=dept)  # All versions for summary count
         total_entries = slots_qs.count()
         total_days = slots_qs.values_list('day', flat=True).distinct().count()
         total_time_slots = slots_qs.values_list('time_slot', flat=True).distinct().count()
@@ -1757,6 +1803,7 @@ def upload_timetable(request):
             'total_entries': total_entries,
             'new_slots_added': created_slots,
             'replace_schedule': replace_schedule,
+            'effective_date': effective_date,
             'per_batch': per_batch,
         }
         messages.success(request, 'Timetable imported successfully. See summary below.')
@@ -1765,6 +1812,7 @@ def upload_timetable(request):
             'department': dept,
             'departments': departments,
             'import_summary': import_summary,
+            'today': datetime.now().date(),
         }
         return render(request, 'core/admin/upload_timetable.html', ctx)
 
@@ -1772,6 +1820,7 @@ def upload_timetable(request):
     ctx = {
         'department': dept,
         'departments': departments,
+        'today': datetime.now().date(),
     }
     return render(request, 'core/admin/upload_timetable.html', ctx)
 
@@ -1850,9 +1899,7 @@ def _valid_dates(dept, term_phase):
     """Lecture days across all phases, excluding holidays."""
     if not term_phase:
         return []
-    days_set = set(
-        ScheduleSlot.objects.filter(department=dept).values_list('day', flat=True).distinct()
-    )
+    days_set = _effective_day_set_for_dept(dept, datetime.now().date())
     days_set = {d.lower() for d in days_set if d}
     holidays = get_all_holiday_dates(dept)
     out = []
@@ -1895,9 +1942,8 @@ def daily_absent(request):
     if selected_date:
         cancelled_set = get_cancelled_lectures_set(dept)
         weekday = selected_date.strftime('%A')
-        slots = ScheduleSlot.objects.filter(
-            department=dept, day=weekday
-        ).select_related('faculty', 'subject', 'batch').order_by('batch__name', 'time_slot')
+        slots = [s for s in _effective_slots_for_date(dept, selected_date) if s.day == weekday]
+        slots = sorted(slots, key=lambda s: (s.batch.name if s.batch else '', s.time_slot or ''))
         for s in slots:
             if (selected_date, s.batch_id, s.time_slot) not in cancelled_set:
                 lectures_by_batch[s.batch.name].append(s)
@@ -1960,9 +2006,8 @@ def daily_absent_excel(request):
         return redirect('core:daily_absent')
     weekday = selected_date.strftime('%A')
     cancelled_set = get_cancelled_lectures_set(dept)
-    slots = ScheduleSlot.objects.filter(
-        department=dept, day=weekday
-    ).select_related('faculty', 'subject', 'batch').order_by('batch__name', 'time_slot')
+    slots = [s for s in _effective_slots_for_date(dept, selected_date) if s.day == weekday]
+    slots = sorted(slots, key=lambda s: (s.batch.name if s.batch else '', s.time_slot or ''))
     lectures_by_batch = defaultdict(list)
     for s in slots:
         if (selected_date, s.batch_id, s.time_slot) not in cancelled_set:
@@ -2148,7 +2193,7 @@ def attendance_sheet_manager(request):
         if not start or not end:
             week_map[p] = []
             continue
-        days_set = set(ScheduleSlot.objects.filter(department=dept).values_list('day', flat=True).distinct())
+        days_set = _effective_day_set_for_dept(dept, datetime.now().date())
         days_set = {d.lower() for d in days_set if d}
         dates = []
         cur = start
@@ -2194,9 +2239,8 @@ def _build_date_slots_list_for_batch(dept, batch, dates):
     out = []
     for d in dates:
         weekday = d.strftime('%A')
-        slots = list(ScheduleSlot.objects.filter(
-            department=dept, batch=batch, day=weekday
-        ).select_related('subject').order_by('time_slot'))
+        slots = [s for s in _effective_slots_for_date(dept, d, extra_filters={'batch': batch}) if s.day == weekday]
+        slots = sorted(slots, key=lambda s: s.time_slot or '')
         slots = [s for s in slots if (d, batch.id, s.time_slot) not in cancelled_set]
         out.append((d, slots))
     return out
@@ -2461,7 +2505,7 @@ def _write_subject_all_batches_sheet(ws, subject_name, batches, all_students, ba
 def _attendance_sheet_dates_for_period(dept, period_type, phase, week_index=None, single_date=None):
     """Return list of dates for the chosen period (excluding holidays). week_index is 0-based index into week_map[phase]."""
     tp = TermPhase.objects.filter(department=dept).first()
-    days_set = set(ScheduleSlot.objects.filter(department=dept).values_list('day', flat=True).distinct())
+    days_set = _effective_day_set_for_dept(dept, datetime.now().date())
     days_set = {d.lower() for d in days_set if d}
     if period_type == 'daily' and single_date:
         holidays = get_all_holiday_dates(dept)
@@ -2833,7 +2877,7 @@ def attendance_sheet_subjectwise_manager(request):
         if not start or not end:
             week_map[p] = []
             continue
-        days_set = set(ScheduleSlot.objects.filter(department=dept).values_list('day', flat=True).distinct())
+        days_set = _effective_day_set_for_dept(dept, datetime.now().date())
         days_set = {d.lower() for d in days_set if d}
         dates = []
         cur = start
@@ -3112,7 +3156,8 @@ def _admin_analytics_data(dept, phase=None, week=None):
     for batch in batches:
         for d in all_dates:
             weekday = d.strftime('%A')
-            for slot in ScheduleSlot.objects.filter(batch=batch, day=weekday).values_list('time_slot', flat=True).distinct():
+            slots = [s for s in _effective_slots_for_date(dept, d, extra_filters={'batch': batch}) if s.day == weekday]
+            for slot in set(s.time_slot for s in slots if s.time_slot):
                 if (d, batch.id, slot) not in cancelled_set:
                     batch_scheduled[batch.id].add((d, slot))
     batch_att_map = defaultdict(lambda: defaultdict(set))
@@ -3296,7 +3341,7 @@ def _compile_phase_weeks_date_objects(dept, phase):
     end = getattr(tp, f'{phase.lower()}_end', None)
     if not start or not end:
         return []
-    days_set = set(ScheduleSlot.objects.filter(department=dept).values_list('day', flat=True).distinct())
+    days_set = _effective_day_set_for_dept(dept, datetime.now().date())
     days_set = {d.lower() for d in days_set if d}
     holidays = get_phase_holidays(dept, phase)
     dates = []
@@ -3339,7 +3384,7 @@ def compile_attendance(request):
         if not start or not end:
             week_map[p] = []
             continue
-        days_set = set(ScheduleSlot.objects.filter(department=dept).values_list('day', flat=True).distinct())
+        days_set = _effective_day_set_for_dept(dept, datetime.now().date())
         days_set = {d.lower() for d in days_set if d}
         holidays = get_phase_holidays(dept, p)
         dates = []
@@ -3396,7 +3441,8 @@ def _admin_notifications_build_mentor_data(dept, phase, week_idx):
         batch = s.batch
         for d in cum_dates:
             weekday = d.strftime('%A')
-            for slot in ScheduleSlot.objects.filter(batch=batch, day=weekday).values_list('time_slot', flat=True).distinct():
+            slots = [x for x in _effective_slots_for_date(dept, d, extra_filters={'batch': batch}) if x.day == weekday]
+            for slot in set(x.time_slot for x in slots if x.time_slot):
                 if (d, batch.id, slot) not in cancelled_set:
                     batch_scheduled[batch.id].add((d, slot))
     batch_att_map = defaultdict(lambda: defaultdict(set))
@@ -3461,7 +3507,7 @@ def admin_notifications(request):
         if not start or not end:
             week_map[p] = []
             continue
-        days_set = set(ScheduleSlot.objects.filter(department=dept).values_list('day', flat=True).distinct())
+        days_set = _effective_day_set_for_dept(dept, datetime.now().date())
         days_set = {d.lower() for d in days_set if d}
         holidays = get_phase_holidays(dept, p)
         dates = []
@@ -3592,17 +3638,19 @@ def admin_notifications(request):
 
 
 def _build_slot_subject_cache(batch, cum_dates, batch_scheduled):
-    """Pre-build (date, slot) -> subject_name to avoid N queries. Returns dict."""
+    """Pre-build (date, slot) -> subject_name to avoid N queries. Returns dict.
+    Must filter by s.day == weekday so slots from other days don't overwrite correct mapping."""
     cache = {}
     if not batch_scheduled:
         return cache
-    slots_by_day = {}
-    for (d, slot) in batch_scheduled:
-        day = d.strftime('%A')
-        slots_by_day.setdefault(day, set()).add(slot)
-    all_slots = set(slot for slots in slots_by_day.values() for slot in slots)
-    schedule_slots = list(ScheduleSlot.objects.filter(batch=batch).select_related('subject').only('day', 'time_slot', 'subject'))
-    slot_to_subj = {(s.day, s.time_slot): (s.subject.name if s.subject else 'N/A') for s in schedule_slots}
+    slot_to_subj = {}
+    all_slots = set(slot for (d, slot) in batch_scheduled)
+    for d in cum_dates:
+        weekday = d.strftime('%A')
+        slots = [s for s in _effective_slots_for_date(batch.department, d, extra_filters={'batch': batch}) if s.day == weekday]
+        for s in slots:
+            if s.time_slot:
+                slot_to_subj[(d, s.time_slot)] = (s.subject.name if s.subject else 'N/A')
     adj_list = list(LectureAdjustment.objects.filter(
         batch=batch, date__in=cum_dates, time_slot__in=all_slots
     ).select_related('new_subject').values('date', 'time_slot', 'new_subject__name'))
@@ -3612,8 +3660,7 @@ def _build_slot_subject_cache(batch, cum_dates, batch_scheduled):
         if key in adj_map:
             cache[key] = adj_map[key]
         else:
-            day = d.strftime('%A')
-            cache[key] = slot_to_subj.get((day, slot), 'N/A')
+            cache[key] = slot_to_subj.get((d, slot), 'N/A')
     return cache
 
 
@@ -3647,14 +3694,12 @@ def _student_analytics_build_data(dept, phase, week_idx, batch_id, roll_search=N
     students = list(students)
     if not students:
         return [], []
-    day_slots = defaultdict(set)
-    for day, slot in ScheduleSlot.objects.filter(batch=batch).values_list('day', 'time_slot').distinct():
-        day_slots[day].add(slot)
     cancelled_set = get_cancelled_lectures_set(dept)
     batch_scheduled = set()
     for d in cum_dates:
         weekday = d.strftime('%A')
-        for slot in day_slots.get(weekday, ()):
+        slots = [s for s in _effective_slots_for_date(dept, d, extra_filters={'batch': batch}) if s.day == weekday]
+        for slot in set(s.time_slot for s in slots if s.time_slot):
             if (d, batch.id, slot) not in cancelled_set:
                 batch_scheduled.add((d, slot))
     batch_att_map = {}
@@ -3824,7 +3869,7 @@ def compile_attendance_excel(request):
     for i in range(week_idx + 1):
         cumulative_dates.append(set(weeks[i]) if i == 0 else cumulative_dates[-1] | set(weeks[i]))
     # All students, all batches, sorted by batch then roll_no (numeric ascending)
-    students = list(Student.objects.filter(department=dept).select_related('batch').order_by('batch__name'))
+    students = list(Student.objects.filter(department=dept).select_related('batch', 'mentor').order_by('batch__name'))
     students.sort(key=lambda s: (s.batch.name, _roll_sort_key(s)))
     if not students:
         messages.error(request, 'No students in this department.')
@@ -3837,7 +3882,8 @@ def compile_attendance_excel(request):
         batch = next(b for b in students if b.batch_id == batch_id).batch
         for d in all_dates_in_range:
             weekday = d.strftime('%A')
-            for slot in ScheduleSlot.objects.filter(batch=batch, day=weekday).values_list('time_slot', flat=True).distinct():
+            slots = [x for x in _effective_slots_for_date(dept, d, extra_filters={'batch': batch}) if x.day == weekday]
+            for slot in set(x.time_slot for x in slots if x.time_slot):
                 if (d, batch_id, slot) not in cancelled_set:
                     batch_scheduled[batch_id].add((d, slot))
     # Attendance: for each batch, (date, lecture_slot) -> set of absent roll numbers
@@ -3880,6 +3926,10 @@ def compile_attendance_excel(request):
     ws.cell(1, col).fill = header_fill
     ws.cell(1, col).border = thin_border
     col += 1
+    ws.cell(1, col, 'Mentor Name').font = header_font_white
+    ws.cell(1, col).fill = header_fill
+    ws.cell(1, col).border = thin_border
+    col += 1
     for i in range(week_idx + 1):
         if i == 0:
             label = 'Week 1'
@@ -3908,7 +3958,8 @@ def compile_attendance_excel(request):
         ws.cell(row_idx, 1, s.roll_no).border = thin_border
         ws.cell(row_idx, 2, s.name).border = thin_border
         ws.cell(row_idx, 3, s.batch.name).border = thin_border
-        c = 4
+        ws.cell(row_idx, 4, s.mentor.short_name if s.mentor else '').border = thin_border
+        c = 5
         total_held = total_attended = 0
         for i in range(week_idx + 1):
             date_set = cumulative_dates[i]
@@ -3946,6 +3997,282 @@ def compile_attendance_excel(request):
     return resp
 
 
+@login_required
+def overall_attendance(request):
+    """Overall Attendance: download compiled sheet in format (DIV-A1)_WEEK-1_SY-1_SEM-IV_ COMPILED_ATTENDANCE SHEET."""
+    if not user_can_admin(request):
+        return redirect('accounts:role_redirect')
+    dept = get_admin_department(request)
+    if not dept:
+        messages.error(request, 'Select a department first.')
+        return redirect('core:admin_dashboard')
+    tp = TermPhase.objects.filter(department=dept).first()
+    phases = ['T1', 'T2', 'T3', 'T4']
+    week_map = {}
+    for p in phases:
+        start = getattr(tp, f'{p.lower()}_start', None) if tp else None
+        end = getattr(tp, f'{p.lower()}_end', None) if tp else None
+        if not start or not end:
+            week_map[p] = []
+            continue
+        days_set = _effective_day_set_for_dept(dept, datetime.now().date())
+        days_set = {d.lower() for d in days_set if d}
+        holidays = get_phase_holidays(dept, p)
+        dates = []
+        cur = start
+        while cur <= end:
+            if cur not in holidays and cur.strftime('%A').lower() in days_set:
+                dates.append(cur)
+            cur += timedelta(days=1)
+        weeks = []
+        week = []
+        last_w = None
+        for d in sorted(dates):
+            w = d.isocalendar()[1]
+            if last_w is not None and w != last_w and week:
+                weeks.append(week)
+                week = []
+            week.append(d)
+            last_w = w
+        if week:
+            weeks.append(week)
+        week_map[p] = [[d.isoformat() for d in w] for w in weeks]
+    batches = list(Batch.objects.filter(department=dept).order_by('name'))
+    ctx = {
+        'department': dept,
+        'phases': phases,
+        'week_map': week_map,
+        'week_map_json': json.dumps(week_map),
+        'batches': batches,
+    }
+    return render(request, 'core/admin/overall_attendance.html', ctx)
+
+
+@login_required
+def overall_attendance_excel(request):
+    """Download Overall Attendance Excel: format (DIV-A1)_WEEK-1_SY-1_SEM-IV_ COMPILED_ATTENDANCE SHEET_2026.xlsx."""
+    if not user_can_admin(request):
+        return redirect('core:admin_dashboard')
+    dept = get_admin_department(request)
+    batch_id = request.GET.get('batch')
+    phase = request.GET.get('phase')
+    week_str = request.GET.get('week')
+    fmt = request.GET.get('format', 'sheetwise')  # sheetwise or combined
+    if not dept or not phase:
+        return redirect('core:overall_attendance')
+    try:
+        week_idx = int(week_str) if week_str is not None else 0
+    except Exception:
+        return redirect('core:overall_attendance')
+    weeks = _compile_phase_weeks_date_objects(dept, phase)
+    if not weeks or week_idx < 0 or week_idx >= len(weeks):
+        return redirect('core:overall_attendance')
+
+    all_batches = batch_id == 'all'
+    if all_batches:
+        batches = list(Batch.objects.filter(department=dept).order_by('name'))
+    else:
+        batch = Batch.objects.filter(pk=batch_id, department=dept).first()
+        if not batch:
+            return redirect('core:overall_attendance')
+        batches = [batch]
+
+    if not batches:
+        messages.error(request, 'No batches in this department.')
+        return redirect('core:overall_attendance')
+
+    def _build_subjectwise_from_student_analytics(batch):
+        """Use same data as student analytics: _student_analytics_build_data returns subject_wise (held, attended, pct) per student.
+        total_held/attended = cumulative. week_only_held/attended = selected week only (for Compiled Attendance of WEEK-N block)."""
+        student_data, _ = _student_analytics_build_data(dept, phase, week_idx, batch.id)
+        subjects_ordered = []
+        rows = []
+        for rec in student_data:
+            s = rec['student']
+            subject_wise = {sw['name']: {'held': sw['held'], 'attended': sw['attended']} for sw in rec['subject_wise']}
+            if not subjects_ordered:
+                subjects_ordered = [sw['name'] for sw in rec['subject_wise']]
+            week_only = {'held': 0, 'attended': 0}
+            week_wise = rec.get('week_wise', [])
+            sel = next((w for w in week_wise if w.get('week') == week_idx + 1), None)
+            if sel:
+                week_only = {'held': sel['held'], 'attended': sel['attended']}
+            rows.append({
+                'student': s,
+                'subject_wise': subject_wise,
+                'total_held': rec['held'],
+                'total_attended': rec['attended'],
+                'week_only_held': week_only['held'],
+                'week_only_attended': week_only['attended'],
+                'mentor': s.mentor.short_name if s.mentor else '',
+            })
+        return subjects_ordered, rows
+
+    year = datetime.now().year
+    dept_label = (dept.code or dept.name or 'SY-1').replace(' ', '-')[:20]
+    if len(batches) == 1:
+        batch_label = f'DIV-{batches[0].name}'
+    else:
+        names = [b.name for b in batches]
+        batch_label = f'DIV-{names[0]} TO {names[-1]}' if names else 'DIV-ALL'
+    fname_base = f'({batch_label})_WEEK-{week_idx + 1}_{dept_label}_SEM-IV_ COMPILED_ATTENDANCE SHEET_{year}.xlsx'
+
+    thin_border = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
+    header_fill = PatternFill(start_color='4F81BD', end_color='4F81BD', fill_type='solid')
+    header_font = Font(bold=True, color='FFFFFF')
+    pct_red_fill = PatternFill(start_color='DC3545', end_color='DC3545', fill_type='solid')
+    title_sy_fill = PatternFill(start_color='1F4E79', end_color='1F4E79', fill_type='solid')
+    title_subwise_fill = PatternFill(start_color='2E7D32', end_color='2E7D32', fill_type='solid')
+
+    def _write_subjectwise_sheet(ws, batch, subjects_ordered, rows, combined=False):
+        """Write subject-wise compiled format: Roll no, Div, Branch, Enrollment No, Name, [Compiled Attendance of WEEK-N: Total Attended, Total Lecture, Overall % - WEEK ONLY], [per subject: cumulative], OVERALL (cumulative), MENTOR NAME.
+        The Compiled Attendance of WEEK-N block shows only that week's data (not cumulative). Subject-wise and OVERALL remain cumulative."""
+        week_label = f'WEEK-{week_idx + 1}'
+        title = f'SY ({dept.name}) Sem-IV {year} Compiled Attendance'
+        subwise_title = f'Subjectwise Compiled Attendance upto Week-{week_idx + 1}'
+        num_attendance_cols = 3 + 3 * len(subjects_ordered) + 3 + 1
+        last_col = 4 + num_attendance_cols
+        ws.merge_cells(start_row=1, start_column=1, end_row=2, end_column=4)
+        cell = ws.cell(1, 1, title)
+        cell.font = Font(bold=True, size=12, color='FFFFFF')
+        cell.fill = title_sy_fill
+        cell.alignment = Alignment(horizontal='center', vertical='center')
+        cell.border = thin_border
+        ws.merge_cells(start_row=1, start_column=5, end_row=2, end_column=last_col)
+        cell = ws.cell(1, 5, subwise_title)
+        cell.font = Font(bold=True, size=12, color='FFFFFF')
+        cell.fill = title_subwise_fill
+        cell.alignment = Alignment(horizontal='center', vertical='center')
+        cell.border = thin_border
+        student_headers = ('Roll no.', 'Div', 'Enrollment No', 'Name')
+        for c, label in enumerate(student_headers, start=1):
+            cell = ws.cell(4, c, label)
+            cell.font = header_font
+            cell.fill = header_fill
+            cell.border = thin_border
+            cell.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
+            ws.merge_cells(start_row=4, start_column=c, end_row=8, end_column=c)
+        col = 5
+        cell = ws.cell(4, col, f'Compiled Attendance of {week_label}')
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.border = thin_border
+        cell.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
+        ws.merge_cells(start_row=4, start_column=col, end_row=7, end_column=col + 2)
+        col += 3
+        for subj in subjects_ordered:
+            cell = ws.cell(4, col, subj)
+            cell.font = header_font
+            cell.fill = header_fill
+            cell.border = thin_border
+            cell.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
+            ws.merge_cells(start_row=4, start_column=col, end_row=7, end_column=col + 2)
+            col += 3
+        cell = ws.cell(4, col, 'OVERALL')
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.border = thin_border
+        cell.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
+        ws.merge_cells(start_row=4, start_column=col, end_row=7, end_column=col + 2)
+        col += 3
+        cell = ws.cell(4, col, 'MENTOR NAME')
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.border = thin_border
+        cell.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
+        ws.merge_cells(start_row=4, start_column=col, end_row=8, end_column=col)
+        col = 5
+        for _ in range(1 + len(subjects_ordered) + 1):
+            for h in ('Total\nAttended', 'Total\nLecture', 'Overall\n%'):
+                cell = ws.cell(8, col, h)
+                cell.font = header_font
+                cell.fill = header_fill
+                cell.border = thin_border
+                cell.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
+                col += 1
+        for row_idx, r in enumerate(rows, start=9):
+            s = r['student']
+            ws.cell(row_idx, 1, s.roll_no).border = thin_border
+            div_val = s.batch.name if combined else batch.name
+            ws.cell(row_idx, 2, div_val).border = thin_border
+            ws.cell(row_idx, 3, s.enrollment_no or '').border = thin_border
+            ws.cell(row_idx, 4, s.name).border = thin_border
+            c = 5
+            wo_held, wo_attended = r.get('week_only_held', 0), r.get('week_only_attended', 0)
+            ws.cell(row_idx, c, wo_attended).border = thin_border
+            c += 1
+            ws.cell(row_idx, c, wo_held).border = thin_border
+            c += 1
+            wo_pct = round(wo_attended / wo_held * 100, 1) if wo_held else 0
+            wo_pct_cell = ws.cell(row_idx, c, wo_pct if wo_held else '')
+            wo_pct_cell.border = thin_border
+            if wo_held and wo_pct < 75:
+                wo_pct_cell.font = Font(bold=True, color='FFFFFF')
+                wo_pct_cell.fill = pct_red_fill
+            c += 1
+            for subj in subjects_ordered:
+                sw = r['subject_wise'].get(subj, {'held': 0, 'attended': 0})
+                held, attended = sw['held'], sw['attended']
+                pct = round(attended / held * 100, 1) if held else 0
+                ws.cell(row_idx, c, attended).border = thin_border
+                c += 1
+                ws.cell(row_idx, c, held).border = thin_border
+                c += 1
+                pct_cell = ws.cell(row_idx, c, pct if held else '')
+                pct_cell.border = thin_border
+                if held and pct < 75:
+                    pct_cell.font = Font(bold=True, color='FFFFFF')
+                    pct_cell.fill = pct_red_fill
+                c += 1
+            ws.cell(row_idx, c, r['total_attended']).border = thin_border
+            c += 1
+            ws.cell(row_idx, c, r['total_held']).border = thin_border
+            c += 1
+            tpct = round(r['total_attended'] / r['total_held'] * 100, 1) if r['total_held'] else 0
+            tpct_cell = ws.cell(row_idx, c, tpct if r['total_held'] else '')
+            tpct_cell.border = thin_border
+            if r['total_held'] and tpct < 75:
+                tpct_cell.font = Font(bold=True, color='FFFFFF')
+                tpct_cell.fill = pct_red_fill
+            c += 1
+            ws.cell(row_idx, c, r['mentor']).border = thin_border
+        ws.column_dimensions['A'].width = 10
+        ws.column_dimensions['B'].width = 8
+        ws.column_dimensions['C'].width = 16
+        ws.column_dimensions['D'].width = 28
+        ws.freeze_panes = 'E9'
+
+    wb = Workbook()
+    if fmt == 'combined' and len(batches) > 1:
+        all_subjects = set()
+        all_rows = []
+        for batch in batches:
+            subs, rows = _build_subjectwise_from_student_analytics(batch)
+            all_subjects.update(subs)
+            all_rows.extend(rows)
+        subjects_ordered = sorted(all_subjects)
+        ws = wb.active
+        ws.title = 'Combined'[:31]
+        _write_subjectwise_sheet(ws, batches[0], subjects_ordered, all_rows, combined=True)
+    else:
+        first = True
+        for batch in batches:
+            if first:
+                ws = wb.active
+                first = False
+            else:
+                ws = wb.create_sheet(title=(batch.name[:31] if batch.name else 'Sheet'))
+            subjects_ordered, rows = _build_subjectwise_from_student_analytics(batch)
+            _write_subjectwise_sheet(ws, batch, subjects_ordered, rows)
+
+    bio = BytesIO()
+    wb.save(bio)
+    bio.seek(0)
+    resp = HttpResponse(bio.getvalue(), content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+    resp['Content-Disposition'] = f'attachment; filename="{fname_base}"'
+    return resp
+
+
 # ---------- Faculty: Attendance Entry ----------
 
 @login_required
@@ -3962,7 +4289,7 @@ def faculty_attendance_entry(request):
         if not tp:
             return []
         holidays = get_all_holiday_dates(dept)
-        entries = ScheduleSlot.objects.filter(faculty=faculty)
+        entries = _effective_slots_for_faculty_on_date(faculty, datetime.now().date())
         day_set = {e.day.lower() for e in entries if e.day}
         out = []
         for i in range(1, 5):
@@ -4014,7 +4341,8 @@ def faculty_attendance_entry(request):
         excluded_by_adj = set(
             LectureAdjustment.objects.filter(date=selected_date, original_faculty=faculty).values_list('batch_id', 'time_slot')
         )
-        for s in ScheduleSlot.objects.filter(faculty=faculty, day=weekday).select_related('batch', 'subject').order_by('time_slot'):
+        faculty_slots = [s for s in _effective_slots_for_faculty_on_date(faculty, selected_date) if s.day == weekday]
+        for s in sorted(faculty_slots, key=lambda x: x.time_slot or ''):
             if (s.batch_id, s.time_slot) in excluded_by_adj:
                 continue
             if (selected_date, s.batch_id, s.time_slot) in cancelled_set:
@@ -4069,9 +4397,12 @@ def faculty_attendance_entry(request):
     attendance_locked = selected_date and _is_attendance_locked_for_date(selected_date)
     lock_time_warning = None
     if selected_date and not attendance_locked:
-        lock = AttendanceLockSetting.objects.filter(pk=1).first()
-        if lock and lock.enabled:
-            lock_time_warning = f'{lock.lock_hour:02d}:{lock.lock_minute:02d} IST'
+        try:
+            lock = AttendanceLockSetting.objects.filter(pk=1).first()
+            if lock and lock.enabled:
+                lock_time_warning = f'{lock.lock_hour:02d}:{lock.lock_minute:02d} IST'
+        except OperationalError:
+            pass
     ctx = {
         'faculty': faculty,
         'available_dates': available_dates,
@@ -4158,9 +4489,8 @@ def faculty_report_excel(request):
         return redirect('core:faculty_attendance_entry')
     weekday = selected_date.strftime('%A')
     cancelled_set = get_cancelled_lectures_set(faculty.department)
-    all_slots = list(ScheduleSlot.objects.filter(
-        faculty=faculty, batch=batch, day=weekday
-    ).select_related('subject').order_by('time_slot'))
+    all_slots = [s for s in _effective_slots_for_faculty_on_date(faculty, selected_date) if s.batch_id == batch.id and s.day == weekday]
+    all_slots = sorted(all_slots, key=lambda s: s.time_slot or '')
     slots = [s for s in all_slots if (selected_date, batch.id, s.time_slot) not in cancelled_set]
     atts = FacultyAttendance.objects.filter(faculty=faculty, date=selected_date, batch=batch).order_by('lecture_slot')
     att_map = {a.lecture_slot: set(x.strip() for x in (a.absent_roll_numbers or '').split(',') if x.strip()) for a in atts}
@@ -4247,7 +4577,7 @@ def _dates_for_department(dept):
     if not tp:
         return []
     holidays = get_all_holiday_dates(dept)
-    day_set = set(ScheduleSlot.objects.filter(department=dept).values_list('day', flat=True).distinct())
+    day_set = _effective_day_set_for_dept(dept, datetime.now().date())
     day_set = {d.lower() for d in day_set if d}
     out = []
     for i in range(1, 5):
@@ -4275,11 +4605,8 @@ def _dates_for_department(dept):
 
 def _faculties_for_date(dept, selected_date):
     """Return faculties who have lectures on this date in this department."""
-    weekday = selected_date.strftime('%A')
-    faculty_ids = set(
-        ScheduleSlot.objects.filter(department=dept, day=weekday)
-        .values_list('faculty_id', flat=True).distinct()
-    )
+    effective_slots = _effective_slots_for_date(dept, selected_date)
+    faculty_ids = {s.faculty_id for s in effective_slots if s.faculty_id}
     for adj in LectureAdjustment.objects.filter(date=selected_date, batch__department=dept).select_related('new_faculty', 'original_faculty'):
         if adj.new_faculty_id:
             faculty_ids.add(adj.new_faculty_id)
@@ -4328,7 +4655,8 @@ def admin_manual_attendance(request):
         excluded_by_adj = set(
             LectureAdjustment.objects.filter(date=selected_date, original_faculty=faculty).values_list('batch_id', 'time_slot')
         )
-        for s in ScheduleSlot.objects.filter(faculty=faculty, day=weekday).select_related('batch', 'subject').order_by('time_slot'):
+        faculty_slots = [s for s in _effective_slots_for_faculty_on_date(faculty, selected_date) if s.day == weekday]
+        for s in sorted(faculty_slots, key=lambda x: x.time_slot or ''):
             if (s.batch_id, s.time_slot) in excluded_by_adj:
                 continue
             if (selected_date, s.batch_id, s.time_slot) in cancelled_set:
@@ -4468,9 +4796,8 @@ def admin_manual_attendance_excel(request):
         return redirect('core:admin_manual_attendance')
     weekday = selected_date.strftime('%A')
     cancelled_set = get_cancelled_lectures_set(dept)
-    all_slots = list(ScheduleSlot.objects.filter(
-        faculty=faculty, batch=batch, day=weekday
-    ).select_related('subject').order_by('time_slot'))
+    all_slots = [s for s in _effective_slots_for_faculty_on_date(faculty, selected_date) if s.batch_id == batch.id and s.day == weekday]
+    all_slots = sorted(all_slots, key=lambda s: s.time_slot or '')
     slots = [s for s in all_slots if (selected_date, batch.id, s.time_slot) not in cancelled_set]
     atts = FacultyAttendance.objects.filter(faculty=faculty, date=selected_date, batch=batch).order_by('lecture_slot')
     att_map = {a.lecture_slot: set(x.strip() for x in (a.absent_roll_numbers or '').split(',') if x.strip()) for a in atts}
@@ -4589,13 +4916,12 @@ def faculty_mentorship(request):
     for s in mentorship_students:
         bid = s.batch_id
         if bid not in batch_cache:
-            day_slots = defaultdict(set)
-            for day, slot in ScheduleSlot.objects.filter(batch=s.batch).values_list('day', 'time_slot').distinct():
-                day_slots[day].add(slot)
             cancelled_set = get_cancelled_lectures_set(dept)
             batch_scheduled = set()
             for d in phase_dates_set:
-                for slot in day_slots.get(d.strftime('%A'), ()):
+                weekday = d.strftime('%A')
+                slots = [x for x in _effective_slots_for_date(dept, d, extra_filters={'batch': s.batch}) if x.day == weekday]
+                for slot in set(x.time_slot for x in slots if x.time_slot):
                     if (d, bid, slot) not in cancelled_set:
                         batch_scheduled.add((d, slot))
             batch_att_map = {}
@@ -4684,9 +5010,9 @@ def _student_phase_weeks_and_dates(dept, batch):
     """Return (week_map with date objects, available_dates list, phase_dates dict phase -> list of dates). Excludes holidays."""
     tp = TermPhase.objects.filter(department=dept).first()
     phases = ['T1', 'T2', 'T3', 'T4']
-    days_set = set(ScheduleSlot.objects.filter(department=dept).values_list('day', flat=True).distinct())
+    days_set = _effective_day_set_for_dept(dept, datetime.now().date())
     if not days_set and batch:
-        days_set = set(ScheduleSlot.objects.filter(batch=batch).values_list('day', flat=True).distinct())
+        days_set = _effective_day_set_for_batch(batch, datetime.now().date())
     if not days_set:
         days_set = {'monday', 'tuesday', 'wednesday', 'thursday', 'friday'}
     days_set = {d.lower() for d in days_set if d}
@@ -4758,7 +5084,8 @@ def student_attendance_analytics(request):
     batch_scheduled = set()
     for d in phase_dates_all:
         weekday = d.strftime('%A')
-        for slot in ScheduleSlot.objects.filter(batch=batch, day=weekday).values_list('time_slot', flat=True).distinct():
+        slots = [x for x in _effective_slots_for_date(dept, d, extra_filters={'batch': batch}) if x.day == weekday]
+        for slot in set(x.time_slot for x in slots if x.time_slot):
             if (d, batch.id, slot) not in cancelled_set:
                 batch_scheduled.add((d, slot))
     batch_scheduled_upto_today = batch_scheduled  # Use all scheduled (include future for demo/test data)
@@ -4788,7 +5115,8 @@ def student_attendance_analytics(request):
     day_held = day_attended = 0
     if period_type == 'date' and selected_date:
         weekday = selected_date.strftime('%A')
-        slots = ScheduleSlot.objects.filter(batch=batch, day=weekday).select_related('subject', 'faculty').order_by('time_slot')
+        slots = [s for s in _effective_slots_for_date(dept, selected_date, extra_filters={'batch': batch}) if s.day == weekday]
+        slots = sorted(slots, key=lambda s: s.time_slot or '')
         for s in slots:
             key = (selected_date, s.time_slot)
             attended = None

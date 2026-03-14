@@ -41,10 +41,8 @@ class Command(BaseCommand):
             self.stdout.write(self.style.ERROR('TermPhase T1 start/end not set for this department. Set T1 dates first.'))
             return
 
-        days_set = set(
-            ScheduleSlot.objects.filter(department=dept)
-            .values_list('day', flat=True).distinct()
-        )
+        from core.schedule_utils import get_effective_day_set
+        days_set = get_effective_day_set(dept, tp.t1_start)
         days_set = {d.lower() for d in days_set if d}
         if not days_set:
             self.stdout.write(self.style.ERROR('No schedule slots found. Upload timetable or add schedule first.'))
@@ -104,9 +102,8 @@ class Command(BaseCommand):
                 continue
             for d in t1_dates:
                 weekday = d.strftime('%A')
-                slots = ScheduleSlot.objects.filter(
-                    department=dept, batch=batch, day=weekday
-                ).select_related('faculty')
+                from core.schedule_utils import get_effective_slots_for_date
+                slots = [s for s in get_effective_slots_for_date(dept, d, extra_filters={'batch': batch}) if s.day == weekday]
                 for slot in slots:
                     # Random 0 to min(3, len(students)) absent per slot for variety
                     n_absent = random.randint(0, min(3, len(students)))

@@ -46,7 +46,8 @@ def _compile_phase_weeks(dept, phase):
     end = getattr(tp, f'{phase.lower()}_end', None)
     if not start or not end:
         return []
-    days_set = set(ScheduleSlot.objects.filter(department=dept).values_list('day', flat=True).distinct())
+    from core.schedule_utils import get_effective_day_set
+    days_set = get_effective_day_set(dept, timezone.localdate())
     days_set = {d.lower() for d in days_set if d}
     holidays = get_phase_holidays(dept, phase)
     dates = []
@@ -90,12 +91,14 @@ def student_low_attendance_emails(command):
         all_dates = sorted(all_dates)
         if not all_dates:
             continue
+        from core.schedule_utils import get_effective_slots_for_date
         batches = list(Batch.objects.filter(department=dept))
         batch_scheduled = defaultdict(set)
         for batch in batches:
             for d in all_dates:
                 weekday = d.strftime('%A')
-                for slot in ScheduleSlot.objects.filter(batch=batch, day=weekday).values_list('time_slot', flat=True).distinct():
+                slots = [s for s in get_effective_slots_for_date(dept, d, extra_filters={'batch': batch}) if s.day == weekday]
+                for slot in set(s.time_slot for s in slots if s.time_slot):
                     batch_scheduled[batch.id].add((d, slot))
         batch_att_map = defaultdict(lambda: defaultdict(set))
         for batch in batches:
@@ -135,17 +138,22 @@ def student_low_attendance_emails(command):
 
 def faculty_reminder_emails(command):
     """Send reminder to faculty who have classes today."""
+    from core.schedule_utils import get_effective_slots_for_date
     today = timezone.localdate()
     weekday = today.strftime('%A')
-    faculties_with_slots = Faculty.objects.filter(
-        scheduleslot__day=weekday
-    ).distinct().select_related('department')
+    faculty_ids = set()
+    for dept in Department.objects.all():
+        slots = [s for s in get_effective_slots_for_date(dept, today) if s.day == weekday and s.faculty_id]
+        faculty_ids.update(s.faculty_id for s in slots)
+    faculties_with_slots = Faculty.objects.filter(pk__in=faculty_ids).select_related('department')
     sent = 0
     for fac in faculties_with_slots:
         email = fac.email or (fac.user.email if fac.user else None)
         if not email:
             continue
-        slots = ScheduleSlot.objects.filter(faculty=fac, day=weekday).select_related('batch', 'subject').order_by('time_slot')
+        from core.schedule_utils import get_effective_slots_for_date
+        slots = [s for s in get_effective_slots_for_date(fac.department, today, extra_filters={'faculty': fac}) if s.day == weekday]
+        slots = sorted(slots, key=lambda s: s.time_slot or '')
         slot_list = ', '.join(f'{s.batch.name} {s.subject.name} ({s.time_slot})' for s in slots[:5])
         if len(slots) > 5:
             slot_list += f' and {len(slots) - 5} more'
@@ -186,12 +194,14 @@ def admin_weekly_summary(command):
         all_dates = set()
         for w in weeks:
             all_dates.update(w)
+        from core.schedule_utils import get_effective_slots_for_date
         batches = list(Batch.objects.filter(department=dept))
         batch_scheduled = defaultdict(set)
         for batch in batches:
             for d in all_dates:
                 weekday = d.strftime('%A')
-                for slot in ScheduleSlot.objects.filter(batch=batch, day=weekday).values_list('time_slot', flat=True).distinct():
+                slots = [s for s in get_effective_slots_for_date(dept, d, extra_filters={'batch': batch}) if s.day == weekday]
+                for slot in set(s.time_slot for s in slots if s.time_slot):
                     batch_scheduled[batch.id].add((d, slot))
         batch_att_map = defaultdict(lambda: defaultdict(set))
         for batch in batches:

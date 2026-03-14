@@ -1,6 +1,7 @@
 """
 Core models for LJIET_Attendance.
 """
+from datetime import date
 from django.db import models
 from django.contrib.auth.models import User
 
@@ -82,17 +83,22 @@ class Student(models.Model):
 
 
 class ScheduleSlot(models.Model):
-    """One lecture slot: faculty teaches subject to batch on a weekday at a time."""
+    """One lecture slot: faculty teaches subject to batch on a weekday at a time.
+    effective_from: when this schedule version applies. Past dates use the version valid on that date."""
     department = models.ForeignKey(Department, on_delete=models.CASCADE)
     faculty = models.ForeignKey(Faculty, on_delete=models.CASCADE)
     subject = models.ForeignKey(Subject, on_delete=models.CASCADE)
     batch = models.ForeignKey(Batch, on_delete=models.CASCADE)
     day = models.CharField(max_length=20)  # Monday, Tuesday, ...
     time_slot = models.CharField(max_length=50)  # e.g. 08:45-09:45, Lec 1
+    effective_from = models.DateField(
+        default=date(2000, 1, 1),
+        help_text='Date from which this slot applies. Original schedule uses 2000-01-01.'
+    )
 
     class Meta:
         ordering = ['day', 'time_slot']
-        unique_together = ('department', 'batch', 'day', 'time_slot')
+        unique_together = ('department', 'batch', 'day', 'time_slot', 'effective_from')
 
     def __str__(self):
         return f"{self.batch.name} {self.day} {self.time_slot} - {self.subject.name} ({self.faculty.short_name})"

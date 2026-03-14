@@ -91,6 +91,7 @@ class Command(BaseCommand):
                         subj = subjects[i % len(subjects)]
                         ScheduleSlot.objects.get_or_create(
                             department=dept, batch=batch, day=day, time_slot=ts,
+                            effective_from=date(2000, 1, 1),
                             defaults={'faculty': fac, 'subject': subj}
                         )
             self.stdout.write(self.style.SUCCESS('Created schedule slots (Mon-Fri, 3 slots/day per batch)'))
@@ -116,9 +117,8 @@ class Command(BaseCommand):
             self.stdout.write(f'Using TermPhase T1: {tp.t1_start} to {tp.t1_end}')
 
         # --- Build T1 lecture dates (excluding holidays)
-        days_set = set(
-            ScheduleSlot.objects.filter(department=dept).values_list('day', flat=True).distinct()
-        )
+        from core.schedule_utils import get_effective_day_set
+        days_set = get_effective_day_set(dept, tp.t1_start or date.today())
         days_set = {d.lower() for d in days_set if d}
         holidays = get_phase_holidays(dept, 'T1')
         t1_dates = []
@@ -172,9 +172,8 @@ class Command(BaseCommand):
                 continue
             for d in t1_dates:
                 weekday = d.strftime('%A')
-                slots = ScheduleSlot.objects.filter(
-                    department=dept, batch=batch, day=weekday
-                ).select_related('faculty')
+                from core.schedule_utils import get_effective_slots_for_date
+                slots = [s for s in get_effective_slots_for_date(dept, d, extra_filters={'batch': batch}) if s.day == weekday]
                 for slot in slots:
                     n_absent = random.randint(0, min(4, len(students)))
                     absent_rolls = random.sample(students, n_absent) if n_absent else []
