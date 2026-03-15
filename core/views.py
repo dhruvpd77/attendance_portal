@@ -1295,7 +1295,7 @@ def student_upload(request):
         batch_id = request.POST.get('batch')
         file = request.FILES.get('file')
         if not batch_id or not file:
-            messages.error(request, 'Select batch and upload CSV (columns: roll_no, name, enrollment_no).')
+            messages.error(request, 'Select batch and upload CSV. See format info for required columns.')
             return redirect('core:student_upload')
         batch = Batch.objects.filter(pk=batch_id, department=dept).first()
         if not batch:
@@ -1319,6 +1319,8 @@ def student_upload(request):
                 nm = get_col(row, 'name')
                 en = get_col(row, 'enrollment_no', 'enrollment no')
                 mentor_val = get_col(row, 'mentor')
+                student_phone = get_col(row, 'student_phone_number', 'student phone number', 'student_phone')
+                parents_contact = get_col(row, 'parents_contact_number', 'parents contact number', 'parents_contact')
                 mentor = None
                 if mentor_val:
                     for f in faculties:
@@ -1326,7 +1328,10 @@ def student_upload(request):
                             mentor = f
                             break
                 if rn and nm:
-                    rows.append({'roll_no': rn, 'name': nm, 'enrollment_no': en, 'mentor': mentor})
+                    rows.append({
+                        'roll_no': rn, 'name': nm, 'enrollment_no': en, 'mentor': mentor,
+                        'student_phone_number': student_phone, 'parents_contact_number': parents_contact,
+                    })
             if not rows:
                 messages.error(request, 'No valid rows (need roll_no, name).')
                 return redirect('core:student_upload')
@@ -1335,7 +1340,9 @@ def student_upload(request):
                 Student.objects.create(
                     department=dept, batch=batch,
                     roll_no=r['roll_no'], name=r['name'], enrollment_no=r.get('enrollment_no', ''),
-                    mentor=r.get('mentor')
+                    mentor=r.get('mentor'),
+                    student_phone_number=r.get('student_phone_number', ''),
+                    parents_contact_number=r.get('parents_contact_number', ''),
                 )
             messages.success(request, f'{len(rows)} students uploaded for {batch.name}.')
             return redirect('core:student_list')
@@ -1343,6 +1350,107 @@ def student_upload(request):
             messages.error(request, str(e))
     ctx = {'batches': batches, 'department': dept}
     return render(request, 'core/admin/student_upload.html', ctx)
+
+
+@login_required
+def student_add(request):
+    if not user_can_admin(request):
+        return redirect('accounts:role_redirect')
+    dept = get_admin_department(request)
+    if not dept:
+        messages.error(request, 'Select a department first.')
+        return redirect('core:admin_dashboard')
+    batches = Batch.objects.filter(department=dept)
+    faculties = Faculty.objects.filter(department=dept).order_by('short_name')
+    if request.method == 'POST':
+        roll_no = request.POST.get('roll_no', '').strip()
+        name = request.POST.get('name', '').strip()
+        batch_id = request.POST.get('batch_id', '').strip()
+        enrollment_no = request.POST.get('enrollment_no', '').strip()
+        mentor_id = request.POST.get('mentor_id', '').strip()
+        student_phone = request.POST.get('student_phone_number', '').strip()
+        parents_contact = request.POST.get('parents_contact_number', '').strip()
+        if not roll_no or not name or not batch_id:
+            messages.error(request, 'Roll No, Name, and Batch are required.')
+            return redirect('core:student_add')
+        batch = Batch.objects.filter(pk=batch_id, department=dept).first()
+        if not batch:
+            messages.error(request, 'Invalid batch.')
+            return redirect('core:student_add')
+        if Student.objects.filter(department=dept, batch=batch, roll_no=roll_no).exists():
+            messages.error(request, f'Student with roll no {roll_no} already exists in batch {batch.name}.')
+            return redirect('core:student_add')
+        mentor = Faculty.objects.filter(pk=mentor_id, department=dept).first() if mentor_id else None
+        Student.objects.create(
+            department=dept, batch=batch,
+            roll_no=roll_no, name=name, enrollment_no=enrollment_no,
+            mentor=mentor,
+            student_phone_number=student_phone, parents_contact_number=parents_contact,
+        )
+        messages.success(request, f'Student {name} added.')
+        return redirect('core:student_list')
+    ctx = {'batches': batches, 'faculties': faculties, 'department': dept}
+    return render(request, 'core/admin/student_form.html', {'form_type': 'add', **ctx})
+
+
+@login_required
+def student_edit(request, pk):
+    if not user_can_admin(request):
+        return redirect('accounts:role_redirect')
+    obj = get_object_or_404(Student, pk=pk)
+    dept = get_admin_department(request)
+    if dept and obj.department != dept:
+        messages.error(request, 'You can only edit students in your department.')
+        return redirect('core:student_list')
+    batches = Batch.objects.filter(department=obj.department)
+    faculties = Faculty.objects.filter(department=obj.department).order_by('short_name')
+    if request.method == 'POST':
+        roll_no = request.POST.get('roll_no', '').strip()
+        name = request.POST.get('name', '').strip()
+        batch_id = request.POST.get('batch_id', '').strip()
+        enrollment_no = request.POST.get('enrollment_no', '').strip()
+        mentor_id = request.POST.get('mentor_id', '').strip()
+        student_phone = request.POST.get('student_phone_number', '').strip()
+        parents_contact = request.POST.get('parents_contact_number', '').strip()
+        if not roll_no or not name or not batch_id:
+            messages.error(request, 'Roll No, Name, and Batch are required.')
+            return redirect('core:student_edit', pk=pk)
+        batch = Batch.objects.filter(pk=batch_id, department=obj.department).first()
+        if not batch:
+            messages.error(request, 'Invalid batch.')
+            return redirect('core:student_edit', pk=pk)
+        dup = Student.objects.filter(department=obj.department, batch=batch, roll_no=roll_no).exclude(pk=pk)
+        if dup.exists():
+            messages.error(request, f'Student with roll no {roll_no} already exists in batch {batch.name}.')
+            return redirect('core:student_edit', pk=pk)
+        mentor = Faculty.objects.filter(pk=mentor_id, department=obj.department).first() if mentor_id else None
+        obj.roll_no = roll_no
+        obj.name = name
+        obj.batch = batch
+        obj.enrollment_no = enrollment_no
+        obj.mentor = mentor
+        obj.student_phone_number = student_phone
+        obj.parents_contact_number = parents_contact
+        obj.save()
+        messages.success(request, 'Student updated.')
+        return redirect('core:student_list')
+    ctx = {'obj': obj, 'batches': batches, 'faculties': faculties, 'department': obj.department}
+    return render(request, 'core/admin/student_form.html', {'form_type': 'edit', **ctx})
+
+
+@login_required
+def student_delete(request, pk):
+    if not user_can_admin(request):
+        return redirect('accounts:role_redirect')
+    obj = get_object_or_404(Student, pk=pk)
+    dept = get_admin_department(request)
+    if dept and obj.department != dept:
+        messages.error(request, 'You can only manage students in your department.')
+        return redirect('core:student_list')
+    name = obj.name
+    obj.delete()
+    messages.success(request, f'Student "{name}" deleted.')
+    return redirect('core:student_list')
 
 
 # ---------- Admin: Schedule ----------

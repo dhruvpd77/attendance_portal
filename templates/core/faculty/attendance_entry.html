@@ -155,6 +155,7 @@
                     <button type="button" class="btn btn-sm btn-outline-secondary copy-above-btn" data-slot-index="{{ forloop.counter0 }}"><i class="fas fa-copy me-1"></i>Copy above</button>
                     {% endif %}
                     <button type="button" class="btn btn-sm btn-success all-present-btn" data-form-id="form-{{ batch.id }}-{{ forloop.counter0 }}"><i class="fas fa-check-double me-1"></i>All present</button>
+                    <button type="button" class="btn btn-sm btn-danger all-absent-btn" data-form-id="form-{{ batch.id }}-{{ forloop.counter0 }}"><i class="fas fa-times-circle me-1"></i>All absent</button>
                     <button type="submit" form="form-{{ batch.id }}-{{ forloop.counter0 }}" class="btn btn-sm btn-primary"><i class="fas fa-save me-1"></i>Save</button>
                 </div>
                 {% else %}
@@ -252,7 +253,25 @@
             var form = document.getElementById(formId);
             if (!form) return;
             form.querySelectorAll('input[name="absent_roll_numbers"]').forEach(function(cb) { cb.checked = false; });
+            form.closest('.slot-attendance-form').querySelectorAll('.faculty-roll-item').forEach(function(item) {
+                item.classList.remove('checked', 'checked-blue');
+            });
             form.submit();
+        });
+    });
+    document.querySelectorAll('.all-absent-btn').forEach(function(btn) {
+        btn.addEventListener('click', function() {
+            var formId = this.getAttribute('data-form-id');
+            var form = document.getElementById(formId);
+            if (!form) return;
+            form.closest('.slot-attendance-form').querySelectorAll('.faculty-roll-item').forEach(function(item) {
+                var cb = item.querySelector('input[name="absent_roll_numbers"]');
+                var sel = item.querySelector('select.absent-reason-select');
+                if (cb) { cb.checked = true; }
+                if (sel) sel.value = 'general';
+                item.classList.add('checked');
+                item.classList.remove('checked-blue');
+            });
         });
     });
 

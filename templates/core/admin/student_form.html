@@ -1,0 +1,66 @@
+{% extends 'core/admin/base_admin.html' %}
+{% load static %}
+{% block title %}{% if form_type == 'add' %}Add Student{% else %}Edit Student{% endif %} - LJIET_Attendance{% endblock %}
+{% block content %}
+<div class="admin-hero">
+    <div class="d-flex align-items-center gap-3">
+        <img src="{% static 'images/ljiet-logo.png' %}" alt="LJIET" class="admin-logo">
+        <div>
+            <h1 class="page-title mb-1">{% if form_type == 'add' %}Add Student{% else %}Edit Student{% endif %}</h1>
+            <p class="page-subtitle">{% if form_type == 'add' %}Add a new student to the department.{% else %}Update student details.{% endif %}</p>
+        </div>
+    </div>
+    <a href="{% url 'core:student_list' %}" class="btn btn-outline-light btn-sm"><i class="fas fa-arrow-left me-1"></i> Back</a>
+</div>
+<div class="card admin-card">
+    <div class="card-body p-4">
+        <form method="post">
+            {% csrf_token %}
+            <div class="row g-3">
+                <div class="col-md-6">
+                    <label class="form-label fw-semibold">Roll No <span class="text-danger">*</span></label>
+                    <input type="text" name="roll_no" required value="{% if obj %}{{ obj.roll_no }}{% endif %}" class="form-control form-control-app" placeholder="e.g. 1, 101">
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label fw-semibold">Name <span class="text-danger">*</span></label>
+                    <input type="text" name="name" required value="{% if obj %}{{ obj.name }}{% endif %}" class="form-control form-control-app" placeholder="Full name">
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label fw-semibold">Batch <span class="text-danger">*</span></label>
+                    <select name="batch_id" required class="form-select form-select-app">
+                        <option value="">Select batch</option>
+                        {% for b in batches %}
+                        <option value="{{ b.id }}" {% if obj and obj.batch_id == b.id %}selected{% endif %}>{{ b.name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label fw-semibold">Enrollment No (optional)</label>
+                    <input type="text" name="enrollment_no" value="{% if obj %}{{ obj.enrollment_no }}{% endif %}" class="form-control form-control-app" placeholder="Enrollment number">
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label fw-semibold">Mentor (optional)</label>
+                    <select name="mentor_id" class="form-select form-select-app">
+                        <option value="">— No mentor —</option>
+                        {% for f in faculties %}
+                        <option value="{{ f.id }}" {% if obj and obj.mentor_id == f.id %}selected{% endif %}>{{ f.short_name }} ({{ f.full_name }})</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label fw-semibold">Student Phone (optional)</label>
+                    <input type="text" name="student_phone_number" value="{% if obj %}{{ obj.student_phone_number }}{% endif %}" class="form-control form-control-app" placeholder="e.g. 9876543210">
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label fw-semibold">Parents Contact (optional)</label>
+                    <input type="text" name="parents_contact_number" value="{% if obj %}{{ obj.parents_contact_number }}{% endif %}" class="form-control form-control-app" placeholder="e.g. 9876543210">
+                </div>
+            </div>
+            <div class="d-flex flex-wrap gap-2 mt-4">
+                <button type="submit" class="btn btn-primary-app"><i class="fas fa-save me-2"></i>Save</button>
+                <a href="{% url 'core:student_list' %}" class="btn btn-outline-secondary">Cancel</a>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}

@@ -7,14 +7,45 @@
         <img src="{% static 'images/ljiet-logo.png' %}" alt="LJIET" class="admin-logo">
         <div>
             <h1 class="page-title mb-1">Upload Students</h1>
-            <p class="page-subtitle mb-0">CSV: roll_no, name, enrollment_no (optional), mentor (optional)</p>
+            <p class="page-subtitle mb-0">Upload CSV file with student data</p>
         </div>
     </div>
-    <a href="{% url 'core:student_list' %}" class="btn btn-outline-light btn-sm"><i class="fas fa-arrow-left me-1"></i> Back</a>
+    <div class="d-flex align-items-center gap-2">
+        <button type="button" class="btn btn-outline-light btn-sm" data-bs-toggle="modal" data-bs-target="#csvFormatModal" title="CSV format">
+            <i class="fas fa-info-circle me-1"></i> CSV Format
+        </button>
+        <a href="{% url 'core:student_list' %}" class="btn btn-outline-light btn-sm"><i class="fas fa-arrow-left me-1"></i> Back</a>
+    </div>
 </div>
+
+<div class="modal fade" id="csvFormatModal" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title"><i class="fas fa-file-csv me-2"></i>CSV Format</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <p class="mb-3">Your CSV must have a header row. Column names are case-insensitive. Supported columns:</p>
+                <table class="table table-sm table-bordered mb-0">
+                    <thead><tr><th>Column</th><th>Required</th><th>Description</th></tr></thead>
+                    <tbody>
+                        <tr><td><code>roll_no</code></td><td>Yes</td><td>Student roll number</td></tr>
+                        <tr><td><code>name</code></td><td>Yes</td><td>Student full name</td></tr>
+                        <tr><td><code>enrollment_no</code></td><td>No</td><td>Enrollment number</td></tr>
+                        <tr><td><code>mentor</code></td><td>No</td><td>Faculty short name (e.g. UMS, PHA)</td></tr>
+                        <tr><td><code>student_phone_number</code></td><td>No</td><td>Student's phone number</td></tr>
+                        <tr><td><code>parents_contact_number</code></td><td>No</td><td>Parents' contact number</td></tr>
+                    </tbody>
+                </table>
+                <p class="mt-3 mb-0 small text-muted">Example: <code>roll_no,name,enrollment_no,mentor,student_phone_number,parents_contact_number</code></p>
+            </div>
+        </div>
+    </div>
+</div>
+
 <div class="card admin-card" style="max-width: 560px;">
     <div class="card-body p-4">
-    <p class="text-secondary small mb-4">Columns: <strong>roll_no</strong>, <strong>name</strong>, optionally <strong>enrollment_no</strong>, <strong>mentor</strong>. Mentor = faculty short name or full name (e.g. UMS).</p>
     <form method="post" enctype="multipart/form-data">
         {% csrf_token %}
         <div class="mb-3">

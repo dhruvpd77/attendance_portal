@@ -121,6 +121,31 @@
     color: #fff;
     transform: scale(1.05);
 }
+
+.mentor-contact-icons { display: inline-flex; align-items: center; gap: 6px; margin-left: 8px; }
+.mentor-phone-btn {
+    width: 28px; height: 28px;
+    display: inline-flex; align-items: center; justify-content: center;
+    border-radius: 8px;
+    text-decoration: none !important;
+    transition: all 0.2s ease;
+}
+.mentor-phone-student {
+    background: linear-gradient(135deg, #dbeafe 0%, #bfdbfe 100%);
+    color: #2563eb;
+}
+.mentor-phone-student:hover { background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%); color: #fff; transform: scale(1.08); }
+.mentor-phone-parents {
+    background: linear-gradient(135deg, #fce7f3 0%, #fbcfe8 100%);
+    color: #be185d;
+}
+.mentor-phone-parents:hover { background: linear-gradient(135deg, #be185d 0%, #9d174d 100%); color: #fff; transform: scale(1.08); }
+.mentor-phone-disabled {
+    background: #f1f5f9;
+    color: #94a3b8;
+    cursor: not-allowed;
+    opacity: 0.6;
+}
 </style>
 {% endblock %}
 {% block content %}
@@ -190,7 +215,23 @@
                                     </span>
                                 </td>
                                 <td class="fw-semibold">{{ stat.student.roll_no }}</td>
-                                <td>{{ stat.student.name }}</td>
+                                <td>
+                                    <span class="d-inline-flex align-items-center flex-wrap">
+                                        {{ stat.student.name }}
+                                        <span class="mentor-contact-icons">
+                                            {% if stat.student.student_phone_number %}
+                                            <a href="tel:{{ stat.student.student_phone_number|striptags }}" class="mentor-phone-btn mentor-phone-student" title="Student: {{ stat.student.student_phone_number }}"><i class="fas fa-mobile-alt"></i></a>
+                                            {% else %}
+                                            <span class="mentor-phone-btn mentor-phone-disabled" title="No student number"><i class="fas fa-mobile-alt"></i></span>
+                                            {% endif %}
+                                            {% if stat.student.parents_contact_number %}
+                                            <a href="tel:{{ stat.student.parents_contact_number|striptags }}" class="mentor-phone-btn mentor-phone-parents" title="Parents: {{ stat.student.parents_contact_number }}"><i class="fas fa-phone"></i></a>
+                                            {% else %}
+                                            <span class="mentor-phone-btn mentor-phone-disabled" title="No parents number"><i class="fas fa-phone"></i></span>
+                                            {% endif %}
+                                        </span>
+                                    </span>
+                                </td>
                                 <td>{{ stat.student.batch.name }}</td>
                                 <td class="text-end">{{ stat.held }}</td>
                                 <td class="text-end">{{ stat.attended }}</td>
@@ -280,7 +321,23 @@
                                     </span>
                                 </td>
                                 <td class="fw-semibold">{{ r.student.roll_no }}</td>
-                                <td>{{ r.student.name }}</td>
+                                <td>
+                                    <span class="d-inline-flex align-items-center flex-wrap">
+                                        {{ r.student.name }}
+                                        <span class="mentor-contact-icons">
+                                            {% if r.student.student_phone_number %}
+                                            <a href="tel:{{ r.student.student_phone_number|striptags }}" class="mentor-phone-btn mentor-phone-student" title="Student: {{ r.student.student_phone_number }}"><i class="fas fa-mobile-alt"></i></a>
+                                            {% else %}
+                                            <span class="mentor-phone-btn mentor-phone-disabled" title="No student number"><i class="fas fa-mobile-alt"></i></span>
+                                            {% endif %}
+                                            {% if r.student.parents_contact_number %}
+                                            <a href="tel:{{ r.student.parents_contact_number|striptags }}" class="mentor-phone-btn mentor-phone-parents" title="Parents: {{ r.student.parents_contact_number }}"><i class="fas fa-phone"></i></a>
+                                            {% else %}
+                                            <span class="mentor-phone-btn mentor-phone-disabled" title="No parents number"><i class="fas fa-phone"></i></span>
+                                            {% endif %}
+                                        </span>
+                                    </span>
+                                </td>
                                 <td>{{ r.student.batch.name }}</td>
                                 <td class="text-end">{{ r.held }}</td>
                                 <td class="text-end">{{ r.attended }}</td>

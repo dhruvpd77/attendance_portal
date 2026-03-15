@@ -23,7 +23,9 @@
             <button type="submit" class="btn btn-outline-light btn-sm"><i class="fas fa-search"></i></button>
         </form>
         <a href="{% url 'core:generate_credentials_choice' %}" class="btn btn-success btn-sm"><i class="fas fa-key me-1"></i> Generate credentials</a>
+        <a href="{% url 'core:student_add' %}" class="btn btn-success btn-sm"><i class="fas fa-plus me-1"></i> Add Student</a>
         <a href="{% url 'core:student_upload' %}" class="btn btn-primary-app btn-sm"><i class="fas fa-upload me-1"></i> Upload CSV</a>
+        <button type="button" class="btn btn-outline-secondary btn-sm" data-bs-toggle="modal" data-bs-target="#csvFormatModal" title="CSV format"><i class="fas fa-info-circle"></i></button>
     </div>
 </div>
 <div class="card admin-card overflow-hidden">
@@ -41,6 +43,9 @@
                     <th>Enrollment No</th>
                     <th>Batch</th>
                     <th>Mentor</th>
+                    <th>Student Phone</th>
+                    <th>Parents Contact</th>
+                    <th class="text-end" style="width: 100px;">Actions</th>
                 </tr>
             </thead>
             <tbody>
@@ -51,9 +56,15 @@
                     <td class="text-secondary">{{ s.enrollment_no|default:"—" }}</td>
                     <td class="text-secondary">{{ s.batch.name }}</td>
                     <td class="text-secondary">{{ s.mentor.full_name|default:"" }}{% if s.mentor %} ({{ s.mentor.short_name }}){% else %}—{% endif %}</td>
+                    <td class="text-secondary">{{ s.student_phone_number|default:"—" }}</td>
+                    <td class="text-secondary">{{ s.parents_contact_number|default:"—" }}</td>
+                    <td class="text-end">
+                        <a href="{% url 'core:student_edit' s.pk %}" class="btn btn-sm btn-outline-primary me-1" title="Edit"><i class="fas fa-edit"></i></a>
+                        <a href="{% url 'core:student_delete' s.pk %}" class="btn btn-sm btn-outline-danger" title="Delete" onclick="return confirm('Delete student &quot;{{ s.name }}&quot; (Roll {{ s.roll_no }})? This cannot be undone.');"><i class="fas fa-trash-alt"></i></a>
+                    </td>
                 </tr>
                 {% empty %}
-                <tr><td colspan="5" class="text-center text-secondary py-5">No students. Upload CSV, adjust search, or select another batch.</td></tr>
+                <tr><td colspan="8" class="text-center text-secondary py-5">No students. Add student, upload CSV, or adjust search.</td></tr>
                 {% endfor %}
             </tbody>
         </table>
@@ -73,5 +84,20 @@
         </nav>
     </div>
     {% endif %}
+</div>
+
+<div class="modal fade" id="csvFormatModal" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title"><i class="fas fa-file-csv me-2"></i>CSV Format</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <p class="mb-3">Required: <code>roll_no</code>, <code>name</code>. Optional: <code>enrollment_no</code>, <code>mentor</code>, <code>student_phone_number</code>, <code>parents_contact_number</code>.</p>
+                <p class="mb-0 small text-muted">Example header: <code>roll_no,name,enrollment_no,mentor,student_phone_number,parents_contact_number</code></p>
+            </div>
+        </div>
+    </div>
 </div>
 {% endblock %}

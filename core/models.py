@@ -66,6 +66,8 @@ class Student(models.Model):
     enrollment_no = models.CharField(max_length=50, blank=True)
     name = models.CharField(max_length=200)
     email = models.EmailField(blank=True)
+    student_phone_number = models.CharField(max_length=20, blank=True)
+    parents_contact_number = models.CharField(max_length=20, blank=True)
     mentor = models.ForeignKey(
         Faculty, on_delete=models.SET_NULL, null=True, blank=True,
         related_name='mentorship_students'
