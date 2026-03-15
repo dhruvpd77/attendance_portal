@@ -37,23 +37,29 @@
     The Excel file will have one sheet: all students from all batches. Columns: <strong>Roll No</strong>, <strong>Name</strong>, <strong>Batch</strong>, then for each week: <strong>Held</strong>, <strong>Attended</strong>, <strong>%</strong>. At the end: <strong>Total Held</strong>, <strong>Total Attended</strong>, <strong>Total %</strong>.
 </p>
 <script id="week-map-data" type="application/json">{{ week_map_json|safe }}</script>
+<script id="phase-week-offsets" type="application/json">{{ phase_week_offsets_json|safe }}</script>
 <script>
 (function() {
     var phaseSelect = document.getElementById('phaseSelect');
     var weekSelect = document.getElementById('weekSelect');
     var wm = {};
+    var offsets = {};
     try {
         var el = document.getElementById('week-map-data');
         if (el) wm = JSON.parse(el.textContent || '{}');
+        el = document.getElementById('phase-week-offsets');
+        if (el) offsets = JSON.parse(el.textContent || '{}');
     } catch (e) {}
     function fillWeeks() {
         var p = phaseSelect.value;
         weekSelect.innerHTML = '<option value="">Select week</option>';
         if (!wm[p]) return;
+        var off = parseInt(offsets[p] || 0, 10);
         for (var i = 0; i < wm[p].length; i++) {
             var opt = document.createElement('option');
             opt.value = i;
-            opt.textContent = 'Week ' + (i + 1);
+            var weekNum = off + i + 1;
+            opt.textContent = 'Week ' + weekNum;
             weekSelect.appendChild(opt);
         }
     }

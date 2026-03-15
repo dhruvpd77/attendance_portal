@@ -396,10 +396,16 @@ def faculty_dashboard(request):
         [s for s in _effective_slots_for_faculty_on_date(faculty, today) if s.day == weekday],
         key=lambda s: s.time_slot or ''
     )
+    # Batches where this faculty teaches (from schedule)
+    faculty_batches = list(
+        Batch.objects.filter(scheduleslot__faculty=faculty)
+        .distinct().order_by('name')
+    )
     ctx = {
         'faculty': faculty,
         'today_slots': today_slots,
         'today': today,
+        'faculty_batches': faculty_batches,
     }
     return render(request, 'core/faculty/dashboard.html', ctx)
 
@@ -1739,8 +1745,12 @@ def upload_timetable(request):
         for _, bname in batches:
             Batch.objects.get_or_create(department=dept, name=bname)
 
-        # When replace: add new version (don't delete old - they stay for past dates)
-        # When add: add slots with effective_from
+        # When replace: delete existing slots with this effective_from, then add new (replaces that version)
+        # When add: only add new slots (keep existing)
+        if replace_schedule:
+            deleted, _ = ScheduleSlot.objects.filter(department=dept, effective_from=effective_date).delete()
+            if deleted:
+                messages.info(request, f'Replaced {deleted} existing slot(s) with effective date {effective_date}.')
         current_day = None
         created_slots = 0
         for row in sheet.iter_rows(min_row=4, values_only=True):
@@ -1896,10 +1906,11 @@ def term_phases(request):
 # ---------- Admin: Daily Absent ----------
 
 def _valid_dates(dept, term_phase):
-    """Lecture days across all phases, excluding holidays."""
+    """Lecture days across all phases, excluding holidays. Uses get_all_schedule_days for versioned timetables."""
     if not term_phase:
         return []
-    days_set = _effective_day_set_for_dept(dept, datetime.now().date())
+    from core.schedule_utils import get_all_schedule_days
+    days_set = get_all_schedule_days(dept) or _effective_day_set_for_dept(dept, datetime.now().date())
     days_set = {d.lower() for d in days_set if d}
     holidays = get_all_holiday_dates(dept)
     out = []
@@ -2193,7 +2204,8 @@ def attendance_sheet_manager(request):
         if not start or not end:
             week_map[p] = []
             continue
-        days_set = _effective_day_set_for_dept(dept, datetime.now().date())
+        from core.schedule_utils import get_all_schedule_days
+        days_set = get_all_schedule_days(dept) or _effective_day_set_for_dept(dept, datetime.now().date())
         days_set = {d.lower() for d in days_set if d}
         dates = []
         cur = start
@@ -2225,9 +2237,11 @@ def attendance_sheet_manager(request):
                 except Exception:
                     pass
     available_dates = sorted(set(all_dates))
+    phase_week_offsets = _get_phase_week_offsets(week_map)
     ctx = {
         'department': dept, 'batches': batches, 'phases': phases,
         'week_map': week_map, 'week_map_json': json.dumps(week_map),
+        'phase_week_offsets_json': json.dumps(phase_week_offsets),
         'available_dates': available_dates,
     }
     return render(request, 'core/admin/attendance_sheet_manager.html', ctx)
@@ -2503,9 +2517,11 @@ def _write_subject_all_batches_sheet(ws, subject_name, batches, all_students, ba
 
 
 def _attendance_sheet_dates_for_period(dept, period_type, phase, week_index=None, single_date=None):
-    """Return list of dates for the chosen period (excluding holidays). week_index is 0-based index into week_map[phase]."""
+    """Return list of dates for the chosen period (excluding holidays). week_index is 0-based index into week_map[phase].
+    Uses get_all_schedule_days for versioned timetables."""
     tp = TermPhase.objects.filter(department=dept).first()
-    days_set = _effective_day_set_for_dept(dept, datetime.now().date())
+    from core.schedule_utils import get_all_schedule_days
+    days_set = get_all_schedule_days(dept) or _effective_day_set_for_dept(dept, datetime.now().date())
     days_set = {d.lower() for d in days_set if d}
     if period_type == 'daily' and single_date:
         holidays = get_all_holiday_dates(dept)
@@ -2746,7 +2762,10 @@ def attendance_sheet_excel(request):
         return redirect('core:attendance_sheet_manager')
 
     # For weekly we want "through week N" (weeks 0..week_idx) so the sheet shows all those weeks and Overall block has W1, W2, ... Overall
-    weeks_current_phase = _compile_phase_weeks_date_objects(dept, phase) if phase else []
+    phases_order = ['T1', 'T2', 'T3', 'T4']
+    week_map = {p: _compile_phase_weeks_date_objects(dept, p) for p in phases_order} if phase else {}
+    phase_week_offsets = _get_phase_week_offsets(week_map) if week_map else {}
+    weeks_current_phase = week_map.get(phase, [])
     if period_type == 'weekly' and week_idx is not None and 0 <= week_idx < len(weeks_current_phase):
         dates = []
         for w in weeks_current_phase[: week_idx + 1]:
@@ -2780,16 +2799,18 @@ def attendance_sheet_excel(request):
                     prev_dates = sorted(set(prev_dates))
                     prev_slots = _build_date_slots_list_for_batch(dept, batch, prev_dates)
                     segments.append((f'{prev_phase} Overall', prev_slots))
+            offset = phase_week_offsets.get(phase, 0)
             for i in range(week_idx + 1):
                 w_dates = weeks_current_phase[i]
                 w_slots = _build_date_slots_list_for_batch(dept, batch, w_dates)
-                label = f'Week {i + 1}' if pi == 0 else f'{phase} Week {i + 1}'
+                label = f'Week {offset + i + 1}'
                 segments.append((label, w_slots))
             segments.append(('Overall', date_slots_list))
         elif period_type == 'phase' and weeks_current_phase:
+            offset = phase_week_offsets.get(phase, 0)
             for i, w in enumerate(weeks_current_phase):
                 w_slots = _build_date_slots_list_for_batch(dept, batch, w)
-                segments.append((f'Week {i + 1}', w_slots))
+                segments.append((f'Week {offset + i + 1}', w_slots))
             segments.append(('Overall', date_slots_list))
         return segments
 
@@ -2838,19 +2859,20 @@ def attendance_sheet_excel(request):
     bio = BytesIO()
     wb.save(bio)
     bio.seek(0)
+    global_week_num = phase_week_offsets.get(phase, 0) + week_idx + 1 if (period_type == 'weekly' and week_idx is not None and weeks_current_phase) else None
     if all_batches:
         if period_type == 'daily':
             fname = f'Attendance_All_{dates[0]:%Y-%m-%d}.xlsx'
-        elif period_type == 'weekly':
-            fname = f'Attendance_All_{phase}_week{week_idx + 1}.xlsx'
+        elif period_type == 'weekly' and global_week_num:
+            fname = f'Attendance_All_{phase}_week{global_week_num}.xlsx'
         else:
             fname = f'Attendance_All_{phase}.xlsx'
     else:
         batch = batches[0]
         if period_type == 'daily':
             fname = f'Attendance_{batch.name}_{dates[0]:%Y-%m-%d}.xlsx'
-        elif period_type == 'weekly':
-            fname = f'Attendance_{batch.name}_{phase}_week{week_idx + 1}.xlsx'
+        elif period_type == 'weekly' and global_week_num:
+            fname = f'Attendance_{batch.name}_{phase}_week{global_week_num}.xlsx'
         else:
             fname = f'Attendance_{batch.name}_{phase}.xlsx'
     resp = HttpResponse(bio.getvalue(), content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
@@ -2877,7 +2899,8 @@ def attendance_sheet_subjectwise_manager(request):
         if not start or not end:
             week_map[p] = []
             continue
-        days_set = _effective_day_set_for_dept(dept, datetime.now().date())
+        from core.schedule_utils import get_all_schedule_days
+        days_set = get_all_schedule_days(dept) or _effective_day_set_for_dept(dept, datetime.now().date())
         days_set = {d.lower() for d in days_set if d}
         dates = []
         cur = start
@@ -2907,9 +2930,11 @@ def attendance_sheet_subjectwise_manager(request):
                 except Exception:
                     pass
     available_dates = sorted(set(all_dates))
+    phase_week_offsets = _get_phase_week_offsets(week_map)
     ctx = {
         'department': dept, 'batches': batches, 'phases': phases,
         'week_map': week_map, 'week_map_json': json.dumps(week_map),
+        'phase_week_offsets_json': json.dumps(phase_week_offsets),
         'available_dates': available_dates,
     }
     return render(request, 'core/admin/attendance_sheet_subjectwise.html', ctx)
@@ -2954,7 +2979,10 @@ def attendance_sheet_subjectwise_excel(request):
             pass
     if period_type in ('weekly', 'phase') and not phase:
         return redirect('core:attendance_sheet_subjectwise_manager')
-    weeks_current_phase = _compile_phase_weeks_date_objects(dept, phase) if phase else []
+    phases_order = ['T1', 'T2', 'T3', 'T4']
+    week_map = {p: _compile_phase_weeks_date_objects(dept, p) for p in phases_order} if phase else {}
+    phase_week_offsets = _get_phase_week_offsets(week_map) if week_map else {}
+    weeks_current_phase = week_map.get(phase, [])
     if period_type == 'weekly' and week_idx is not None and 0 <= week_idx < len(weeks_current_phase):
         dates = []
         for w in weeks_current_phase[: week_idx + 1]:
@@ -3000,16 +3028,18 @@ def attendance_sheet_subjectwise_excel(request):
                     prev_dates = sorted(set(prev_dates))
                     prev_slots = _build_date_slots_list_for_batch(dept, batch, prev_dates)
                     base_segments.append((f'{prev_phase} Overall', prev_slots))
+            offset = phase_week_offsets.get(phase, 0)
             for i in range(week_idx + 1):
                 w_dates = weeks_current_phase[i]
                 w_slots = _build_date_slots_list_for_batch(dept, batch, w_dates)
-                label = f'Week {i + 1}' if pi == 0 else f'{phase} Week {i + 1}'
+                label = f'Week {offset + i + 1}'
                 base_segments.append((label, w_slots))
             base_segments.append(('Overall', date_slots_list))
         elif period_type == 'phase' and weeks_current_phase:
+            offset = phase_week_offsets.get(phase, 0)
             for i, w in enumerate(weeks_current_phase):
                 w_slots = _build_date_slots_list_for_batch(dept, batch, w)
-                base_segments.append((f'Week {i + 1}', w_slots))
+                base_segments.append((f'Week {offset + i + 1}', w_slots))
             base_segments.append(('Overall', date_slots_list))
         return [(label, _filter_date_slots_by_subject(seg, subject_id) if subject_id else seg) for label, seg in base_segments]
 
@@ -3115,10 +3145,11 @@ def attendance_sheet_subjectwise_excel(request):
     wb.save(bio)
     bio.seek(0)
     batch_label = 'All' if all_batches else batches[0].name
+    global_week_num = phase_week_offsets.get(phase, 0) + week_idx + 1 if (period_type == 'weekly' and week_idx is not None and weeks_current_phase) else None
     if period_type == 'daily':
         fname = f'Attendance_Subjectwise_{batch_label}_{dates[0]:%Y-%m-%d}.xlsx'
-    elif period_type == 'weekly':
-        fname = f'Attendance_Subjectwise_{batch_label}_{phase}_week{week_idx + 1}.xlsx'
+    elif period_type == 'weekly' and global_week_num:
+        fname = f'Attendance_Subjectwise_{batch_label}_{phase}_week{global_week_num}.xlsx'
     else:
         fname = f'Attendance_Subjectwise_{batch_label}_{phase}.xlsx'
     resp = HttpResponse(bio.getvalue(), content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
@@ -3133,7 +3164,9 @@ def _admin_analytics_data(dept, phase=None, week=None):
     phases = ['T1', 'T2', 'T3', 'T4']
     if not phase or phase not in phases:
         phase = next((p for p in phases if getattr(tp, f'{p.lower()}_start', None) and getattr(tp, f'{p.lower()}_end', None)), 'T1')
-    weeks = _compile_phase_weeks_date_objects(dept, phase) if tp else []
+    week_map = {p: _compile_phase_weeks_date_objects(dept, p) for p in phases} if tp else {}
+    phase_week_offsets = _get_phase_week_offsets(week_map) if week_map else {}
+    weeks = week_map.get(phase, [])
     all_dates = set()
     if week is not None and week != 'all' and isinstance(week, int) and 0 <= week < len(weeks):
         for i in range(week + 1):
@@ -3146,7 +3179,7 @@ def _admin_analytics_data(dept, phase=None, week=None):
         return {
             'at_risk_students': [], 'batch_wise': [], 'subject_wise': [],
             'weekly_trend': [], 'heat_map': [], 'heat_map_slots': [], 'phase': phase, 'phases': phases,
-            'weeks': weeks, 'num_weeks': len(weeks),
+            'weeks': weeks, 'num_weeks': len(weeks), 'phase_week_offsets': phase_week_offsets,
         }
     batches = list(Batch.objects.filter(department=dept).select_related('department'))
     students = list(Student.objects.filter(department=dept).select_related('batch'))
@@ -3210,6 +3243,7 @@ def _admin_analytics_data(dept, phase=None, week=None):
         t = subject_totals[name]
         pct = round(t['attended'] / t['held'] * 100, 1) if t['held'] else 0
         subject_wise.append({'name': name, 'held': t['held'], 'attended': t['attended'], 'pct': pct})
+    offset = phase_week_offsets.get(phase, 0)
     weekly_trend = []
     for i, week_dates in enumerate(weeks):
         if week is not None and week != 'all' and isinstance(week, int) and i > week:
@@ -3224,7 +3258,7 @@ def _admin_analytics_data(dept, phase=None, week=None):
                 if (d, slot) in batch_att_map[s.batch_id] and str_roll not in batch_att_map[s.batch_id][(d, slot)]:
                     w_attended += 1
         pct = round(w_attended / w_held * 100, 1) if w_held else 0
-        weekly_trend.append({'week': i + 1, 'held': w_held, 'attended': w_attended, 'pct': pct})
+        weekly_trend.append({'week': offset + i + 1, 'held': w_held, 'attended': w_attended, 'pct': pct})
     heat_map_list = []
     days_order = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
     slots_order = sorted(set(slot for day_data in heat_map.values() for slot in day_data.keys()))
@@ -3248,6 +3282,7 @@ def _admin_analytics_data(dept, phase=None, week=None):
         'phases': phases,
         'weeks': weeks,
         'num_weeks': len(weeks),
+        'phase_week_offsets': phase_week_offsets,
     }
 
 
@@ -3270,12 +3305,15 @@ def admin_analytics_dashboard(request):
             week = None
     data = _admin_analytics_data(dept, phase, week)
     batch_wise_serial = [{'name': b['batch'].name, 'held': b['held'], 'attended': b['attended'], 'pct': b['pct']} for b in data['batch_wise']]
-    week_range = list(range(data.get('num_weeks', 0)))
+    phase_week_offsets = data.get('phase_week_offsets', {})
+    week_options = [(i, phase_week_offsets.get(phase, 0) + i + 1) for i in range(data.get('num_weeks', 0))]
+    selected_week_global_num = (phase_week_offsets.get(phase, 0) + week + 1) if week is not None and 0 <= week < data.get('num_weeks', 0) else None
     ctx = {
         'department': dept,
         'is_super_admin': is_super_admin(request),
         'selected_week': week_param,
-        'week_range': week_range,
+        'week_options': week_options,
+        'selected_week_global_num': selected_week_global_num,
         **data,
         'weekly_trend_json': json.dumps(data['weekly_trend']),
         'subject_wise_json': json.dumps(data['subject_wise']),
@@ -3302,6 +3340,8 @@ def admin_analytics_at_risk_excel(request):
             week = None
     data = _admin_analytics_data(dept, phase, week)
     at_risk = data['at_risk_students']
+    phase_week_offsets = data.get('phase_week_offsets', {})
+    global_week_num = (phase_week_offsets.get(phase, 0) + week + 1) if week is not None and 0 <= week < data.get('num_weeks', 0) else None
     wb = Workbook()
     ws = wb.active
     ws.title = 'At-Risk Students'
@@ -3324,12 +3364,38 @@ def admin_analytics_at_risk_excel(request):
     wb.save(bio)
     bio.seek(0)
     fname = f'At_Risk_Students_{dept.name}_{phase}'
-    if week is not None:
-        fname += f'_Week{week + 1}'
+    if global_week_num:
+        fname += f'_Week{global_week_num}'
     fname += '.xlsx'
     resp = HttpResponse(bio.getvalue(), content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
     resp['Content-Disposition'] = f'attachment; filename="{fname}"'
     return resp
+
+
+def _get_phase_week_offsets(week_map):
+    """Return {phase: offset} so global week num = offset + week_idx + 1. T1=1,2,3; T2=4,5,6...; sequential across phases."""
+    phases = ['T1', 'T2', 'T3', 'T4']
+    offsets = {}
+    cum = 0
+    for p in phases:
+        offsets[p] = cum
+        cum += len(week_map.get(p, []))
+    return offsets
+
+
+def _build_date_to_week_map(dept):
+    """Return {date: global_week_num} for all lecture dates in term phases. Used for Week header row in Excel."""
+    phases = ['T1', 'T2', 'T3', 'T4']
+    week_map = {p: _compile_phase_weeks_date_objects(dept, p) for p in phases}
+    phase_week_offsets = _get_phase_week_offsets(week_map)
+    date_to_week = {}
+    for phase in phases:
+        offset = phase_week_offsets.get(phase, 0)
+        for i, week_dates in enumerate(week_map.get(phase, [])):
+            gw = offset + i + 1
+            for d in week_dates:
+                date_to_week[d] = gw
+    return date_to_week
 
 
 def _compile_phase_weeks_date_objects(dept, phase):
@@ -3341,7 +3407,8 @@ def _compile_phase_weeks_date_objects(dept, phase):
     end = getattr(tp, f'{phase.lower()}_end', None)
     if not start or not end:
         return []
-    days_set = _effective_day_set_for_dept(dept, datetime.now().date())
+    from core.schedule_utils import get_all_schedule_days
+    days_set = get_all_schedule_days(dept) or _effective_day_set_for_dept(dept, datetime.now().date())
     days_set = {d.lower() for d in days_set if d}
     holidays = get_phase_holidays(dept, phase)
     dates = []
@@ -3384,7 +3451,8 @@ def compile_attendance(request):
         if not start or not end:
             week_map[p] = []
             continue
-        days_set = _effective_day_set_for_dept(dept, datetime.now().date())
+        from core.schedule_utils import get_all_schedule_days
+        days_set = get_all_schedule_days(dept) or _effective_day_set_for_dept(dept, datetime.now().date())
         days_set = {d.lower() for d in days_set if d}
         holidays = get_phase_holidays(dept, p)
         dates = []
@@ -3406,11 +3474,13 @@ def compile_attendance(request):
         if week:
             weeks.append(week)
         week_map[p] = [[d.isoformat() for d in w] for w in weeks]
+    phase_week_offsets = _get_phase_week_offsets(week_map)
     ctx = {
         'department': dept,
         'phases': phases,
         'week_map': week_map,
         'week_map_json': json.dumps(week_map),
+        'phase_week_offsets_json': json.dumps(phase_week_offsets),
     }
     return render(request, 'core/admin/compile_attendance.html', ctx)
 
@@ -3507,7 +3577,8 @@ def admin_notifications(request):
         if not start or not end:
             week_map[p] = []
             continue
-        days_set = _effective_day_set_for_dept(dept, datetime.now().date())
+        from core.schedule_utils import get_all_schedule_days
+        days_set = get_all_schedule_days(dept) or _effective_day_set_for_dept(dept, datetime.now().date())
         days_set = {d.lower() for d in days_set if d}
         holidays = get_phase_holidays(dept, p)
         dates = []
@@ -3530,6 +3601,7 @@ def admin_notifications(request):
             weeks.append(week)
         week_map[p] = weeks
     weeks_list = week_map.get(phase, [])
+    phase_week_offsets = _get_phase_week_offsets(week_map)
     week_idx = 0
     if week_str is not None:
         try:
@@ -3540,6 +3612,7 @@ def admin_notifications(request):
             week_idx = 0
     if weeks_list and week_idx >= len(weeks_list):
         week_idx = len(weeks_list) - 1
+    global_week_num = phase_week_offsets.get(phase, 0) + week_idx + 1 if weeks_list else 0
     mentor_data = []
     if weeks_list:
         mentor_data = _admin_notifications_build_mentor_data(dept, phase, week_idx)
@@ -3557,13 +3630,13 @@ def admin_notifications(request):
                         html = render(request, 'core/admin/email_mentor_attendance_report.html', {
                             'mentor': mentor_fac,
                             'phase': phase,
-                            'week_num': week_idx + 1,
+                            'week_num': global_week_num,
                             'at_risk_list': at_risk_list,
                             'department': dept,
                         }).content.decode('utf-8')
                         try:
                             send_mail(
-                                subject=f'LJIET Attendance: {len(at_risk_list)} mentee(s) below 75% — {phase} Week {week_idx + 1}',
+                                subject=f'LJIET Attendance: {len(at_risk_list)} mentee(s) below 75% — Week {global_week_num}',
                                 message='Please view this email in HTML format.',
                                 from_email=settings.DEFAULT_FROM_EMAIL,
                                 recipient_list=[email],
@@ -3603,13 +3676,13 @@ def admin_notifications(request):
             html = render(request, 'core/admin/email_mentor_attendance_report.html', {
                 'mentor': mentor_fac,
                 'phase': phase,
-                'week_num': week_idx + 1,
+                'week_num': global_week_num,
                 'at_risk_list': at_risk_list,
                 'department': dept,
             }).content.decode('utf-8')
             try:
                 send_mail(
-                    subject=f'LJIET Attendance: {len(at_risk_list)} mentee(s) below 75% — {phase} Week {week_idx + 1}',
+                    subject=f'LJIET Attendance: {len(at_risk_list)} mentee(s) below 75% — Week {global_week_num}',
                     message='Please view this email in HTML format.',
                     from_email=settings.DEFAULT_FROM_EMAIL,
                     recipient_list=[email],
@@ -3626,12 +3699,16 @@ def admin_notifications(request):
         url = reverse('core:admin_notifications') + f'?phase={phase}&week={week_idx}'
         return redirect(url)
     week_range = list(range(len(weeks_list)))
+    week_offset = phase_week_offsets.get(phase, 0)
+    week_options = [(i, week_offset + i + 1) for i in week_range]
     ctx = {
         'department': dept,
         'phases': phases,
         'phase': phase,
         'week_idx': week_idx,
+        'global_week_num': global_week_num,
         'week_range': week_range,
+        'week_options': week_options,
         'mentor_data': mentor_data,
     }
     return render(request, 'core/admin/notifications.html', ctx)
@@ -3708,6 +3785,8 @@ def _student_analytics_build_data(dept, phase, week_idx, batch_id, roll_search=N
         batch_att_map[key] = set(x.strip() for x in (att.absent_roll_numbers or '').split(',') if x.strip())
     slot_subj_cache = _build_slot_subject_cache(batch, cum_dates, batch_scheduled)
     prev_dates_list = [set(phase_dates.get(phases[i], [])) for i in range(phase_order_idx)]
+    phase_offsets = _get_phase_week_offsets(week_map)
+    week_offset = phase_offsets.get(phase, 0)
     result = []
     for s in students:
         str_roll = str(s.roll_no)
@@ -3734,7 +3813,8 @@ def _student_analytics_build_data(dept, phase, week_idx, batch_id, roll_search=N
             cum_held += w_held
             cum_attended += w_attended
             cum_pct = round(cum_attended / cum_held * 100, 1) if cum_held else 0
-            week_wise.append({'label': f'{phase} Week {i + 1}', 'week': i + 1, 'held': w_held, 'attended': w_attended, 'pct': w_pct, 'cum_held': cum_held, 'cum_attended': cum_attended, 'cum_pct': cum_pct})
+            global_week = week_offset + i + 1
+            week_wise.append({'label': f'Week {global_week}', 'week': global_week, 'held': w_held, 'attended': w_attended, 'pct': w_pct, 'cum_held': cum_held, 'cum_attended': cum_attended, 'cum_pct': cum_pct})
         subject_wise = defaultdict(lambda: {'held': 0, 'attended': 0})
         for (d, slot) in batch_scheduled:
             subj_name = slot_subj_cache.get((d, slot), 'N/A')
@@ -3797,7 +3877,9 @@ def student_analytics(request):
     week_str = request.GET.get('week')
     batch_id = request.GET.get('batch_id')
     roll_search = request.GET.get('roll_search', '').strip()
-    weeks_list = _compile_phase_weeks_date_objects(dept, phase)
+    week_map = {p: _compile_phase_weeks_date_objects(dept, p) for p in phases}
+    weeks_list = week_map.get(phase, [])
+    phase_week_offsets = _get_phase_week_offsets(week_map)
     week_idx = 0
     if week_str is not None:
         try:
@@ -3828,6 +3910,9 @@ def student_analytics(request):
                 if not batches_from_all_depts:
                     batches = _batches
     week_range = list(range(len(weeks_list)))
+    week_offset = phase_week_offsets.get(phase, 0)
+    global_week_num = week_offset + week_idx + 1 if weeks_list else 0
+    week_options = [(i, week_offset + i + 1) for i in week_range]
     departments = list(Department.objects.all()) if is_admin and is_super_admin(request) else []
     ctx = {
         'department': dept,
@@ -3836,7 +3921,11 @@ def student_analytics(request):
         'phases': phases,
         'phase': phase,
         'week_idx': week_idx,
+        'global_week_num': global_week_num,
         'week_range': week_range,
+        'week_map': week_map,
+        'phase_week_offsets': phase_week_offsets,
+        'week_options': week_options,
         'batches': batches,
         'batches_from_all_depts': batches_from_all_depts,
         'selected_batch_id': batch_id,
@@ -3864,6 +3953,11 @@ def compile_attendance_excel(request):
     weeks = _compile_phase_weeks_date_objects(dept, phase)
     if week_idx < 0 or week_idx >= len(weeks):
         return redirect('core:compile_attendance')
+    phases_order = ['T1', 'T2', 'T3', 'T4']
+    week_map = {p: _compile_phase_weeks_date_objects(dept, p) for p in phases_order}
+    phase_week_offsets = _get_phase_week_offsets(week_map)
+    offset = phase_week_offsets.get(phase, 0)
+    global_week_num = offset + week_idx + 1
     # Date sets: week 1 only = weeks[0], week 2 cum = weeks[0]+weeks[1], ...
     cumulative_dates = []
     for i in range(week_idx + 1):
@@ -3931,10 +4025,11 @@ def compile_attendance_excel(request):
     ws.cell(1, col).border = thin_border
     col += 1
     for i in range(week_idx + 1):
+        gw = offset + i + 1
         if i == 0:
-            label = 'Week 1'
+            label = f'Week {gw}'
         else:
-            label = f'Week {i + 1} (Cum)'
+            label = f'Week {gw} (Cum)'
         for suffix in ('Held', 'Attended', '%'):
             ws.cell(1, col, f'{label} {suffix}').font = header_font_white
             ws.cell(1, col).fill = header_fill
@@ -3991,7 +4086,7 @@ def compile_attendance_excel(request):
     bio = BytesIO()
     wb.save(bio)
     bio.seek(0)
-    fname = f'Compile_Attendance_{phase}_through_week{week_idx + 1}.xlsx'
+    fname = f'Compile_Attendance_{phase}_through_week{global_week_num}.xlsx'
     resp = HttpResponse(bio.getvalue(), content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
     resp['Content-Disposition'] = f'attachment; filename={fname}'
     return resp
@@ -4015,7 +4110,8 @@ def overall_attendance(request):
         if not start or not end:
             week_map[p] = []
             continue
-        days_set = _effective_day_set_for_dept(dept, datetime.now().date())
+        from core.schedule_utils import get_all_schedule_days
+        days_set = get_all_schedule_days(dept) or _effective_day_set_for_dept(dept, datetime.now().date())
         days_set = {d.lower() for d in days_set if d}
         holidays = get_phase_holidays(dept, p)
         dates = []
@@ -4038,11 +4134,13 @@ def overall_attendance(request):
             weeks.append(week)
         week_map[p] = [[d.isoformat() for d in w] for w in weeks]
     batches = list(Batch.objects.filter(department=dept).order_by('name'))
+    phase_week_offsets = _get_phase_week_offsets(week_map)
     ctx = {
         'department': dept,
         'phases': phases,
         'week_map': week_map,
         'week_map_json': json.dumps(week_map),
+        'phase_week_offsets_json': json.dumps(phase_week_offsets),
         'batches': batches,
     }
     return render(request, 'core/admin/overall_attendance.html', ctx)
@@ -4067,6 +4165,9 @@ def overall_attendance_excel(request):
     weeks = _compile_phase_weeks_date_objects(dept, phase)
     if not weeks or week_idx < 0 or week_idx >= len(weeks):
         return redirect('core:overall_attendance')
+    week_map = {p: _compile_phase_weeks_date_objects(dept, p) for p in ['T1', 'T2', 'T3', 'T4']}
+    phase_week_offsets = _get_phase_week_offsets(week_map)
+    global_week_num = phase_week_offsets.get(phase, 0) + week_idx + 1
 
     all_batches = batch_id == 'all'
     if all_batches:
@@ -4094,7 +4195,7 @@ def overall_attendance_excel(request):
                 subjects_ordered = [sw['name'] for sw in rec['subject_wise']]
             week_only = {'held': 0, 'attended': 0}
             week_wise = rec.get('week_wise', [])
-            sel = next((w for w in week_wise if w.get('week') == week_idx + 1), None)
+            sel = next((w for w in week_wise if w.get('week') == global_week_num), None)
             if sel:
                 week_only = {'held': sel['held'], 'attended': sel['attended']}
             rows.append({
@@ -4115,7 +4216,7 @@ def overall_attendance_excel(request):
     else:
         names = [b.name for b in batches]
         batch_label = f'DIV-{names[0]} TO {names[-1]}' if names else 'DIV-ALL'
-    fname_base = f'({batch_label})_WEEK-{week_idx + 1}_{dept_label}_SEM-IV_ COMPILED_ATTENDANCE SHEET_{year}.xlsx'
+    fname_base = f'({batch_label})_WEEK-{global_week_num}_{dept_label}_SEM-IV_ COMPILED_ATTENDANCE SHEET_{year}.xlsx'
 
     thin_border = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
     header_fill = PatternFill(start_color='4F81BD', end_color='4F81BD', fill_type='solid')
@@ -4127,9 +4228,9 @@ def overall_attendance_excel(request):
     def _write_subjectwise_sheet(ws, batch, subjects_ordered, rows, combined=False):
         """Write subject-wise compiled format: Roll no, Div, Branch, Enrollment No, Name, [Compiled Attendance of WEEK-N: Total Attended, Total Lecture, Overall % - WEEK ONLY], [per subject: cumulative], OVERALL (cumulative), MENTOR NAME.
         The Compiled Attendance of WEEK-N block shows only that week's data (not cumulative). Subject-wise and OVERALL remain cumulative."""
-        week_label = f'WEEK-{week_idx + 1}'
+        week_label = f'WEEK-{global_week_num}'
         title = f'SY ({dept.name}) Sem-IV {year} Compiled Attendance'
-        subwise_title = f'Subjectwise Compiled Attendance upto Week-{week_idx + 1}'
+        subwise_title = f'Subjectwise Compiled Attendance upto Week-{global_week_num}'
         num_attendance_cols = 3 + 3 * len(subjects_ordered) + 3 + 1
         last_col = 4 + num_attendance_cols
         ws.merge_cells(start_row=1, start_column=1, end_row=2, end_column=4)
@@ -4569,6 +4670,396 @@ def faculty_report_excel(request):
     return resp
 
 
+@login_required
+def faculty_batchwise_attendance_excel(request):
+    """Export batchwise attendance for faculty: all dates up to today, lecture-wise, faculty's lectures only."""
+    if not user_can_faculty(request):
+        return redirect('core:faculty_dashboard')
+    faculty = get_faculty_user(request)
+    if not faculty:
+        return redirect('accounts:logout')
+    batch_id = request.GET.get('batch')
+    if not batch_id:
+        messages.error(request, 'Select a batch.')
+        return redirect('core:faculty_dashboard')
+    batch = Batch.objects.filter(pk=batch_id, department=faculty.department).first()
+    if not batch:
+        messages.error(request, 'Invalid batch.')
+        return redirect('core:faculty_dashboard')
+    # Verify faculty teaches this batch
+    if not ScheduleSlot.objects.filter(faculty=faculty, batch=batch).exists():
+        messages.error(request, 'You do not teach this batch.')
+        return redirect('core:faculty_dashboard')
+    from datetime import date as date_type
+    today = date_type.today()
+    atts = FacultyAttendance.objects.filter(
+        faculty=faculty, batch=batch, date__lte=today
+    ).order_by('date', 'lecture_slot')
+    if not atts.exists():
+        messages.error(request, f'No attendance marked yet for batch {batch.name}.')
+        return redirect('core:faculty_dashboard')
+    # Build date -> [(lecture_slot, subject_name), ...] ordered by slot
+    date_slots = defaultdict(list)
+    seen = set()
+    for a in atts:
+        key = (a.date, a.lecture_slot)
+        if key in seen:
+            continue
+        seen.add(key)
+        fac, subj = get_faculty_subject_for_slot(a.date, batch, a.lecture_slot)
+        subj_name = subj.name if subj else 'N/A'
+        date_slots[a.date].append((a.lecture_slot, subj_name))
+    for d in date_slots:
+        date_slots[d].sort(key=lambda x: x[0] or '')
+    dates_sorted = sorted(date_slots.keys())
+    att_map = {}
+    for a in atts:
+        key = (a.date, a.lecture_slot)
+        att_map[key] = set(x.strip() for x in (a.absent_roll_numbers or '').split(',') if x.strip())
+    students = list(
+        Student.objects.filter(department=faculty.department, batch=batch)
+        .select_related('mentor')
+        .annotate(roll_no_int=Cast('roll_no', IntegerField()))
+        .order_by('roll_no_int', 'roll_no')
+    )
+    thin_border = Border(
+        left=Side(style='thin'), right=Side(style='thin'),
+        top=Side(style='thin'), bottom=Side(style='thin')
+    )
+    red_font = Font(color='FF0000', bold=True)
+    absent_fill = PatternFill(start_color='FFCCCB', end_color='FFCCCB', fill_type='solid')  # light red
+    date_fill = PatternFill(start_color='4F81BD', end_color='4F81BD', fill_type='solid')
+    date_font = Font(bold=True, color='FFFFFF')
+    date_align = Alignment(horizontal='center', vertical='center')
+    header_font = Font(bold=True)
+    lect_fill = PatternFill(start_color='4F81BD', end_color='4F81BD', fill_type='solid')
+    lect_font = Font(bold=True, color='FFFFFF')
+    lect_align = Alignment(horizontal='center', vertical='center', wrap_text=True)
+    week_fill = PatternFill(start_color='27AE60', end_color='27AE60', fill_type='solid')  # green for week row
+    date_to_week = _build_date_to_week_map(faculty.department)
+    wb = Workbook()
+    ws = wb.active
+    ws.title = (f'{batch.name} Attendance')[:31]
+    base_row = 2
+    ws.cell(row=base_row, column=1, value='Roll No').font = header_font
+    ws.cell(row=base_row, column=2, value='Student Name').font = header_font
+    ws.cell(row=base_row, column=3, value='Enrollment').font = header_font
+    ws.cell(row=base_row, column=4, value='Mentor Name').font = header_font
+    for c in range(1, 5):
+        ws.cell(base_row, c).border = thin_border
+    col = 5
+    col_ranges = []
+    for d in dates_sorted:
+        slots = date_slots[d]
+        n = len(slots)
+        if n == 0:
+            continue
+        start_col = col
+        end_col = col + n - 1
+        col_ranges.append((d, slots, start_col, end_col))
+        if n > 1:
+            ws.merge_cells(start_row=base_row, start_column=start_col, end_row=base_row, end_column=end_col)
+        cell = ws.cell(row=base_row, column=start_col, value=d.strftime('%d-%b'))
+        cell.border = thin_border
+        cell.fill = date_fill
+        cell.font = date_font
+        cell.alignment = date_align
+        for i in range(1, n):
+            ws.cell(base_row, start_col + i).border = thin_border
+        col = end_col + 1
+    for c in range(1, 5):
+        ws.cell(1, c, value='').border = thin_border
+    week_spans = []
+    curr_week, curr_start, curr_end = None, None, None
+    for d, slots, start_col, end_col in col_ranges:
+        w = date_to_week.get(d) or 0
+        if curr_week == w and curr_end is not None:
+            curr_end = end_col
+        else:
+            if curr_week is not None:
+                week_spans.append((curr_week, curr_start, curr_end))
+            curr_week, curr_start, curr_end = w, start_col, end_col
+    if curr_week is not None:
+        week_spans.append((curr_week, curr_start, curr_end))
+    for w, sc, ec in week_spans:
+        if sc < ec:
+            ws.merge_cells(start_row=1, start_column=sc, end_row=1, end_column=ec)
+        cell = ws.cell(row=1, column=sc, value=f'Week {w}' if w else '')
+        cell.border, cell.fill, cell.font, cell.alignment = thin_border, week_fill, date_font, date_align
+        for c in range(sc, ec + 1):
+            ws.cell(1, c).border = thin_border
+    for c in range(1, 5):
+        ws.cell(row=3, column=c, value='').border = thin_border
+    for d, slots, start_col, end_col in col_ranges:
+        for i, (slot, subj_name) in enumerate(slots):
+            c = start_col + i
+            cell = ws.cell(row=3, column=c, value=f'Lect {i + 1}\n{subj_name}')
+            cell.alignment = lect_align
+            cell.fill = lect_fill
+            cell.font = lect_font
+            cell.border = thin_border
+    data_start = 4
+    for idx, s in enumerate(students, start=data_start):
+        ws.cell(row=idx, column=1, value=s.roll_no).border = thin_border
+        ws.cell(row=idx, column=2, value=s.name).border = thin_border
+        ws.cell(row=idx, column=3, value=s.enrollment_no or '').border = thin_border
+        ws.cell(row=idx, column=4, value=(s.mentor.short_name if s.mentor else '') or '').border = thin_border
+        str_roll = str(s.roll_no)
+        for d, slots, start_col, end_col in col_ranges:
+            for i, (slot, _) in enumerate(slots):
+                c = start_col + i
+                is_absent = str_roll in att_map.get((d, slot), set())
+                cell = ws.cell(row=idx, column=c, value='' if is_absent else s.roll_no)
+                cell.border = thin_border
+                if is_absent:
+                    cell.font = red_font
+                    cell.fill = absent_fill
+    total_row = data_start + len(students)
+    total_font = Font(bold=True)
+    total_fill = PatternFill(start_color='E8F4EA', end_color='E8F4EA', fill_type='solid')  # light green
+    ws.cell(row=total_row, column=1, value='Total Present').font = total_font
+    for c in range(2, 5):
+        ws.cell(total_row, c, value='').font = total_font
+    for c in range(1, 5):
+        ws.cell(total_row, c).border = thin_border
+        ws.cell(total_row, c).fill = total_fill
+    for d, slots, start_col, end_col in col_ranges:
+        for i, (slot, _) in enumerate(slots):
+            c = start_col + i
+            present_count = sum(
+                1 for s in students
+                if str(s.roll_no) not in att_map.get((d, slot), set())
+            )
+            cell = ws.cell(row=total_row, column=c, value=present_count)
+            cell.border = thin_border
+            cell.fill = total_fill
+            cell.font = total_font
+    ws.column_dimensions['A'].width = 10
+    ws.column_dimensions['B'].width = 22
+    ws.column_dimensions['C'].width = 16
+    ws.column_dimensions['D'].width = 14
+    for d, slots, start_col, end_col in col_ranges:
+        for c in range(start_col, end_col + 1):
+            ws.column_dimensions[get_column_letter(c)].width = 10
+    ws.freeze_panes = 'E4'
+    bio = BytesIO()
+    wb.save(bio)
+    bio.seek(0)
+    fname = f'Batchwise_Attendance_{batch.name}_{today:%Y-%m-%d}.xlsx'
+    resp = HttpResponse(bio.getvalue(), content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+    resp['Content-Disposition'] = f'attachment; filename={fname}'
+    return resp
+
+
+def _write_batchwise_subject_sheet(ws, batch, subject_name, date_slots_list, students, att_map, styles, date_to_week=None):
+    """Write one subject sheet: Roll No, Student Name, Enrollment, Mentor Name, date columns with Lect 1/2..., P/A, Total Present.
+    If date_to_week: {date: global_week_num}, adds a Week header row above dates (Week 1, Week 2, ... merged across that week's columns)."""
+    thin_border, red_font, absent_fill, date_fill, date_font, date_align = styles['thin_border'], styles['red_font'], styles['absent_fill'], styles['date_fill'], styles['date_font'], styles['date_align']
+    header_font, lect_fill, lect_font, lect_align = styles['header_font'], styles['lect_fill'], styles['lect_font'], styles['lect_align']
+    total_font, total_fill = styles['total_font'], styles['total_fill']
+    week_fill = PatternFill(start_color='27AE60', end_color='27AE60', fill_type='solid')  # green for week row
+    row_offset = 1 if date_to_week else 0
+    base_row = 1 + row_offset
+    ws.cell(row=base_row, column=1, value='Roll No').font = header_font
+    ws.cell(row=base_row, column=2, value='Student Name').font = header_font
+    ws.cell(row=base_row, column=3, value='Enrollment').font = header_font
+    ws.cell(row=base_row, column=4, value='Mentor Name').font = header_font
+    for c in range(1, 5):
+        ws.cell(base_row, c).border = thin_border
+    col = 5
+    col_ranges = []
+    for d, slots in date_slots_list:
+        n = len(slots)
+        if n == 0:
+            continue
+        start_col, end_col = col, col + n - 1
+        col_ranges.append((d, slots, start_col, end_col))
+        if n > 1:
+            ws.merge_cells(start_row=base_row, start_column=start_col, end_row=base_row, end_column=end_col)
+        cell = ws.cell(row=base_row, column=start_col, value=d.strftime('%d-%b'))
+        cell.border, cell.fill, cell.font, cell.alignment = thin_border, date_fill, date_font, date_align
+        for i in range(1, n):
+            ws.cell(base_row, start_col + i).border = thin_border
+        col = end_col + 1
+    if date_to_week:
+        for c in range(1, 5):
+            ws.cell(1, c, value='').border = thin_border
+        week_spans = []
+        curr_week, curr_start, curr_end = None, None, None
+        for d, slots, start_col, end_col in col_ranges:
+            w = date_to_week.get(d)
+            if w is None:
+                w = 0
+            if curr_week == w and curr_end is not None:
+                curr_end = end_col
+            else:
+                if curr_week is not None:
+                    week_spans.append((curr_week, curr_start, curr_end))
+                curr_week, curr_start, curr_end = w, start_col, end_col
+        if curr_week is not None:
+            week_spans.append((curr_week, curr_start, curr_end))
+        for w, sc, ec in week_spans:
+            if sc < ec:
+                ws.merge_cells(start_row=1, start_column=sc, end_row=1, end_column=ec)
+            cell = ws.cell(row=1, column=sc, value=f'Week {w}' if w else '')
+            cell.border, cell.fill, cell.font, cell.alignment = thin_border, week_fill, date_font, date_align
+            for c in range(sc, ec + 1):
+                ws.cell(1, c).border = thin_border
+    for c in range(1, 5):
+        ws.cell(row=base_row + 1, column=c, value='').border = thin_border
+    for d, slots, start_col, end_col in col_ranges:
+        for i, (slot, _) in enumerate(slots):
+            c = start_col + i
+            cell = ws.cell(row=base_row + 1, column=c, value=f'Lect {i + 1}\n{subject_name}')
+            cell.alignment, cell.fill, cell.font, cell.border = lect_align, lect_fill, lect_font, thin_border
+    data_start = base_row + 2
+    for idx, s in enumerate(students, start=data_start):
+        ws.cell(row=idx, column=1, value=s.roll_no).border = thin_border
+        ws.cell(row=idx, column=2, value=s.name).border = thin_border
+        ws.cell(row=idx, column=3, value=s.enrollment_no or '').border = thin_border
+        ws.cell(row=idx, column=4, value=(s.mentor.short_name if s.mentor else '') or '').border = thin_border
+        str_roll = str(s.roll_no)
+        for d, slots, start_col, end_col in col_ranges:
+            for i, (slot, _) in enumerate(slots):
+                c = start_col + i
+                is_absent = str_roll in att_map.get((d, slot), set())
+                cell = ws.cell(row=idx, column=c, value='' if is_absent else s.roll_no)
+                cell.border = thin_border
+                if is_absent:
+                    cell.font, cell.fill = red_font, absent_fill
+    total_row = data_start + len(students)
+    ws.cell(row=total_row, column=1, value='Total Present').font = total_font
+    for c in range(2, 5):
+        ws.cell(total_row, c, value='').font = total_font
+    for c in range(1, 5):
+        ws.cell(total_row, c).border, ws.cell(total_row, c).fill = thin_border, total_fill
+    for d, slots, start_col, end_col in col_ranges:
+        for i, (slot, _) in enumerate(slots):
+            c = start_col + i
+            present_count = sum(1 for s in students if str(s.roll_no) not in att_map.get((d, slot), set()))
+            cell = ws.cell(row=total_row, column=c, value=present_count)
+            cell.border, cell.fill, cell.font = thin_border, total_fill, total_font
+    ws.column_dimensions['A'].width = 10
+    ws.column_dimensions['B'].width = 22
+    ws.column_dimensions['C'].width = 16
+    ws.column_dimensions['D'].width = 14
+    for d, slots, start_col, end_col in col_ranges:
+        for c in range(start_col, end_col + 1):
+            ws.column_dimensions[get_column_letter(c)].width = 10
+    ws.freeze_panes = f'E{data_start + 1}'
+
+
+@login_required
+def admin_batchwise_attendance_manager(request):
+    """Admin: Batchwise Attendance - select batch, download Excel with one sheet per subject."""
+    if not user_can_admin(request):
+        return redirect('core:admin_dashboard')
+    dept = get_admin_department(request)
+    if not dept:
+        messages.error(request, 'Select a department first.')
+        return redirect('core:admin_dashboard')
+    batches = list(Batch.objects.filter(department=dept).order_by('name'))
+    ctx = {'batches': batches}
+    return render(request, 'core/admin/batchwise_attendance.html', ctx)
+
+
+@login_required
+def admin_batchwise_attendance_excel(request):
+    """Admin: Download batchwise Excel - one sheet per subject, same format as faculty batchwise."""
+    if not user_can_admin(request):
+        return redirect('core:admin_dashboard')
+    dept = get_admin_department(request)
+    if not dept:
+        messages.error(request, 'Select a department first.')
+        return redirect('core:admin_dashboard')
+    batch_id = request.GET.get('batch')
+    if not batch_id:
+        messages.error(request, 'Select a batch.')
+        return redirect('core:admin_batchwise_attendance_manager')
+    batch = Batch.objects.filter(pk=batch_id, department=dept).first()
+    if not batch:
+        messages.error(request, 'Invalid batch.')
+        return redirect('core:admin_batchwise_attendance_manager')
+    from datetime import date as date_type
+    today = date_type.today()
+    atts = FacultyAttendance.objects.filter(batch=batch, date__lte=today).order_by('date', 'lecture_slot')
+    if not atts.exists():
+        messages.error(request, f'No attendance marked yet for batch {batch.name}.')
+        return redirect('core:admin_batchwise_attendance_manager')
+    subject_to_dateslots = defaultdict(list)
+    seen = set()
+    for a in atts:
+        key = (a.date, a.lecture_slot)
+        if key in seen:
+            continue
+        seen.add(key)
+        fac, subj = get_faculty_subject_for_slot(a.date, batch, a.lecture_slot)
+        subj_name = subj.name if subj else 'Other'
+        subject_to_dateslots[subj_name].append((a.date, a.lecture_slot))
+    for subj_name in subject_to_dateslots:
+        subject_to_dateslots[subj_name].sort(key=lambda x: (x[0], x[1] or ''))
+    att_map = {}
+    for a in atts:
+        key = (a.date, a.lecture_slot)
+        att_map[key] = set(x.strip() for x in (a.absent_roll_numbers or '').split(',') if x.strip())
+    students = list(
+        Student.objects.filter(department=dept, batch=batch)
+        .select_related('mentor')
+        .annotate(roll_no_int=Cast('roll_no', IntegerField()))
+        .order_by('roll_no_int', 'roll_no')
+    )
+    thin_border = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
+    styles = {
+        'thin_border': thin_border,
+        'red_font': Font(color='FF0000', bold=True),
+        'absent_fill': PatternFill(start_color='FFCCCB', end_color='FFCCCB', fill_type='solid'),
+        'date_fill': PatternFill(start_color='4F81BD', end_color='4F81BD', fill_type='solid'),
+        'date_font': Font(bold=True, color='FFFFFF'),
+        'date_align': Alignment(horizontal='center', vertical='center'),
+        'header_font': Font(bold=True),
+        'lect_fill': PatternFill(start_color='4F81BD', end_color='4F81BD', fill_type='solid'),
+        'lect_font': Font(bold=True, color='FFFFFF'),
+        'lect_align': Alignment(horizontal='center', vertical='center', wrap_text=True),
+        'total_font': Font(bold=True),
+        'total_fill': PatternFill(start_color='E8F4EA', end_color='E8F4EA', fill_type='solid'),
+    }
+    def _safe_sheet_name(name):
+        s = str(name)[:31]
+        for c in '\\/:*?[]':
+            s = s.replace(c, '_')
+        return s or 'Sheet'
+    date_to_week = _build_date_to_week_map(dept)
+    wb = Workbook()
+    first = True
+    for subj_name in sorted(subject_to_dateslots.keys()):
+        pairs = subject_to_dateslots[subj_name]
+        dates_sorted = sorted(set(p[0] for p in pairs))
+        date_slots_list = []
+        for d in dates_sorted:
+            slots = [(slot, subj_name) for pd, slot in pairs if pd == d]
+            slots.sort(key=lambda x: x[0] or '')
+            date_slots_list.append((d, slots))
+        if not date_slots_list:
+            continue
+        safe_name = _safe_sheet_name(subj_name)
+        ws = wb.active if first else wb.create_sheet(title=safe_name)
+        if first:
+            ws.title = safe_name
+            first = False
+        _write_batchwise_subject_sheet(ws, batch, subj_name, date_slots_list, students, att_map, styles, date_to_week=date_to_week)
+    if first:
+        ws = wb.active
+        ws.title = 'No data'
+        ws.cell(1, 1, value='No attendance data for this batch.')
+    bio = BytesIO()
+    wb.save(bio)
+    bio.seek(0)
+    fname = f'Batchwise_Attendance_{batch.name}_{today:%Y-%m-%d}.xlsx'
+    resp = HttpResponse(bio.getvalue(), content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+    resp['Content-Disposition'] = f'attachment; filename={fname}'
+    return resp
+
+
 # ---------- Admin: Manual Attendance (mark on behalf of faculty) ----------
 
 def _dates_for_department(dept):
@@ -4880,13 +5371,14 @@ def faculty_mentorship(request):
         .order_by('batch__name', 'roll_no_int', 'roll_no')
     )
     if not mentorship_students:
-        ctx = {'faculty': faculty, 'mentorship_students': [], 'student_stats': [], 'at_risk': [], 'phase': 'T1', 'phases': ['T1', 'T2', 'T3', 'T4'], 'week_range': [], 'selected_week': 'all'}
+        ctx = {'faculty': faculty, 'mentorship_students': [], 'student_stats': [], 'at_risk': [], 'phase': 'T1', 'phases': ['T1', 'T2', 'T3', 'T4'], 'week_options': [], 'selected_week': 'all', 'selected_week_global_num': None}
         return render(request, 'core/faculty/mentorship.html', ctx)
     tp = TermPhase.objects.filter(department=dept).first()
     phase = request.GET.get('phase', 'T1')
     week_param = request.GET.get('week', 'all')
     phases = ['T1', 'T2', 'T3', 'T4']
     week_map, _, phase_dates = _student_phase_weeks_and_dates(dept, mentorship_students[0].batch)
+    phase_week_offsets = _get_phase_week_offsets(week_map)
     weeks = week_map.get(phase, [])
     week_idx = None
     if week_param and week_param != 'all':
@@ -4946,6 +5438,7 @@ def faculty_mentorship(request):
             cum_pct = round(cum_attended / cum_held * 100, 1) if cum_held else 0
             week_wise.append({'label': f'{phases[prev_idx]} Overall', 'held': prev_held, 'attended': prev_attended, 'pct': prev_pct, 'cum_held': cum_held, 'cum_attended': cum_attended, 'cum_pct': cum_pct})
         weeks_to_show = range(len(weeks)) if week_idx is None else range(min(week_idx + 1, len(weeks)))
+        offset = phase_week_offsets.get(phase, 0)
         for i in weeks_to_show:
             week_set = set(weeks[i])
             w_held = sum(1 for (d, slot) in batch_scheduled if d in week_set)
@@ -4954,7 +5447,8 @@ def faculty_mentorship(request):
             cum_held += w_held
             cum_attended += w_attended
             cum_pct = round(cum_attended / cum_held * 100, 1) if cum_held else 0
-            week_wise.append({'label': f'{phase} Week {i + 1}', 'week': i + 1, 'held': w_held, 'attended': w_attended, 'pct': w_pct, 'cum_held': cum_held, 'cum_attended': cum_attended, 'cum_pct': cum_pct})
+            gw = offset + i + 1
+            week_wise.append({'label': f'Week {gw}', 'week': gw, 'held': w_held, 'attended': w_attended, 'pct': w_pct, 'cum_held': cum_held, 'cum_attended': cum_attended, 'cum_pct': cum_pct})
         subject_wise = defaultdict(lambda: {'held': 0, 'attended': 0})
         for (d, slot) in batch_scheduled:
             subj_name = slot_subj.get((d, slot), 'N/A')
@@ -4968,7 +5462,8 @@ def faculty_mentorship(request):
         })
         if held and pct < 75:
             at_risk.append({'student': s, 'held': held, 'attended': attended, 'pct': pct, 'week_wise': week_wise, 'subject_wise': subj_list})
-    week_range = list(range(len(weeks)))
+    week_options = [(i, phase_week_offsets.get(phase, 0) + i + 1) for i in range(len(weeks))]
+    selected_week_global_num = (phase_week_offsets.get(phase, 0) + week_idx + 1) if week_idx is not None and weeks else None
     ctx = {
         'faculty': faculty,
         'mentorship_students': mentorship_students,
@@ -4976,8 +5471,9 @@ def faculty_mentorship(request):
         'at_risk': sorted(at_risk, key=lambda x: x['pct']),
         'phase': phase,
         'phases': phases,
-        'week_range': week_range,
+        'week_options': week_options,
         'selected_week': week_param,
+        'selected_week_global_num': selected_week_global_num,
     }
     return render(request, 'core/faculty/mentorship.html', ctx)
 
@@ -5007,12 +5503,16 @@ def _student_lecture_records(student, batch, dept, start_date, end_date):
 
 
 def _student_phase_weeks_and_dates(dept, batch):
-    """Return (week_map with date objects, available_dates list, phase_dates dict phase -> list of dates). Excludes holidays."""
+    """Return (week_map with date objects, available_dates list, phase_dates dict phase -> list of dates). Excludes holidays.
+    Uses get_all_schedule_days so phase dates include all weekdays that have lectures in ANY timetable version."""
     tp = TermPhase.objects.filter(department=dept).first()
     phases = ['T1', 'T2', 'T3', 'T4']
-    days_set = _effective_day_set_for_dept(dept, datetime.now().date())
+    from core.schedule_utils import get_all_schedule_days
+    days_set = get_all_schedule_days(dept)
     if not days_set and batch:
         days_set = _effective_day_set_for_batch(batch, datetime.now().date())
+    if not days_set:
+        days_set = _effective_day_set_for_dept(dept, datetime.now().date())
     if not days_set:
         days_set = {'monday', 'tuesday', 'wednesday', 'thursday', 'friday'}
     days_set = {d.lower() for d in days_set if d}
@@ -5075,6 +5575,7 @@ def student_attendance_analytics(request):
     tp = TermPhase.objects.filter(department=dept).first()
     today = datetime.now().date()
     week_map, available_dates, phase_dates = _student_phase_weeks_and_dates(dept, batch)
+    phase_week_offsets = _get_phase_week_offsets(week_map)
     str_roll = str(student.roll_no)
     # Build batch_scheduled and batch_att_map for all phase dates
     phase_dates_all = set()
@@ -5157,7 +5658,7 @@ def student_attendance_analytics(request):
             cumulative_attended += week_attended
             cum_pct = round(cumulative_attended / cumulative_held * 100, 1) if cumulative_held else 0
             weeks_summary.append({
-                'week_num': i + 1,
+                'week_num': phase_week_offsets.get(phase, 0) + i + 1,
                 'dates': week_dates,
                 'held': week_held,
                 'attended': week_attended,
@@ -5217,6 +5718,7 @@ def student_attendance_analytics(request):
         overall_pct = round(total_attended / total_held * 100, 1) if total_held else 0
 
     phase_weeks = week_map.get(phase, [])
+    week_options = [(i, phase_week_offsets.get(phase, 0) + i + 1) for i in range(len(phase_weeks))]
 
     ctx = {
         'student': student,
@@ -5227,6 +5729,7 @@ def student_attendance_analytics(request):
         'selected_week_idx': selected_week_idx,
         'week_map': week_map,
         'phase_weeks': phase_weeks,
+        'week_options': week_options,
         'available_dates': available_dates,
         'day_slots': day_slots,
         'day_held': day_held,

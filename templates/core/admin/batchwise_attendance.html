@@ -1,0 +1,33 @@
+{% extends 'core/admin/base_admin.html' %}
+{% load static %}
+{% block title %}Batchwise Attendance - LJIET_Attendance{% endblock %}
+{% block content %}
+<div class="d-flex flex-wrap justify-content-between align-items-center mb-4 gap-3">
+    <div>
+        <h1 class="page-title mb-1">Batchwise Attendance</h1>
+        <p class="page-subtitle mb-0">Select a batch and download Excel with one sheet per subject. Same format as faculty: Roll No, Student Name, Enrollment, Mentor Name, lecture-wise P/A up to today.</p>
+    </div>
+    <a href="{% url 'core:admin_dashboard' %}" class="btn btn-outline-app"><i class="fas fa-arrow-left me-1"></i> Dashboard</a>
+</div>
+<div class="card card-app mb-4" style="max-width: 480px;">
+    <div class="card-body p-4">
+        <form method="get" action="{% url 'core:admin_batchwise_attendance_excel' %}" id="batchwiseForm">
+            <div class="mb-4">
+                <label class="form-label fw-semibold text-secondary">Select batch</label>
+                <select name="batch" required class="form-select form-select-app" id="batchSelect">
+                    <option value="">Choose batch...</option>
+                    {% for b in batches %}
+                    <option value="{{ b.id }}">{{ b.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <button type="submit" class="btn btn-primary-app w-100">
+                <i class="fas fa-download me-1"></i> Download Excel
+            </button>
+        </form>
+    </div>
+</div>
+<p class="text-secondary small" style="max-width: 480px;">
+    Each subject (TOC, DM, FSD-2, etc.) gets its own tab. Attendance shown up to today's date. Red 'A' for absent, Total Present row at bottom.
+</p>
+{% endblock %}

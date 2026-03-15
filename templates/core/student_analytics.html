@@ -208,8 +208,8 @@
             <div>
                 <label class="form-label small fw-semibold text-secondary mb-1">Week (up to)</label>
                 <select name="week" class="form-select form-select-app" style="min-width: 120px;" onchange="this.form.submit()">
-                    {% for i in week_range %}
-                    <option value="{{ i }}" {% if week_idx == i %}selected{% endif %}>Week {{ i|add:1 }}</option>
+                    {% for idx, num in week_options %}
+                    <option value="{{ idx }}" {% if week_idx == idx %}selected{% endif %}>Week {{ num }}</option>
                     {% empty %}
                     <option value="0">— Set term phases first —</option>
                     {% endfor %}
@@ -236,7 +236,7 @@
 
 {% if student_data %}
 <div class="card sa-filter-card">
-    <div class="card-header"><i class="fas fa-users me-2"></i>Students — {{ phase }}{% if phase != 'T1' %} (T1–{{ phase }} cumulative){% endif %} up to Week {{ week_idx|add:1 }}{% if roll_search %} (filtered){% endif %}</div>
+    <div class="card-header"><i class="fas fa-users me-2"></i>Students — {{ phase }}{% if phase != 'T1' %} (T1–{{ phase }} cumulative){% endif %} up to Week {{ global_week_num }}{% if roll_search %} (filtered){% endif %}</div>
     <div class="card-body p-0">
         <div class="table-responsive">
             <table class="table sa-table table-hover mb-0">

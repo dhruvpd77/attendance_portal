@@ -39,3 +39,14 @@ def get_effective_day_set(dept, target_date):
     """Return set of weekday names that have schedule effective on this date."""
     slots = get_effective_slots_for_date(dept, target_date)
     return {s.day for s in slots if s.day}
+
+
+def get_all_schedule_days(dept):
+    """Return set of weekday names that have schedule in ANY version.
+    Use when building phase dates so past dates (old timetable) aren't wrongly excluded
+    when a new timetable removes certain weekdays."""
+    return set(
+        ScheduleSlot.objects.filter(department=dept)
+        .values_list('day', flat=True)
+        .distinct()
+    ) - {None, ''}

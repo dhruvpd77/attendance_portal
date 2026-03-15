@@ -55,6 +55,7 @@ def sidebar_links(request):
             _make_link(request, 'Lecture Adjustment', 'core:lecture_adjustment', 'fa-exchange-alt', 'lecture_adjustment'),
             _make_link(request, 'Compile Attendance', 'core:compile_attendance', 'fa-file-alt', 'compile_attendance'),
             _make_link(request, 'Overall Attendance', 'core:overall_attendance', 'fa-file-excel', 'overall_attendance'),
+            _make_link(request, 'Batchwise Attendance', 'core:admin_batchwise_attendance_manager', 'fa-file-excel', 'admin_batchwise_attendance_manager'),
             _make_link(request, 'Notifications', 'core:admin_notifications', 'fa-bell', 'admin_notifications'),
             _make_link(request, 'Student Analytics', 'core:admin_student_analytics', 'fa-chart-bar', 'admin_student_analytics'),
         ]

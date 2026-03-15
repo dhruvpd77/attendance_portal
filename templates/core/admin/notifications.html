@@ -127,8 +127,8 @@
                 <div>
                     <label class="form-label small fw-semibold text-secondary mb-1">Week (up to)</label>
                     <select name="week" class="form-select form-select-app" style="min-width: 120px;" onchange="this.form.submit()">
-                        {% for i in week_range %}
-                        <option value="{{ i }}" {% if week_idx == i %}selected{% endif %}>Week {{ i|add:1 }}</option>
+                        {% for idx, num in week_options %}
+                        <option value="{{ idx }}" {% if week_idx == idx %}selected{% endif %}>Week {{ num }}</option>
                         {% empty %}
                         <option value="0">— Set term phases first —</option>
                         {% endfor %}
@@ -218,7 +218,7 @@
             <i class="fas fa-check-circle fa-4x text-success" style="opacity: 0.9;"></i>
         </div>
         <h5 class="text-success fw-bold mb-2">No students below 75%</h5>
-        <p class="text-secondary mb-0">All students with mentors have attendance ≥ 75% for <strong>{{ phase }}</strong> up to <strong>Week {{ week_idx|add:1 }}</strong>.</p>
+        <p class="text-secondary mb-0">All students with mentors have attendance ≥ 75% for <strong>{{ phase }}</strong> up to <strong>Week {{ global_week_num }}</strong>.</p>
         <p class="text-muted small mt-3 mb-0">Ensure students have mentors assigned (via CSV upload or <code>seed_mentors</code>) and term phases are set.</p>
     </div>
 </div>

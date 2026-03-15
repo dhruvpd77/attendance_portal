@@ -50,6 +50,53 @@
     </div>
 </div>
 
+<div class="card batchwise-attendance-card mb-4 overflow-hidden">
+    <div class="batchwise-attendance-inner">
+        <div class="batchwise-attendance-icon">
+            <i class="fas fa-file-excel"></i>
+        </div>
+        <div class="batchwise-attendance-content flex-grow-1">
+            <h3 class="batchwise-attendance-title">Batchwise Attendance</h3>
+            <p class="batchwise-attendance-desc mb-0">{% if faculty_batches %}Download attendance Excel (your lectures only) up to today. Includes Roll No, Name, Enrollment, Mentor, and lecture-wise P/A.{% else %}You have no batches in your schedule.{% endif %}</p>
+            {% if faculty_batches %}
+            <div class="batchwise-attendance-controls mt-4">
+                <div class="batchwise-select-wrap">
+                    <label class="batchwise-label">Select batch</label>
+                    <select id="batchwise-batch" class="form-select batchwise-select">
+                        <option value="">Choose batch...</option>
+                        {% for b in faculty_batches %}
+                        <option value="{{ b.id }}">{{ b.name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <a id="batchwise-download" href="#" class="btn batchwise-download-btn" style="pointer-events: none; opacity: 0.6;">
+                    <i class="fas fa-download me-2"></i> Download Excel
+                </a>
+            </div>
+            {% else %}
+            <span class="badge bg-secondary mt-3">No batches assigned</span>
+            {% endif %}
+        </div>
+    </div>
+</div>
+<style>
+.batchwise-attendance-card { border: none; border-radius: 18px; box-shadow: 0 8px 32px rgba(0,0,0,0.08), 0 2px 8px rgba(0,0,0,0.04); overflow: hidden; }
+.batchwise-attendance-inner { display: flex; align-items: stretch; gap: 0; min-height: 180px; }
+.batchwise-attendance-icon { width: 140px; min-width: 140px; background: linear-gradient(135deg, #0d9488 0%, #0f766e 50%, #115e59 100%); display: flex; align-items: center; justify-content: center; font-size: 3.5rem; color: rgba(255,255,255,0.95); }
+.batchwise-attendance-content { padding: 2rem 2.25rem; background: linear-gradient(135deg, #f0fdfa 0%, #ccfbf1 40%, #99f6e4 100%); }
+.batchwise-attendance-title { font-weight: 700; font-size: 1.4rem; color: #134e4a; margin-bottom: 0.5rem; }
+.batchwise-attendance-desc { color: #0f766e; font-size: 0.95rem; line-height: 1.5; }
+.batchwise-attendance-controls { display: flex; align-items: flex-end; gap: 1.25rem; flex-wrap: wrap; }
+.batchwise-select-wrap { min-width: 200px; }
+.batchwise-label { display: block; font-weight: 600; color: #134e4a; font-size: 0.85rem; margin-bottom: 0.4rem; }
+.batchwise-select { padding: 0.65rem 1rem; font-size: 1rem; border-radius: 12px; border: 2px solid #5eead4; background: #fff; min-height: 48px; }
+.batchwise-select:focus { border-color: #0d9488; box-shadow: 0 0 0 3px rgba(13, 148, 136, 0.2); }
+.batchwise-download-btn { padding: 0.75rem 1.5rem; font-size: 1.05rem; font-weight: 600; border-radius: 12px; background: linear-gradient(135deg, #0d9488 0%, #0f766e 100%); color: #fff; border: none; text-decoration: none; display: inline-flex; align-items: center; transition: all 0.25s ease; box-shadow: 0 4px 14px rgba(13, 148, 136, 0.35); }
+.batchwise-download-btn:hover { transform: translateY(-2px); box-shadow: 0 6px 20px rgba(13, 148, 136, 0.45); color: #fff; }
+.batchwise-download-btn[style*="opacity: 0.6"] { cursor: not-allowed; }
+@media (max-width: 575.98px) { .batchwise-attendance-inner { flex-direction: column; } .batchwise-attendance-icon { width: 100%; min-height: 80px; font-size: 2.5rem; } .batchwise-attendance-content { padding: 1.5rem; } .batchwise-attendance-controls { flex-direction: column; align-items: stretch; } .batchwise-select-wrap { min-width: 0; } }
+</style>
+
 <div class="card faculty-dash-table overflow-hidden">
     <div class="card-header">Today's schedule</div>
     {% if today_slots %}
@@ -77,4 +124,25 @@
     <p class="text-center text-secondary py-5 mb-0">No lectures scheduled for today.</p>
     {% endif %}
 </div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    var sel = document.getElementById('batchwise-batch');
+    var link = document.getElementById('batchwise-download');
+    if (sel && link) {
+        sel.addEventListener('change', function() {
+            var bid = this.value;
+            if (bid) {
+                link.href = '{% url "core:faculty_batchwise_attendance_excel" %}?batch=' + bid;
+                link.style.pointerEvents = 'auto';
+                link.style.opacity = '1';
+            } else {
+                link.href = '#';
+                link.style.pointerEvents = 'none';
+                link.style.opacity = '0.7';
+            }
+        });
+    }
+});
+</script>
 {% endblock %}

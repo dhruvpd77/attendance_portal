@@ -28,7 +28,7 @@
         <img src="{% static 'images/ljiet-logo.png' %}" alt="LJIET" class="admin-logo">
         <div>
             <h1 class="page-title mb-1">Attendance Analytics</h1>
-            <p class="text-white-50 mb-0">{{ department.name }} — Phase {{ phase }}{% if selected_week != 'all' and selected_week %} — Week {{ selected_week|add:1 }}{% else %} — All weeks{% endif %}</p>
+            <p class="text-white-50 mb-0">{{ department.name }} — Phase {{ phase }}{% if selected_week_global_num %} — Week {{ selected_week_global_num }}{% else %} — All weeks{% endif %}</p>
         </div>
     </div>
     <form method="get" class="d-flex flex-wrap align-items-center gap-3">
@@ -44,8 +44,8 @@
             <label class="text-white-50 small mb-0">Week</label>
             <select name="week" class="form-select form-select-sm" style="max-width: 120px;" onchange="this.form.submit()">
                 <option value="all" {% if selected_week == 'all' or not selected_week %}selected{% endif %}>All</option>
-                {% for idx in week_range %}
-                <option value="{{ idx }}" {% if selected_week == idx|stringformat:"d" %}selected{% endif %}>Week {{ idx|add:1 }}</option>
+                {% for idx, num in week_options %}
+                <option value="{{ idx }}" {% if selected_week == idx|stringformat:"d" %}selected{% endif %}>Week {{ num }}</option>
                 {% endfor %}
             </select>
         </div>

@@ -134,8 +134,8 @@
             <label class="form-label mb-1">Week</label>
             <select name="week" class="form-select form-select-app" onchange="this.form.submit()">
                 <option value="">— Select week —</option>
-                {% for w in phase_weeks %}
-                <option value="{{ forloop.counter0 }}" {% if selected_week_idx == forloop.counter0 %}selected{% endif %}>Week {{ forloop.counter }}</option>
+                {% for idx, num in week_options %}
+                <option value="{{ idx }}" {% if selected_week_idx == idx %}selected{% endif %}>Week {{ num }}</option>
                 {% endfor %}
             </select>
         </div>
