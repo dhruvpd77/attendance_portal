@@ -3182,7 +3182,7 @@ def _admin_analytics_data(dept, phase=None, week=None):
             'weeks': weeks, 'num_weeks': len(weeks), 'phase_week_offsets': phase_week_offsets,
         }
     batches = list(Batch.objects.filter(department=dept).select_related('department'))
-    students = list(Student.objects.filter(department=dept).select_related('batch'))
+    students = list(Student.objects.filter(department=dept).select_related('batch', 'mentor'))
     students.sort(key=lambda s: (s.batch.name if s.batch else '', _roll_sort_key(s)))
     cancelled_set = get_cancelled_lectures_set(dept)
     batch_scheduled = defaultdict(set)
@@ -3345,20 +3345,23 @@ def admin_analytics_at_risk_excel(request):
     wb = Workbook()
     ws = wb.active
     ws.title = 'At-Risk Students'
-    headers = ['Roll No', 'Name', 'Batch', 'Lectures Held', 'Attended', 'Attendance %']
+    headers = ['Roll No', 'Name', 'Enrollment', 'Mentor Name', 'Batch', 'Lectures Held', 'Attended', 'Attendance %']
     for col, h in enumerate(headers, 1):
         cell = ws.cell(1, col, h)
         cell.font = Font(bold=True)
         cell.fill = PatternFill(start_color='4F81BD', end_color='4F81BD', fill_type='solid')
         cell.font = Font(bold=True, color='FFFFFF')
     for row_idx, r in enumerate(at_risk, 2):
-        ws.cell(row_idx, 1, r['student'].roll_no)
-        ws.cell(row_idx, 2, r['student'].name)
-        ws.cell(row_idx, 3, r['student'].batch.name)
-        ws.cell(row_idx, 4, r['held'])
-        ws.cell(row_idx, 5, r['attended'])
-        ws.cell(row_idx, 6, f"{r['pct']}%")
-    for col in range(1, 7):
+        s = r['student']
+        ws.cell(row_idx, 1, s.roll_no)
+        ws.cell(row_idx, 2, s.name)
+        ws.cell(row_idx, 3, s.enrollment_no or '')
+        ws.cell(row_idx, 4, (s.mentor.short_name if s.mentor else '') or '')
+        ws.cell(row_idx, 5, s.batch.name)
+        ws.cell(row_idx, 6, r['held'])
+        ws.cell(row_idx, 7, r['attended'])
+        ws.cell(row_idx, 8, f"{r['pct']}%")
+    for col in range(1, 9):
         ws.column_dimensions[get_column_letter(col)].width = 16
     bio = BytesIO()
     wb.save(bio)
