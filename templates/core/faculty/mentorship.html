@@ -129,6 +129,8 @@
     border-radius: 8px;
     text-decoration: none !important;
     transition: all 0.2s ease;
+    font-weight: 700;
+    font-size: 0.8rem;
 }
 .mentor-phone-student {
     background: linear-gradient(135deg, #dbeafe 0%, #bfdbfe 100%);
@@ -220,14 +222,14 @@
                                         {{ stat.student.name }}
                                         <span class="mentor-contact-icons">
                                             {% if stat.student.student_phone_number %}
-                                            <a href="tel:{{ stat.student.student_phone_number|striptags }}" class="mentor-phone-btn mentor-phone-student" title="Student: {{ stat.student.student_phone_number }}"><i class="fas fa-mobile-alt"></i></a>
+                                            <a href="tel:{{ stat.student.student_phone_number|striptags }}" class="mentor-phone-btn mentor-phone-student" title="Student: {{ stat.student.student_phone_number }}">S</a>
                                             {% else %}
-                                            <span class="mentor-phone-btn mentor-phone-disabled" title="No student number"><i class="fas fa-mobile-alt"></i></span>
+                                            <span class="mentor-phone-btn mentor-phone-disabled" title="No student number">S</span>
                                             {% endif %}
                                             {% if stat.student.parents_contact_number %}
-                                            <a href="tel:{{ stat.student.parents_contact_number|striptags }}" class="mentor-phone-btn mentor-phone-parents" title="Parents: {{ stat.student.parents_contact_number }}"><i class="fas fa-phone"></i></a>
+                                            <a href="tel:{{ stat.student.parents_contact_number|striptags }}" class="mentor-phone-btn mentor-phone-parents" title="Parents: {{ stat.student.parents_contact_number }}">P</a>
                                             {% else %}
-                                            <span class="mentor-phone-btn mentor-phone-disabled" title="No parents number"><i class="fas fa-phone"></i></span>
+                                            <span class="mentor-phone-btn mentor-phone-disabled" title="No parents number">P</span>
                                             {% endif %}
                                         </span>
                                     </span>
@@ -326,14 +328,14 @@
                                         {{ r.student.name }}
                                         <span class="mentor-contact-icons">
                                             {% if r.student.student_phone_number %}
-                                            <a href="tel:{{ r.student.student_phone_number|striptags }}" class="mentor-phone-btn mentor-phone-student" title="Student: {{ r.student.student_phone_number }}"><i class="fas fa-mobile-alt"></i></a>
+                                            <a href="tel:{{ r.student.student_phone_number|striptags }}" class="mentor-phone-btn mentor-phone-student" title="Student: {{ r.student.student_phone_number }}">S</a>
                                             {% else %}
-                                            <span class="mentor-phone-btn mentor-phone-disabled" title="No student number"><i class="fas fa-mobile-alt"></i></span>
+                                            <span class="mentor-phone-btn mentor-phone-disabled" title="No student number">S</span>
                                             {% endif %}
                                             {% if r.student.parents_contact_number %}
-                                            <a href="tel:{{ r.student.parents_contact_number|striptags }}" class="mentor-phone-btn mentor-phone-parents" title="Parents: {{ r.student.parents_contact_number }}"><i class="fas fa-phone"></i></a>
+                                            <a href="tel:{{ r.student.parents_contact_number|striptags }}" class="mentor-phone-btn mentor-phone-parents" title="Parents: {{ r.student.parents_contact_number }}">P</a>
                                             {% else %}
-                                            <span class="mentor-phone-btn mentor-phone-disabled" title="No parents number"><i class="fas fa-phone"></i></span>
+                                            <span class="mentor-phone-btn mentor-phone-disabled" title="No parents number">P</span>
                                             {% endif %}
                                         </span>
                                     </span>
