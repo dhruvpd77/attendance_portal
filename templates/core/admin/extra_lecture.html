@@ -1,0 +1,115 @@
+{% extends 'core/admin/base_admin.html' %}
+{% load static %}
+{% block title %}Add Extra Lecture - LJIET_Attendance{% endblock %}
+{% block content %}
+<div class="admin-hero">
+    <div class="d-flex align-items-center gap-3">
+        <img src="{% static 'images/ljiet-logo.png' %}" alt="LJIET" class="admin-logo">
+        <div>
+            <h1 class="page-title mb-1">Add Extra Lecture</h1>
+            <p class="page-subtitle">Select batch, date, time slot, subject, faculty, and room. Extra lectures reflect everywhere — Mark Attendance, Compile, Daily Absent, etc.</p>
+        </div>
+    </div>
+    <a href="{% url 'core:admin_dashboard' %}" class="btn btn-outline-light btn-sm"><i class="fas fa-arrow-left me-1"></i> Dashboard</a>
+</div>
+
+<div class="card admin-card mb-4">
+    <div class="card-header"><i class="fas fa-plus-circle me-2"></i>Add extra lecture</div>
+    <div class="card-body">
+        <form method="post" class="row g-3">
+            {% csrf_token %}
+            <div class="col-md-6 col-lg-2">
+                <label class="form-label">Batch</label>
+                <select name="batch_id" class="form-select form-select-app" required>
+                    <option value="">-- Select batch --</option>
+                    {% for b in batches %}
+                    <option value="{{ b.id }}">{{ b.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-6 col-lg-2">
+                <label class="form-label">Date</label>
+                <input type="date" name="date" class="form-control form-control-app" required>
+            </div>
+            <div class="col-md-6 col-lg-2">
+                <label class="form-label">Time Slot</label>
+                <select name="time_slot" class="form-select form-select-app" required>
+                    <option value="">-- Select --</option>
+                    {% for ts in time_slots %}
+                    <option value="{{ ts }}">{{ ts }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-6 col-lg-2">
+                <label class="form-label">Subject</label>
+                <select name="subject_id" class="form-select form-select-app" required>
+                    <option value="">-- Select subject --</option>
+                    {% for s in subjects %}
+                    <option value="{{ s.id }}">{{ s.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-6 col-lg-2">
+                <label class="form-label">Faculty</label>
+                <select name="faculty_id" class="form-select form-select-app" required>
+                    <option value="">-- Select faculty --</option>
+                    {% for f in faculties %}
+                    <option value="{{ f.id }}">{{ f.full_name }} ({{ f.short_name }})</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-6 col-lg-2">
+                <label class="form-label">Room No</label>
+                <input type="text" name="room_number" class="form-control form-control-app" placeholder="e.g. 310">
+            </div>
+            <div class="col-12">
+                <button type="submit" class="btn btn-primary-app"><i class="fas fa-plus me-1"></i> Add</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<div class="card admin-card">
+    <div class="card-header"><i class="fas fa-history me-2"></i>History of added lectures</div>
+    <div class="card-body p-0">
+        {% if extra_list %}
+        <div class="table-responsive">
+            <table class="table table-hover mb-0">
+                <thead>
+                    <tr>
+                        <th>Date</th>
+                        <th>Batch</th>
+                        <th>Time Slot</th>
+                        <th>Subject</th>
+                        <th>Faculty</th>
+                        <th>Room</th>
+                        <th class="text-end">Action</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for ex in extra_list %}
+                    <tr>
+                        <td>{{ ex.date|date:"D, d M Y" }}</td>
+                        <td>{{ ex.batch.name }}</td>
+                        <td>{{ ex.time_slot }}</td>
+                        <td>{{ ex.subject.name }}</td>
+                        <td>{{ ex.faculty.short_name }}</td>
+                        <td>{{ ex.room_number|default:"—" }}</td>
+                        <td class="text-end">
+                            <form method="post" action="{% url 'core:extra_lecture_delete' %}" class="d-inline" onsubmit="return confirm('Remove this extra lecture?');">
+                                {% csrf_token %}
+                                <input type="hidden" name="id" value="{{ ex.id }}">
+                                <button type="submit" class="btn btn-sm btn-outline-danger"><i class="fas fa-trash me-1"></i>Remove</button>
+                            </form>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <p class="text-secondary text-center py-4 mb-0">No extra lectures added yet. Use the form above to add one.</p>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

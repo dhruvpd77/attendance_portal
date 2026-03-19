@@ -218,3 +218,23 @@ class LectureAdjustment(models.Model):
 
     def __str__(self):
         return f"{self.date} {self.batch.name} {self.time_slot} → {self.new_subject.name} ({self.new_faculty.short_name})"
+
+
+class ExtraLecture(models.Model):
+    """Extra lecture added on a specific date: batch, time_slot, subject, faculty, room. Reflects everywhere."""
+    date = models.DateField()
+    batch = models.ForeignKey(Batch, on_delete=models.CASCADE)
+    time_slot = models.CharField(max_length=50)
+    subject = models.ForeignKey(Subject, on_delete=models.CASCADE)
+    faculty = models.ForeignKey(Faculty, on_delete=models.CASCADE)
+    room_number = models.CharField(max_length=50, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-date', 'batch', 'time_slot']
+        unique_together = ('date', 'batch', 'time_slot')
+        verbose_name = 'Extra lecture'
+        verbose_name_plural = 'Extra lectures'
+
+    def __str__(self):
+        return f"{self.date} {self.batch.name} {self.time_slot} — {self.subject.name} ({self.faculty.short_name})"

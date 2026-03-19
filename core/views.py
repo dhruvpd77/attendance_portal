@@ -34,7 +34,7 @@ from openpyxl.utils import get_column_letter
 
 from .models import (
     Department, Batch, Subject, Faculty, Student,
-    ScheduleSlot, TermPhase, FacultyAttendance, LectureAdjustment, LectureCancellation, PhaseHoliday,
+    ScheduleSlot, TermPhase, FacultyAttendance, LectureAdjustment, LectureCancellation, ExtraLecture, PhaseHoliday,
     AttendanceNotificationLog, AttendanceLockSetting,
 )
 from accounts.models import UserRole
@@ -135,11 +135,16 @@ def _effective_day_set_for_batch(batch, date):
 
 
 def get_faculty_subject_for_slot(date, batch, time_slot):
-    """Return (faculty, subject) for this date/batch/slot; use LectureAdjustment if exists, else ScheduleSlot."""
+    """Return (faculty, subject) for this date/batch/slot; ExtraLecture > LectureAdjustment > ScheduleSlot."""
     from datetime import date as date_type
     if not isinstance(date, date_type):
         date = date
     weekday = date.strftime('%A')
+    extra = ExtraLecture.objects.filter(
+        date=date, batch=batch, time_slot=time_slot
+    ).select_related('faculty', 'subject').first()
+    if extra:
+        return extra.faculty, extra.subject
     adj = LectureAdjustment.objects.filter(
         date=date, batch=batch, time_slot=time_slot
     ).select_related('new_faculty', 'new_subject').first()
@@ -325,9 +330,11 @@ def lecture_cancellation(request):
         cancelled_set = get_cancelled_lectures_set(dept)
         weekday = selected_date.strftime('%A')
         effective_slots = [s for s in _effective_slots_for_date(dept, selected_date) if s.day == weekday]
+        seen = set()
         for slot in sorted(effective_slots, key=lambda s: (s.batch.name if s.batch else '', s.time_slot or '')):
             if (selected_date, slot.batch_id, slot.time_slot) in cancelled_set:
                 continue
+            seen.add((slot.batch_id, slot.time_slot))
             fac, subj = get_faculty_subject_for_slot(selected_date, slot.batch, slot.time_slot)
             lectures.append({
                 'slot': slot,
@@ -335,12 +342,31 @@ def lecture_cancellation(request):
                 'subject': subj or slot.subject,
                 'batch': slot.batch,
             })
+        for ex in ExtraLecture.objects.filter(date=selected_date, batch__department=dept).select_related('batch', 'faculty', 'subject'):
+            if (ex.batch_id, ex.time_slot) in seen or (selected_date, ex.batch_id, ex.time_slot) in cancelled_set:
+                continue
+            seen.add((ex.batch_id, ex.time_slot))
+            virtual_slot = type('Slot', (), {'batch': ex.batch, 'time_slot': ex.time_slot})()
+            lectures.append({
+                'slot': virtual_slot,
+                'faculty': ex.faculty,
+                'subject': ex.subject,
+                'batch': ex.batch,
+            })
+        lectures.sort(key=lambda lec: (lec['batch'].name if lec.get('batch') else '', lec['slot'].time_slot or ''))
+
+    cancellation_history = list(
+        LectureCancellation.objects.filter(batch__department=dept)
+        .select_related('batch')
+        .order_by('-date', 'batch', 'time_slot')[:100]
+    )
 
     ctx = {
         'department': dept,
         'available_dates': available_dates,
         'selected_date': selected_date,
         'lectures': lectures,
+        'cancellation_history': cancellation_history,
     }
     return render(request, 'core/admin/lecture_cancellation.html', ctx)
 
@@ -371,13 +397,108 @@ def lecture_cancellation_delete(request):
 
     try:
         LectureCancellation.objects.get_or_create(date=selected_date, batch=batch, time_slot=time_slot)
-        deleted = FacultyAttendance.objects.filter(date=selected_date, batch=batch, lecture_slot=time_slot).delete()
+        FacultyAttendance.objects.filter(date=selected_date, batch=batch, lecture_slot=time_slot).delete()
+        ExtraLecture.objects.filter(date=selected_date, batch=batch, time_slot=time_slot).delete()
     except OperationalError:
         messages.error(request, 'Run migrations first: python manage.py migrate')
         return redirect('core:lecture_cancellation')
     messages.success(request, f'Lecture cancelled: {batch.name} {time_slot}. Removed from all records and counts.')
     url = reverse('core:lecture_cancellation') + f'?date={date_str}'
     return redirect(url)
+
+
+def _time_slots_for_department(dept):
+    """Distinct time_slot values from ScheduleSlot for this department."""
+    if not dept:
+        return []
+    return list(
+        ScheduleSlot.objects.filter(department=dept)
+        .values_list('time_slot', flat=True).distinct().order_by('time_slot')
+    )
+
+
+@login_required
+def extra_lecture(request):
+    """Admin: Add extra lecture — select batch, date, time slot, subject, faculty, room."""
+    if not user_can_admin(request):
+        return redirect('accounts:role_redirect')
+    dept = get_admin_department(request)
+    if not dept:
+        messages.error(request, 'Select a department first from Dashboard.')
+        return redirect('core:admin_dashboard')
+
+    batches = list(Batch.objects.filter(department=dept).order_by('name'))
+    subjects = list(Subject.objects.filter(department=dept).order_by('name'))
+    faculties = list(Faculty.objects.filter(department=dept).order_by('full_name'))
+    time_slots = _time_slots_for_department(dept)
+    if not time_slots:
+        time_slots = ['Lec 1', 'Lec 2', 'Lec 3', 'Lec 4', 'Lec 5', 'Lec 6', 'Lec 7', 'Lec 8']
+
+    if request.method == 'POST':
+        date_str = request.POST.get('date', '').strip()
+        batch_id = request.POST.get('batch_id', '').strip()
+        time_slot = request.POST.get('time_slot', '').strip()
+        subject_id = request.POST.get('subject_id', '').strip()
+        faculty_id = request.POST.get('faculty_id', '').strip()
+        room_number = request.POST.get('room_number', '').strip()
+        if not all([date_str, batch_id, time_slot, subject_id, faculty_id]):
+            messages.error(request, 'Please fill Batch, Date, Time Slot, Subject, and Faculty.')
+            return redirect('core:extra_lecture')
+        try:
+            selected_date = datetime.strptime(date_str, '%Y-%m-%d').date()
+        except Exception:
+            messages.error(request, 'Invalid date.')
+            return redirect('core:extra_lecture')
+        batch = Batch.objects.filter(pk=batch_id, department=dept).first()
+        subject = Subject.objects.filter(pk=subject_id, department=dept).first()
+        faculty = Faculty.objects.filter(pk=faculty_id, department=dept).first()
+        if not batch or not subject or not faculty:
+            messages.error(request, 'Invalid batch, subject, or faculty.')
+            return redirect('core:extra_lecture')
+        obj, created = ExtraLecture.objects.update_or_create(
+            date=selected_date, batch=batch, time_slot=time_slot,
+            defaults={'subject': subject, 'faculty': faculty, 'room_number': room_number}
+        )
+        if created:
+            messages.success(request, f'Extra lecture added: {batch.name} {time_slot} — {subject.name} ({faculty.short_name})')
+        else:
+            messages.success(request, f'Extra lecture updated: {batch.name} {time_slot}')
+        return redirect('core:extra_lecture')
+
+    extra_list = list(
+        ExtraLecture.objects.filter(batch__department=dept)
+        .select_related('batch', 'subject', 'faculty')
+        .order_by('-date', 'batch', 'time_slot')[:100]
+    )
+
+    ctx = {
+        'department': dept,
+        'batches': batches,
+        'subjects': subjects,
+        'faculties': faculties,
+        'time_slots': time_slots,
+        'extra_list': extra_list,
+    }
+    return render(request, 'core/admin/extra_lecture.html', ctx)
+
+
+@login_required
+def extra_lecture_delete(request):
+    """Delete an extra lecture."""
+    if request.method != 'POST' or not user_can_admin(request):
+        return redirect('core:extra_lecture')
+    dept = get_admin_department(request)
+    if not dept:
+        return redirect('core:admin_dashboard')
+    pk = request.POST.get('id')
+    obj = ExtraLecture.objects.filter(pk=pk, batch__department=dept).first()
+    if obj:
+        batch_name, time_slot = obj.batch.name, obj.time_slot
+        d, bid = obj.date, obj.batch_id
+        obj.delete()
+        FacultyAttendance.objects.filter(date=d, batch_id=bid, lecture_slot=time_slot).delete()
+        messages.success(request, f'Extra lecture removed: {batch_name} {time_slot}')
+    return redirect('core:extra_lecture')
 
 
 @login_required
@@ -396,6 +517,13 @@ def faculty_dashboard(request):
         [s for s in _effective_slots_for_faculty_on_date(faculty, today) if s.day == weekday],
         key=lambda s: s.time_slot or ''
     )
+    extra_today = [
+        {'time_slot': ex.time_slot, 'batch': ex.batch, 'subject': ex.subject}
+        for ex in ExtraLecture.objects.filter(date=today, faculty=faculty).select_related('batch', 'subject')
+    ]
+    for ex in extra_today:
+        today_slots.append(type('Slot', (), {'time_slot': ex['time_slot'], 'batch': ex['batch'], 'subject': ex['subject']})())
+    today_slots.sort(key=lambda s: s.time_slot or '')
     # Batches where this faculty teaches (from schedule)
     faculty_batches = list(
         Batch.objects.filter(scheduleslot__faculty=faculty)
@@ -2063,9 +2191,17 @@ def daily_absent(request):
         weekday = selected_date.strftime('%A')
         slots = [s for s in _effective_slots_for_date(dept, selected_date) if s.day == weekday]
         slots = sorted(slots, key=lambda s: (s.batch.name if s.batch else '', s.time_slot or ''))
+        seen = set()
         for s in slots:
             if (selected_date, s.batch_id, s.time_slot) not in cancelled_set:
+                seen.add((s.batch_id, s.time_slot))
                 lectures_by_batch[s.batch.name].append(s)
+        for ex in ExtraLecture.objects.filter(date=selected_date, batch__department=dept).select_related('batch', 'subject', 'faculty'):
+            if (selected_date, ex.batch_id, ex.time_slot) in cancelled_set or (ex.batch_id, ex.time_slot) in seen:
+                continue
+            seen.add((ex.batch_id, ex.time_slot))
+            virtual = type('Slot', (), {'batch': ex.batch, 'time_slot': ex.time_slot, 'subject': ex.subject, 'faculty': ex.faculty})()
+            lectures_by_batch[ex.batch.name].append(virtual)
 
     attendance_map = defaultdict(lambda: defaultdict(list))
     if selected_date:
@@ -2128,9 +2264,17 @@ def daily_absent_excel(request):
     slots = [s for s in _effective_slots_for_date(dept, selected_date) if s.day == weekday]
     slots = sorted(slots, key=lambda s: (s.batch.name if s.batch else '', s.time_slot or ''))
     lectures_by_batch = defaultdict(list)
+    seen = set()
     for s in slots:
         if (selected_date, s.batch_id, s.time_slot) not in cancelled_set:
+            seen.add((s.batch_id, s.time_slot))
             lectures_by_batch[s.batch.name].append(s)
+    for ex in ExtraLecture.objects.filter(date=selected_date, batch__department=dept).select_related('batch', 'subject', 'faculty'):
+        if (selected_date, ex.batch_id, ex.time_slot) in cancelled_set or (ex.batch_id, ex.time_slot) in seen:
+            continue
+        seen.add((ex.batch_id, ex.time_slot))
+        virtual = type('Slot', (), {'batch': ex.batch, 'time_slot': ex.time_slot, 'subject': ex.subject, 'faculty': ex.faculty})()
+        lectures_by_batch[ex.batch.name].append(virtual)
 
     wb = Workbook()
     ws = wb.active
@@ -2364,6 +2508,14 @@ def _build_date_slots_list_for_batch(dept, batch, dates):
         slots = [s for s in _effective_slots_for_date(dept, d, extra_filters={'batch': batch}) if s.day == weekday]
         slots = sorted(slots, key=lambda s: s.time_slot or '')
         slots = [s for s in slots if (d, batch.id, s.time_slot) not in cancelled_set]
+        seen_slots = {s.time_slot for s in slots if s.time_slot}
+        for ex in ExtraLecture.objects.filter(date=d, batch=batch).select_related('subject', 'faculty'):
+            if (d, batch.id, ex.time_slot) in cancelled_set or ex.time_slot in seen_slots:
+                continue
+            seen_slots.add(ex.time_slot)
+            virtual = type('Slot', (), {'time_slot': ex.time_slot, 'subject': ex.subject, 'faculty': ex.faculty})()
+            slots.append(virtual)
+        slots.sort(key=lambda s: s.time_slot or '')
         out.append((d, slots))
     return out
 
@@ -3843,9 +3995,13 @@ def _build_slot_subject_cache(batch, cum_dates, batch_scheduled):
         batch=batch, date__in=cum_dates, time_slot__in=all_slots
     ).select_related('new_subject').values('date', 'time_slot', 'new_subject__name'))
     adj_map = {(a['date'], a['time_slot']): (a['new_subject__name'] or 'N/A') for a in adj_list}
+    extra_list = list(ExtraLecture.objects.filter(batch=batch, date__in=cum_dates).select_related('subject').values('date', 'time_slot', 'subject__name'))
+    extra_map = {(a['date'], a['time_slot']): (a['subject__name'] or 'N/A') for a in extra_list}
     for (d, slot) in batch_scheduled:
         key = (d, slot)
-        if key in adj_map:
+        if key in extra_map:
+            cache[key] = extra_map[key]
+        elif key in adj_map:
             cache[key] = adj_map[key]
         else:
             cache[key] = slot_to_subj.get((d, slot), 'N/A')
@@ -3890,6 +4046,9 @@ def _student_analytics_build_data(dept, phase, week_idx, batch_id, roll_search=N
         for slot in set(s.time_slot for s in slots if s.time_slot):
             if (d, batch.id, slot) not in cancelled_set:
                 batch_scheduled.add((d, slot))
+        for ex in ExtraLecture.objects.filter(date=d, batch=batch).values_list('time_slot', flat=True):
+            if (d, batch.id, ex) not in cancelled_set:
+                batch_scheduled.add((d, ex))
     batch_att_map = {}
     for att in FacultyAttendance.objects.filter(batch=batch, date__in=cum_dates).only('date', 'lecture_slot', 'absent_roll_numbers'):
         key = (att.date, att.lecture_slot)
@@ -4525,6 +4684,20 @@ def faculty_attendance_entry(request):
                 if start and end and start <= d <= end:
                     out.append(d)
                     break
+        # Include dates where this faculty has extra lectures
+        extra_dates = ExtraLecture.objects.filter(faculty=faculty).values_list('date', flat=True).distinct()
+        for d in extra_dates:
+            if d in holidays:
+                continue
+            if tp:
+                for i in range(1, 5):
+                    start = getattr(tp, f't{i}_start', None)
+                    end = getattr(tp, f't{i}_end', None)
+                    if start and end and start <= d <= end:
+                        out.append(d)
+                        break
+            else:
+                out.append(d)
         return sorted(set(out))
 
     available_dates = dates_for_faculty()
@@ -4573,6 +4746,18 @@ def faculty_attendance_entry(request):
                 'subject': adj.new_subject, 'faculty': adj.new_faculty,
             })()
             slots_by_batch[adj.batch].append(virtual)
+        # Add slots where this faculty has extra lectures
+        for ex in ExtraLecture.objects.filter(date=selected_date, faculty=faculty).select_related('batch', 'subject', 'faculty'):
+            if (ex.batch, ex.time_slot) in existing_pairs:
+                continue
+            if (selected_date, ex.batch_id, ex.time_slot) in cancelled_set:
+                continue
+            existing_pairs.add((ex.batch, ex.time_slot))
+            virtual = type('Slot', (), {
+                'batch': ex.batch, 'time_slot': ex.time_slot,
+                'subject': ex.subject, 'faculty': ex.faculty,
+            })()
+            slots_by_batch[ex.batch].append(virtual)
         # Keep slots ordered by time_slot per batch
         for b in slots_by_batch:
             slots_by_batch[b].sort(key=lambda s: s.time_slot or '')
@@ -5202,6 +5387,16 @@ def _dates_for_department(dept):
             if start and end and start <= d <= end:
                 out.append(d)
                 break
+    extra_dates = ExtraLecture.objects.filter(batch__department=dept).values_list('date', flat=True).distinct()
+    for d in extra_dates:
+        if d in holidays:
+            continue
+        for i in range(1, 5):
+            start = getattr(tp, f't{i}_start', None)
+            end = getattr(tp, f't{i}_end', None)
+            if start and end and start <= d <= end:
+                out.append(d)
+                break
     return sorted(set(out))
 
 
@@ -5214,6 +5409,9 @@ def _faculties_for_date(dept, selected_date):
             faculty_ids.add(adj.new_faculty_id)
         if adj.original_faculty_id:
             faculty_ids.add(adj.original_faculty_id)
+    for ex in ExtraLecture.objects.filter(date=selected_date, batch__department=dept).values_list('faculty_id', flat=True):
+        if ex:
+            faculty_ids.add(ex)
     return Faculty.objects.filter(pk__in=faculty_ids).order_by('short_name')
 
 
@@ -5275,6 +5473,17 @@ def admin_manual_attendance(request):
                 'subject': adj.new_subject, 'faculty': adj.new_faculty,
             })()
             slots_by_batch[adj.batch].append(virtual)
+        for ex in ExtraLecture.objects.filter(date=selected_date, faculty=faculty).select_related('batch', 'subject', 'faculty'):
+            existing_pairs = {(b, sl.time_slot) for b, slots in slots_by_batch.items() for sl in slots}
+            if (ex.batch, ex.time_slot) in existing_pairs:
+                continue
+            if (selected_date, ex.batch_id, ex.time_slot) in cancelled_set:
+                continue
+            virtual = type('Slot', (), {
+                'batch': ex.batch, 'time_slot': ex.time_slot,
+                'subject': ex.subject, 'faculty': ex.faculty,
+            })()
+            slots_by_batch[ex.batch].append(virtual)
         for b in slots_by_batch:
             slots_by_batch[b].sort(key=lambda s: s.time_slot or '')
 
@@ -5399,6 +5608,13 @@ def admin_manual_attendance_excel(request):
     weekday = selected_date.strftime('%A')
     cancelled_set = get_cancelled_lectures_set(dept)
     all_slots = [s for s in _effective_slots_for_faculty_on_date(faculty, selected_date) if s.batch_id == batch.id and s.day == weekday]
+    seen_slots = {s.time_slot for s in all_slots if s.time_slot}
+    for ex in ExtraLecture.objects.filter(date=selected_date, faculty=faculty, batch=batch).select_related('subject', 'faculty'):
+        if (selected_date, batch.id, ex.time_slot) in cancelled_set or ex.time_slot in seen_slots:
+            continue
+        seen_slots.add(ex.time_slot)
+        virtual = type('Slot', (), {'time_slot': ex.time_slot, 'subject': ex.subject, 'faculty': ex.faculty})()
+        all_slots.append(virtual)
     all_slots = sorted(all_slots, key=lambda s: s.time_slot or '')
     slots = [s for s in all_slots if (selected_date, batch.id, s.time_slot) not in cancelled_set]
     atts = FacultyAttendance.objects.filter(faculty=faculty, date=selected_date, batch=batch).order_by('lecture_slot')

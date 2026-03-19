@@ -92,4 +92,34 @@
 {% else %}
 <p class="text-secondary">Select a date to view and cancel lectures.</p>
 {% endif %}
+
+<div class="card admin-card mt-4">
+    <div class="card-header"><i class="fas fa-history me-2"></i>History of cancellation</div>
+    <div class="card-body p-0">
+        {% if cancellation_history %}
+        <div class="table-responsive">
+            <table class="table table-hover mb-0">
+                <thead>
+                    <tr>
+                        <th>Date</th>
+                        <th>Batch</th>
+                        <th>Time Slot</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for c in cancellation_history %}
+                    <tr>
+                        <td>{{ c.date|date:"D, d M Y" }}</td>
+                        <td>{{ c.batch.name }}</td>
+                        <td>{{ c.time_slot }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <p class="text-secondary text-center py-4 mb-0">No lectures cancelled yet.</p>
+        {% endif %}
+    </div>
+</div>
 {% endblock %}

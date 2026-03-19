@@ -48,6 +48,7 @@ def sidebar_links(request):
             _make_link(request, 'Term Phases', 'core:term_phases', 'fa-calendar-week', 'term_phases'),
             _make_link(request, 'Lock Attendance Time', 'core:attendance_lock_setting', 'fa-lock', 'attendance_lock_setting'),
             _make_link(request, 'Lecture Cancellation', 'core:lecture_cancellation', 'fa-times-circle', 'lecture_cancellation'),
+            _make_link(request, 'Add Extra Lecture', 'core:extra_lecture', 'fa-plus-circle', 'extra_lecture'),
             _make_link(request, 'Manual Attendance', 'core:admin_manual_attendance', 'fa-edit', 'admin_manual_attendance'),
             _make_link(request, 'Daily Absent', 'core:daily_absent', 'fa-file-excel', 'daily_absent'),
             _make_link(request, 'Attendance Sheet', 'core:attendance_sheet_manager', 'fa-table', 'attendance_sheet_manager'),
