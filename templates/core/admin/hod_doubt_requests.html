@@ -1,0 +1,193 @@
+{% extends 'core/admin/base_admin.html' %}
+{% load static %}
+{% block title %}Doubt solving requests — LJIET_Attendance{% endblock %}
+{% block extra_head %}
+{{ block.super }}
+<style>
+.hod-doubt-reports .hod-reports-body {
+  background: linear-gradient(180deg, #f8fafc 0%, #f1f5f9 100%);
+  padding: 1.25rem 1.35rem;
+  border-top: 1px solid rgba(255,255,255,0.12);
+}
+.hod-doubt-reports .hod-section-label {
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #64748b;
+  margin-bottom: 0.5rem;
+}
+.hod-doubt-reports .hod-btn-primary {
+  border-radius: 10px;
+  font-weight: 600;
+  padding: 0.5rem 1rem;
+  box-shadow: 0 2px 8px rgba(22, 163, 74, 0.25);
+}
+.hod-doubt-reports .hod-btn-phase {
+  border-radius: 10px;
+  font-weight: 600;
+  min-width: 3.25rem;
+  border-width: 2px;
+}
+.hod-doubt-reports .hod-btn-phase:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(37, 99, 235, 0.2);
+}
+.hod-doubt-reports .hod-hint {
+  font-size: 0.8rem;
+  color: #94a3b8;
+  margin-top: 0.75rem;
+  margin-bottom: 0;
+}
+</style>
+{% endblock %}
+{% block content %}
+<div class="admin-hero">
+    <div class="d-flex align-items-center gap-3">
+        <img src="{% static 'images/ljiet-logo.png' %}" alt="LJIET" class="admin-logo">
+        <div>
+            <h1 class="page-title mb-1">Doubt solving requests</h1>
+            <p class="page-subtitle mb-0">{{ department.name }} — Pending requests from faculty. Accept to count session toward DS <strong>effective</strong> hours (60 min clock = 0.5 h).</p>
+        </div>
+    </div>
+    <a href="{% url 'core:admin_dashboard' %}" class="btn btn-outline-light btn-sm"><i class="fas fa-arrow-left me-1"></i> Dashboard</a>
+</div>
+
+<div class="card admin-card admin-card--overflow-visible hod-doubt-reports mb-3">
+    <div class="card-header d-flex flex-wrap align-items-center justify-content-between gap-2">
+        <div>
+            <span class="align-middle"><i class="fas fa-file-excel me-2 text-success"></i>Excel reports</span>
+            <small class="d-block mt-1" style="opacity:0.85;font-weight:400;">Week / phase totals use only <strong>accepted</strong> sessions. Effective time: <strong>60 min clock = 0.5 h</strong> DS.</small>
+        </div>
+    </div>
+    <div class="hod-reports-body">
+        <div class="row g-4">
+            <div class="col-lg-6">
+                <div class="hod-section-label">Main downloads</div>
+                <div class="d-flex flex-wrap gap-2 align-items-center">
+                    <a href="{% url 'core:hod_doubt_reports_excel' %}?report=full" class="btn btn-success hod-btn-primary text-white">
+                        <i class="fas fa-download me-2"></i>Full workbook
+                    </a>
+                    <a href="{% url 'core:hod_doubt_reports_excel' %}?report=semester" class="btn btn-primary hod-btn-primary">
+                        <i class="fas fa-calendar-alt me-2"></i>Semester summary
+                    </a>
+                </div>
+                <p class="hod-hint mb-0">Full = detail sheet + DS_T1…T4 + semester totals. Semester = week columns + total DS column only.</p>
+            </div>
+            <div class="col-lg-6">
+                <div class="hod-section-label">Phase-wise sheet (single phase)</div>
+                <div class="d-flex flex-wrap gap-2 align-items-center" role="group" aria-label="Download phase">
+                    <a href="{% url 'core:hod_doubt_reports_excel' %}?report=phase&phase=T1" class="btn btn-outline-primary hod-btn-phase">T1</a>
+                    <a href="{% url 'core:hod_doubt_reports_excel' %}?report=phase&phase=T2" class="btn btn-outline-primary hod-btn-phase">T2</a>
+                    <a href="{% url 'core:hod_doubt_reports_excel' %}?report=phase&phase=T3" class="btn btn-outline-primary hod-btn-phase">T3</a>
+                    <a href="{% url 'core:hod_doubt_reports_excel' %}?report=phase&phase=T4" class="btn btn-outline-primary hod-btn-phase">T4</a>
+                </div>
+                <p class="hod-hint mb-0">Each file: <strong>week-by-week detail</strong> (date, batches, start/end, clock minutes, effective hours, rolls, names, phones) + week subtotals, then faculty × week summary and department totals.</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="card admin-card mb-4">
+    <div class="card-header fw-semibold">Pending</div>
+    <div class="table-responsive">
+        <table class="table table-hover align-middle mb-0">
+            <thead class="table-light">
+                <tr>
+                    <th>Date</th>
+                    <th>Faculty</th>
+                    <th>Batches</th>
+                    <th>Time</th>
+                    <th>Students</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for req in pending %}
+                <tr>
+                    <td>{{ req.date|date:"d M Y" }}</td>
+                    <td>{{ req.faculty.short_name }} — {{ req.faculty.full_name }}</td>
+                    <td>{{ req.batches_label }}</td>
+                    <td>{{ req.start_time|time:"H:i" }} – {{ req.end_time|time:"H:i" }} ({{ req.duration_hours|floatformat:2 }} h effective)</td>
+                    <td class="small">
+                        {% for line in req.student_lines.all %}
+                        <div>{{ line.student.roll_no }} — {{ line.student.name }} · {{ line.student.student_phone_number|default:"—" }}</div>
+                        {% endfor %}
+                    </td>
+                    <td>
+                        <form method="post" action="{% url 'core:hod_doubt_request_review' req.pk %}" class="d-inline-flex flex-column gap-1 align-items-start">
+                            {% csrf_token %}
+                            <input type="hidden" name="action" value="accept">
+                            <input type="text" name="notes" class="form-control form-control-sm" placeholder="Optional note" maxlength="500" style="max-width:14rem">
+                            <button type="submit" class="btn btn-sm btn-success">Accept</button>
+                        </form>
+                        <button class="btn btn-sm btn-outline-danger mb-1" type="button" data-bs-toggle="collapse" data-bs-target="#rej{{ req.pk }}">Reject</button>
+                        <div class="collapse mt-2" id="rej{{ req.pk }}">
+                            <form method="post" action="{% url 'core:hod_doubt_request_review' req.pk %}" class="d-flex flex-column gap-1">
+                                {% csrf_token %}
+                                <input type="hidden" name="action" value="reject">
+                                <input type="text" name="notes" class="form-control form-control-sm" placeholder="Optional note" maxlength="500">
+                                <button type="submit" class="btn btn-sm btn-danger">Confirm reject</button>
+                            </form>
+                        </div>
+                    </td>
+                </tr>
+                {% empty %}
+                <tr><td colspan="6" class="text-secondary py-4 text-center">No pending requests.</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<div class="card admin-card">
+    <div class="card-header fw-semibold">
+        Recently reviewed
+        <small class="d-block fw-normal text-muted mt-1 mb-0">Delete permanently removes the row from the database and all Excel totals (use if a correction is needed).</small>
+    </div>
+    <div class="table-responsive">
+        <table class="table table-sm table-hover mb-0">
+            <thead class="table-light">
+                <tr>
+                    <th>Date</th>
+                    <th>Faculty</th>
+                    <th>Batches</th>
+                    <th>Status</th>
+                    <th>Students</th>
+                    <th>Reviewed</th>
+                    <th class="text-end">Effective (h)</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for req in recent %}
+                <tr>
+                    <td>{{ req.date|date:"d M Y" }}</td>
+                    <td>{{ req.faculty.short_name }}</td>
+                    <td>{{ req.batches_label }}</td>
+                    <td>
+                        {% if req.status == 'accepted' %}<span class="badge bg-success">Accepted</span>
+                        {% elif req.status == 'rejected' %}<span class="badge bg-secondary">Rejected</span>
+                        {% else %}{{ req.get_status_display }}{% endif %}
+                    </td>
+                    <td class="small">{{ req.student_lines.count }} student(s)</td>
+                    <td class="small">{% if req.reviewed_at %}{{ req.reviewed_at|date:"d M Y H:i" }}{% else %}—{% endif %}</td>
+                    <td class="text-end small">{{ req.duration_hours|floatformat:2 }}</td>
+                    <td>
+                        <form method="post" action="{% url 'core:hod_doubt_request_delete' req.pk %}" class="d-inline"
+                              onsubmit="return confirm('Permanently delete this record? It will be removed from all reports and cannot be undone.');">
+                            {% csrf_token %}
+                            <button type="submit" class="btn btn-sm btn-outline-danger" title="Remove from database and all exports">
+                                <i class="fas fa-trash-alt"></i> Delete
+                            </button>
+                        </form>
+                    </td>
+                </tr>
+                {% empty %}
+                <tr><td colspan="8" class="text-secondary py-3 text-center">None yet.</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}

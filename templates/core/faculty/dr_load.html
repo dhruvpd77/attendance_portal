@@ -1,0 +1,58 @@
+{% extends 'base.html' %}
+{% load static %}
+{% block title %}My DR weekly load — LJIET_Attendance{% endblock %}
+{% block extra_head %}
+{% include 'core/partials/dr_load_styles.html' %}
+{% endblock %}
+{% block content %}
+
+<div class="dr-load-hero d-flex flex-wrap align-items-center justify-content-between gap-3">
+    <div class="inner d-flex align-items-center gap-3 flex-grow-1">
+        <img src="{% static 'images/ljiet-logo.png' %}" alt="LJIET" class="hero-logo flex-shrink-0">
+        <div>
+            <h1 class="page-title mb-1">My DR weekly load</h1>
+            <p class="page-subtitle mb-2">Same rules as <strong>Daily Report → weekly combine</strong>, for <strong>you only</strong>. Counts use <strong>saved attendance</strong>. Effective load uses <strong>0.75×</strong> per lecture (ETL &lt; 24 present → 0.5).</p>
+            {% if faculty %}<span class="dr-hero-badge"><i class="fas fa-user-tie"></i> {{ faculty.short_name }} · {{ faculty.department.name }}</span>{% endif %}
+        </div>
+    </div>
+    <a href="{% url 'core:faculty_dashboard' %}" class="btn btn-light btn-sm align-self-start align-self-md-center flex-shrink-0 rounded-pill px-3 fw-semibold shadow-sm">
+        <i class="fas fa-home me-1"></i> Dashboard
+    </a>
+</div>
+
+{% if upto_choices %}
+<form method="get" class="card dr-load-filter-card">
+    <div class="card-body">
+        <div class="row g-3 align-items-end">
+            <div class="col-lg-8 col-md-7">
+                <label class="form-label"><i class="fas fa-filter text-primary me-1"></i>Show totals up to</label>
+                <select name="upto" class="form-select" onchange="this.form.submit()">
+                    {% for c in upto_choices %}
+                    <option value="{{ c.value }}" {% if c.value == selected_upto %}selected{% endif %}>{{ c.label }}</option>
+                    {% endfor %}
+                </select>
+                <p class="small text-muted mt-2 mb-0">All earlier weeks stay included for your cutoff (cumulative up to the week you pick).</p>
+            </div>
+            <div class="col-lg-4 col-md-5">
+                <button type="submit" class="btn btn-dr-apply w-100"><i class="fas fa-check me-1"></i> Apply</button>
+            </div>
+        </div>
+    </div>
+</form>
+
+{% include 'core/partials/dr_weekly_combine_report.html' with detail=detail selected_label=selected_label faculty=faculty %}
+
+{% else %}
+<div class="alert alert-info border-0 rounded-3 shadow-sm" style="background: linear-gradient(135deg, #eff6ff 0%, #e0e7ff 100%); color: #1e3a8a; border: 1px solid #93c5fd !important;">
+    <i class="fas fa-calendar-alt me-2"></i>Term phases are not set up or have no lecture weeks. Ask admin to configure <strong>Term phases</strong> for {{ department.name }}.
+</div>
+{% endif %}
+
+<p class="mt-4 mb-0 small dr-footer-links">
+    {% if faculty_portal_flags and faculty_portal_flags.show_doubt %}
+    <a href="{% url 'core:faculty_doubt_solving' %}">Doubt solving</a>
+    <span class="text-muted px-2">·</span>
+    {% endif %}
+    <a href="{% url 'core:faculty_dashboard' %}">Dashboard</a>
+</p>
+{% endblock %}

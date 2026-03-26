@@ -91,15 +91,12 @@ def student_low_attendance_emails(command):
         all_dates = sorted(all_dates)
         if not all_dates:
             continue
-        from core.schedule_utils import get_effective_slots_for_date
+        from core.views import _add_batch_schedule_pairs_for_attendance, get_cancelled_lectures_set
         batches = list(Batch.objects.filter(department=dept))
         batch_scheduled = defaultdict(set)
+        cancelled_set = get_cancelled_lectures_set(dept)
         for batch in batches:
-            for d in all_dates:
-                weekday = d.strftime('%A')
-                slots = [s for s in get_effective_slots_for_date(dept, d, extra_filters={'batch': batch}) if s.day == weekday]
-                for slot in set(s.time_slot for s in slots if s.time_slot):
-                    batch_scheduled[batch.id].add((d, slot))
+            _add_batch_schedule_pairs_for_attendance(dept, batch, all_dates, batch_scheduled[batch.id], cancelled_set)
         batch_att_map = defaultdict(lambda: defaultdict(set))
         for batch in batches:
             for att in FacultyAttendance.objects.filter(batch=batch, date__in=all_dates):
@@ -111,7 +108,7 @@ def student_low_attendance_emails(command):
             scheduled = batch_scheduled.get(s.batch_id, set())
             held = len(scheduled)
             attended = sum(1 for (d, slot) in scheduled if (d, slot) in batch_att_map[s.batch_id] and str_roll not in batch_att_map[s.batch_id][(d, slot)])
-            pct = round(attended / held * 100, 1) if held else 0
+            pct = round(attended / held * 100, 2) if held else 0
             if held and pct < 75:
                 email = s.email or (s.user.email if s.user else None)
                 if not email:
@@ -124,7 +121,7 @@ def student_low_attendance_emails(command):
                 try:
                     send_mail(
                         subject='LJIET Attendance Alert: Your attendance is below 75%',
-                        message=f'Dear {s.name},\n\nYour current attendance is {pct}% (attended {attended} of {held} lectures).\n\nPlease ensure you attend classes regularly to maintain the required 75% attendance.\n\n— LJIET Attendance Portal',
+                        message=f'Dear {s.name},\n\nYour current attendance is {pct:.2f}% (attended {attended} of {held} lectures).\n\nPlease ensure you attend classes regularly to maintain the required 75% attendance.\n\n— LJIET Attendance Portal',
                         from_email=settings.DEFAULT_FROM_EMAIL,
                         recipient_list=[email],
                         fail_silently=True,
@@ -194,15 +191,12 @@ def admin_weekly_summary(command):
         all_dates = set()
         for w in weeks:
             all_dates.update(w)
-        from core.schedule_utils import get_effective_slots_for_date
+        from core.views import _add_batch_schedule_pairs_for_attendance, get_cancelled_lectures_set
         batches = list(Batch.objects.filter(department=dept))
         batch_scheduled = defaultdict(set)
+        cancelled_set = get_cancelled_lectures_set(dept)
         for batch in batches:
-            for d in all_dates:
-                weekday = d.strftime('%A')
-                slots = [s for s in get_effective_slots_for_date(dept, d, extra_filters={'batch': batch}) if s.day == weekday]
-                for slot in set(s.time_slot for s in slots if s.time_slot):
-                    batch_scheduled[batch.id].add((d, slot))
+            _add_batch_schedule_pairs_for_attendance(dept, batch, all_dates, batch_scheduled[batch.id], cancelled_set)
         batch_att_map = defaultdict(lambda: defaultdict(set))
         for batch in batches:
             for att in FacultyAttendance.objects.filter(batch=batch, date__in=all_dates):
@@ -217,10 +211,10 @@ def admin_weekly_summary(command):
             attended = sum(1 for (d, slot) in scheduled if (d, slot) in batch_att_map[s.batch_id] and str_roll not in batch_att_map[s.batch_id][(d, slot)])
             total_held += held
             total_attended += attended
-            if held and round(attended / held * 100, 1) < 75:
+            if held and round(attended / held * 100, 2) < 75:
                 at_risk += 1
-        avg_pct = round(total_attended / total_held * 100, 1) if total_held else 0
-        lines.append(f'{dept.name}: {total_attended}/{total_held} overall ({avg_pct}%), {at_risk} at-risk students.')
+        avg_pct = round(total_attended / total_held * 100, 2) if total_held else 0
+        lines.append(f'{dept.name}: {total_attended}/{total_held} overall ({avg_pct:.2f}%), {at_risk} at-risk students.')
     body = '\n'.join(lines)
     recipients = list(set(ur.user.email for ur in admin_users if ur.user and ur.user.email))
     if not recipients:

@@ -1,0 +1,112 @@
+{% comment %}
+  Expects: detail, selected_label (detail may be None)
+  Optional: selected_faculty (for admin), faculty (for faculty view - show in cutoff)
+{% endcomment %}
+
+{% if detail %}
+{% if detail.week_rows %}
+<div class="row g-3 mb-4">
+    <div class="col-md-6">
+        <div class="card dr-stat-card dr-stat-card-dr h-100">
+            <div class="card-body">
+                <div class="dr-stat-icon dr-stat-icon-indigo"><i class="fas fa-balance-scale"></i></div>
+                <div class="flex-grow-1">
+                    <p class="dr-stat-label mb-0">Total effective load (0.75× / ETL rules)</p>
+                    <div class="dr-stat-value dr-stat-value-indigo">{{ detail.cumulative_effective|floatformat:2 }}</div>
+                    <p class="dr-stat-hint mb-0">Sum of weekly totals below. ETL &lt; 24 present counts as 0.5.</p>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-6">
+        <div class="card dr-stat-card dr-stat-card-lec h-100">
+            <div class="card-body">
+                <div class="dr-stat-icon dr-stat-icon-emerald"><i class="fas fa-layer-group"></i></div>
+                <div class="flex-grow-1">
+                    <p class="dr-stat-label mb-0">Total lectures (combine count)</p>
+                    <div class="dr-stat-value dr-stat-value-emerald">{{ detail.cumulative_lectures }}</div>
+                    <p class="dr-stat-hint mb-0">{{ detail.cumulative_calendar_days }} lecture day(s) in range · rows only when attendance is saved.</p>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="dr-cutoff-bar">
+    <i class="fas fa-calendar-check me-2"></i>
+    <strong>Selected cutoff:</strong> {{ selected_label }}
+    {% if selected_faculty %}
+    <span class="d-block d-md-inline ms-md-3 mt-1 mt-md-0"><strong>Faculty:</strong> {{ selected_faculty.short_name }} — {{ selected_faculty.full_name }}</span>
+    {% elif faculty %}
+    <span class="d-block d-md-inline ms-md-3 mt-1 mt-md-0"><strong>You:</strong> {{ faculty.short_name }}</span>
+    {% endif %}
+</div>
+
+<div class="dr-week-card-wrap">
+    <div class="table-responsive">
+        <table class="table table-hover align-middle mb-0">
+            <thead class="table-main-head">
+                <tr>
+                    <th style="width:4rem">Sr</th>
+                    <th>Week</th>
+                    <th class="text-end" style="width:8rem">Lectures</th>
+                    <th class="text-end" style="width:10rem">Effective</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for w in detail.week_rows %}
+                <tr class="dr-week-summary-row">
+                    <td class="fw-bold text-secondary">{{ w.sr_no }}</td>
+                    <td>
+                        <span class="week-title">{{ w.week_label }}</span>
+                        <br><span class="week-dates">{{ w.date_min|date:"d M Y" }} — {{ w.date_max|date:"d M Y" }} · {{ w.lecture_days }} day(s)</span>
+                    </td>
+                    <td class="text-end"><span class="num-lec">{{ w.total_lectures }}</span></td>
+                    <td class="text-end"><span class="num-eff">{{ w.total_effective|floatformat:2 }}</span></td>
+                </tr>
+                <tr>
+                    <td colspan="4" class="p-0 border-0">
+                        <div class="dr-nested-wrap">
+                            <div class="dr-nested-title"><i class="fas fa-table me-1"></i> Per date — lectures by batch</div>
+                            <div class="table-responsive">
+                                <table class="table table-sm dr-nested-table mb-0">
+                                    <thead>
+                                        <tr>
+                                            <th>Date</th>
+                                            <th class="text-end" style="width:6rem">Lectures</th>
+                                            <th>Batch-wise</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {% for dd in w.date_details %}
+                                        <tr>
+                                            <td class="text-nowrap">{{ dd.date|date:"D, d M Y" }}</td>
+                                            <td class="text-end fw-semibold">{{ dd.total }}</td>
+                                            <td>
+                                                {% if dd.batches %}
+                                                    {% for b in dd.batches %}
+                                                    <span class="dr-batch-pill">{{ b.batch }}: {{ b.count }}</span>
+                                                    {% endfor %}
+                                                {% else %}
+                                                <span class="text-muted">—</span>
+                                                {% endif %}
+                                            </td>
+                                        </tr>
+                                        {% endfor %}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% elif detail %}
+<div class="alert alert-warning border-0 rounded-3 shadow-sm" style="background: linear-gradient(135deg, #fffbeb 0%, #fef3c7 100%); color: #92400e; border: 1px solid #fcd34d !important;">
+    <i class="fas fa-info-circle me-2"></i>No combine lecture rows in this range{% if selected_faculty %} for this faculty{% endif %} — counts appear after attendance is saved for those slots.
+</div>
+{% endif %}
+{% endif %}

@@ -1,0 +1,78 @@
+{% extends 'core/admin/base_admin.html' %}
+{% load static %}
+{% block title %}Performance Students — LJIET_Attendance{% endblock %}
+{% block content %}
+<div class="admin-hero">
+    <div class="d-flex align-items-center gap-3">
+        <img src="{% static 'images/ljiet-logo.png' %}" alt="LJIET" class="admin-logo">
+        <div>
+            <h1 class="page-title mb-1">Performance Students</h1>
+            <p class="page-subtitle mb-0">{{ department.name }} — Shortcuts to results, marks, and analytics (same URLs as before).</p>
+        </div>
+    </div>
+    <a href="{% url 'core:admin_dashboard' %}" class="btn btn-outline-light btn-sm"><i class="fas fa-arrow-left me-1"></i> Dashboard</a>
+</div>
+
+<div class="row g-4">
+    <div class="col-sm-6 col-xl-4">
+        <a href="{% url 'core:exam_phases_list' %}" class="card admin-stat-card text-decoration-none text-reset h-100">
+            <div class="card-body">
+                <div class="stat-icon bg-primary bg-opacity-10 text-primary"><i class="fas fa-award"></i></div>
+                <div>
+                    <p class="stat-label mb-1">Result</p>
+                    <p class="stat-value fs-5 mb-0">Exam phases &amp; marks</p>
+                    <small class="text-muted">Phases, subjects, upload marks.</small>
+                </div>
+            </div>
+        </a>
+    </div>
+    <div class="col-sm-6 col-xl-4">
+        <a href="{% url 'core:admin_marks_report' %}" class="card admin-stat-card text-decoration-none text-reset h-100">
+            <div class="card-body">
+                <div class="stat-icon bg-success bg-opacity-10 text-success"><i class="fas fa-file-alt"></i></div>
+                <div>
+                    <p class="stat-label mb-1">Marks Report</p>
+                    <p class="stat-value fs-5 mb-0">Reports &amp; exports</p>
+                    <small class="text-muted">Department marks reporting.</small>
+                </div>
+            </div>
+        </a>
+    </div>
+    <div class="col-sm-6 col-xl-4">
+        <a href="{% url 'core:admin_mark_analytics' %}" class="card admin-stat-card text-decoration-none text-reset h-100">
+            <div class="card-body">
+                <div class="stat-icon bg-warning bg-opacity-10 text-warning"><i class="fas fa-chart-line"></i></div>
+                <div>
+                    <p class="stat-label mb-1">Mark Analytics</p>
+                    <p class="stat-value fs-5 mb-0">Charts &amp; risk</p>
+                    <small class="text-muted">Performance and at-risk views.</small>
+                </div>
+            </div>
+        </a>
+    </div>
+    <div class="col-sm-6 col-xl-4">
+        <a href="{% url 'core:admin_detailed_mark_analytics' %}" class="card admin-stat-card text-decoration-none text-reset h-100">
+            <div class="card-body">
+                <div class="stat-icon bg-secondary bg-opacity-10 text-dark"><i class="fas fa-table"></i></div>
+                <div>
+                    <p class="stat-label mb-1">Detailed Mark Analytics</p>
+                    <p class="stat-value fs-5 mb-0">Table drill-down</p>
+                    <small class="text-muted">Detailed breakdowns &amp; Excel export.</small>
+                </div>
+            </div>
+        </a>
+    </div>
+    <div class="col-sm-6 col-xl-4">
+        <a href="{% url 'core:admin_student_analytics' %}" class="card admin-stat-card text-decoration-none text-reset h-100">
+            <div class="card-body">
+                <div class="stat-icon bg-info bg-opacity-10 text-info"><i class="fas fa-chart-bar"></i></div>
+                <div>
+                    <p class="stat-label mb-1">Student Analytics</p>
+                    <p class="stat-value fs-5 mb-0">Attendance performance</p>
+                    <small class="text-muted">Batch / week / subject-wise.</small>
+                </div>
+            </div>
+        </a>
+    </div>
+</div>
+{% endblock %}

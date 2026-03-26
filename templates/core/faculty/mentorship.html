@@ -237,7 +237,7 @@
                                 <td>{{ stat.student.batch.name }}</td>
                                 <td class="text-end">{{ stat.held }}</td>
                                 <td class="text-end">{{ stat.attended }}</td>
-                                <td class="text-end {% if stat.pct < 50 %}pct-low{% elif stat.pct < 75 %}pct-warn{% else %}pct-good{% endif %}">{{ stat.pct }}%</td>
+                                <td class="text-end {% if stat.pct < 50 %}pct-low{% elif stat.pct < 75 %}pct-warn{% else %}pct-good{% endif %}">{{ stat.pct|floatformat:2 }}%</td>
                             </tr>
                             <tr class="mentor-expand-row" id="expand-all-{{ forloop.counter }}" style="display: none;">
                                 <td colspan="7">
@@ -255,8 +255,8 @@
                                                             <td class="fw-medium">{{ w.label }}</td>
                                                             <td class="text-end">{{ w.held }}</td>
                                                             <td class="text-end">{{ w.attended }}</td>
-                                                            <td class="text-end"><span class="{% if w.pct >= 75 %}mentor-pct-good{% elif w.pct >= 50 %}mentor-pct-warn{% else %}mentor-pct-low{% endif %}">{{ w.pct }}%</span></td>
-                                                            <td class="text-end fw-bold"><span class="{% if w.cum_pct >= 75 %}mentor-pct-good{% elif w.cum_pct >= 50 %}mentor-pct-warn{% else %}mentor-pct-low{% endif %}">{{ w.cum_pct }}%</span></td>
+                                                            <td class="text-end"><span class="{% if w.pct >= 75 %}mentor-pct-good{% elif w.pct >= 50 %}mentor-pct-warn{% else %}mentor-pct-low{% endif %}">{{ w.pct|floatformat:2 }}%</span></td>
+                                                            <td class="text-end fw-bold"><span class="{% if w.cum_pct >= 75 %}mentor-pct-good{% elif w.cum_pct >= 50 %}mentor-pct-warn{% else %}mentor-pct-low{% endif %}">{{ w.cum_pct|floatformat:2 }}%</span></td>
                                                         </tr>
                                                         {% endfor %}
                                                     </tbody>
@@ -276,7 +276,7 @@
                                                             <td class="fw-medium">{{ s.name }}</td>
                                                             <td class="text-end">{{ s.held }}</td>
                                                             <td class="text-end">{{ s.attended }}</td>
-                                                            <td class="text-end"><span class="{% if s.pct >= 75 %}mentor-pct-good{% elif s.pct >= 50 %}mentor-pct-warn{% else %}mentor-pct-low{% endif %}">{{ s.pct }}%</span></td>
+                                                            <td class="text-end"><span class="{% if s.pct >= 75 %}mentor-pct-good{% elif s.pct >= 50 %}mentor-pct-warn{% else %}mentor-pct-low{% endif %}">{{ s.pct|floatformat:2 }}%</span></td>
                                                         </tr>
                                                         {% endfor %}
                                                     </tbody>
@@ -343,7 +343,7 @@
                                 <td>{{ r.student.batch.name }}</td>
                                 <td class="text-end">{{ r.held }}</td>
                                 <td class="text-end">{{ r.attended }}</td>
-                                <td class="text-end {% if r.pct < 50 %}pct-low{% else %}pct-warn{% endif %}">{{ r.pct }}%</td>
+                                <td class="text-end {% if r.pct < 50 %}pct-low{% else %}pct-warn{% endif %}">{{ r.pct|floatformat:2 }}%</td>
                             </tr>
                             <tr class="mentor-expand-row" id="expand-risk-{{ forloop.counter }}" style="display: none;">
                                 <td colspan="7">
@@ -361,8 +361,8 @@
                                                             <td class="fw-medium">{{ w.label }}</td>
                                                             <td class="text-end">{{ w.held }}</td>
                                                             <td class="text-end">{{ w.attended }}</td>
-                                                            <td class="text-end"><span class="{% if w.pct >= 75 %}mentor-pct-good{% elif w.pct >= 50 %}mentor-pct-warn{% else %}mentor-pct-low{% endif %}">{{ w.pct }}%</span></td>
-                                                            <td class="text-end fw-bold"><span class="{% if w.cum_pct >= 75 %}mentor-pct-good{% elif w.cum_pct >= 50 %}mentor-pct-warn{% else %}mentor-pct-low{% endif %}">{{ w.cum_pct }}%</span></td>
+                                                            <td class="text-end"><span class="{% if w.pct >= 75 %}mentor-pct-good{% elif w.pct >= 50 %}mentor-pct-warn{% else %}mentor-pct-low{% endif %}">{{ w.pct|floatformat:2 }}%</span></td>
+                                                            <td class="text-end fw-bold"><span class="{% if w.cum_pct >= 75 %}mentor-pct-good{% elif w.cum_pct >= 50 %}mentor-pct-warn{% else %}mentor-pct-low{% endif %}">{{ w.cum_pct|floatformat:2 }}%</span></td>
                                                         </tr>
                                                         {% endfor %}
                                                     </tbody>
@@ -382,7 +382,7 @@
                                                             <td class="fw-medium">{{ s.name }}</td>
                                                             <td class="text-end">{{ s.held }}</td>
                                                             <td class="text-end">{{ s.attended }}</td>
-                                                            <td class="text-end"><span class="{% if s.pct >= 75 %}mentor-pct-good{% elif s.pct >= 50 %}mentor-pct-warn{% else %}mentor-pct-low{% endif %}">{{ s.pct }}%</span></td>
+                                                            <td class="text-end"><span class="{% if s.pct >= 75 %}mentor-pct-good{% elif s.pct >= 50 %}mentor-pct-warn{% else %}mentor-pct-low{% endif %}">{{ s.pct|floatformat:2 }}%</span></td>
                                                         </tr>
                                                         {% endfor %}
                                                     </tbody>

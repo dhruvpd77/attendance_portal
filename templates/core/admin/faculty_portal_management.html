@@ -1,0 +1,51 @@
+{% extends 'core/admin/base_admin.html' %}
+{% load static %}
+{% block title %}Management — Faculty portal — LJIET_Attendance{% endblock %}
+{% block content %}
+<div class="admin-hero">
+    <div class="d-flex align-items-center gap-3">
+        <img src="{% static 'images/ljiet-logo.png' %}" alt="LJIET" class="admin-logo">
+        <div>
+            <h1 class="page-title mb-1">Management</h1>
+            <p class="page-subtitle mb-0">{{ department.name }} — Show or hide optional items on the faculty sidebar. Dashboard, Mark Attendance, Mentorship Students, and Student Analytics are always visible.</p>
+        </div>
+    </div>
+    <a href="{% url 'core:admin_dashboard' %}" class="btn btn-outline-light btn-sm"><i class="fas fa-arrow-left me-1"></i> Dashboard</a>
+</div>
+
+<div class="card border-0 shadow-sm" style="border-radius: 14px; max-width: 720px;">
+    <div class="card-body p-4">
+        <form method="post">
+            {% csrf_token %}
+            <p class="text-muted small mb-4">Turn a feature <strong>off</strong> to remove it from faculty menus and block direct access. Faculty always see: Dashboard, Mark Attendance, Mentorship Students, Student Analytics.</p>
+
+            <div class="d-flex flex-column gap-4">
+                <div class="form-check form-switch">
+                    <input class="form-check-input" type="checkbox" role="switch" id="faculty_show_doubt_solving" name="faculty_show_doubt_solving" {% if department.faculty_show_doubt_solving %}checked{% endif %}>
+                    <label class="form-check-label" for="faculty_show_doubt_solving"><strong>Doubt solving</strong></label>
+                </div>
+                <div class="form-check form-switch">
+                    <input class="form-check-input" type="checkbox" role="switch" id="faculty_show_dr_weekly_load" name="faculty_show_dr_weekly_load" {% if department.faculty_show_dr_weekly_load %}checked{% endif %}>
+                    <label class="form-check-label" for="faculty_show_dr_weekly_load"><strong>My DR weekly load</strong></label>
+                </div>
+                <div class="form-check form-switch">
+                    <input class="form-check-input" type="checkbox" role="switch" id="faculty_show_mark_analytics" name="faculty_show_mark_analytics" {% if department.faculty_show_mark_analytics %}checked{% endif %}>
+                    <label class="form-check-label" for="faculty_show_mark_analytics"><strong>Mark Analytics</strong></label>
+                </div>
+                <div class="form-check form-switch">
+                    <input class="form-check-input" type="checkbox" role="switch" id="faculty_show_marks_report" name="faculty_show_marks_report" {% if department.faculty_show_marks_report %}checked{% endif %}>
+                    <label class="form-check-label" for="faculty_show_marks_report"><strong>Marks Report</strong></label>
+                </div>
+                <div class="form-check form-switch">
+                    <input class="form-check-input" type="checkbox" role="switch" id="faculty_show_student_marksheet" name="faculty_show_student_marksheet" {% if department.faculty_show_student_marksheet %}checked{% endif %}>
+                    <label class="form-check-label" for="faculty_show_student_marksheet"><strong>Student Marksheet</strong></label>
+                </div>
+            </div>
+
+            <div class="mt-4 d-flex gap-2">
+                <button type="submit" class="btn btn-primary"><i class="fas fa-save me-1"></i>Save</button>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}

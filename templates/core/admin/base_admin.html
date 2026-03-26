@@ -22,6 +22,18 @@
 .admin-hero .admin-logo { height: 44px; width: auto; max-width: 90px; object-fit: contain; filter: drop-shadow(0 2px 8px rgba(0,0,0,0.4)); }
 
 .admin-card { border: none; border-radius: 14px; box-shadow: 0 4px 20px rgba(0,0,0,0.08); overflow: hidden; }
+/* Allow dropdowns / popovers in specific cards */
+.admin-card.admin-card--overflow-visible { overflow: visible; }
+.admin-card.admin-card--overflow-visible > .card-header { overflow: visible; }
+.admin-card.admin-card--overflow-visible > .card-body { overflow: visible; }
+/* Narrow screens: scroll wide tables inside admin cards */
+@media (max-width: 991.98px) {
+    .admin-card:not(.admin-card--overflow-visible) > .card-body {
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+        overscroll-behavior-x: contain;
+    }
+}
 .admin-card .card-header { background: linear-gradient(90deg, #1e293b 0%, #334155 100%); color: #fff; font-weight: 600; padding: 0.9rem 1.25rem; border: none; }
 .admin-card .table thead th { background: linear-gradient(180deg, #334155 0%, #475569 100%); color: #fff !important; font-weight: 600; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.5px; padding: 0.9rem 1rem; border: none; }
 .admin-card .table tbody td { padding: 0.85rem 1rem; vertical-align: middle; }
@@ -37,5 +49,25 @@
 
 .btn-edit-sm { padding: 0.35rem 0.65rem; font-size: 0.8rem; border-radius: 8px; }
 .btn-delete-sm { padding: 0.35rem 0.65rem; font-size: 0.8rem; border-radius: 8px; }
+
+@media (max-width: 767.98px) {
+    .admin-hero {
+        padding: 1rem 1.1rem;
+        border-radius: 12px;
+        flex-direction: column;
+        align-items: flex-start !important;
+    }
+    .admin-hero .page-title { font-size: 1.2rem !important; }
+    .admin-hero .admin-logo { height: 36px; }
+    .admin-stat-card .stat-value { font-size: 1.25rem; }
+    .admin-stat-card .stat-icon { width: 46px; height: 46px; font-size: 1.2rem; }
+    .admin-card .card-header { padding: 0.75rem 1rem; font-size: 0.9rem; }
+    .admin-card .table thead th,
+    .admin-card .table tbody td { padding: 0.6rem 0.65rem; font-size: 0.8rem; }
+}
+@media (max-width: 575.98px) {
+    .admin-stat-card .card-body { flex-direction: column; align-items: flex-start !important; text-align: left; }
+    .admin-stat-card .stat-icon { margin-bottom: 0.35rem; }
+}
 </style>
 {% endblock %}

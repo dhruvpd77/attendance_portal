@@ -21,7 +21,8 @@
             --header-shadow: 0 4px 20px rgba(0,0,0,0.08);
         }
         * { font-family: 'Plus Jakarta Sans', system-ui, sans-serif; }
-        body { background: #f1f5f9; min-height: 100vh; overflow-x: hidden; }
+        html { -webkit-text-size-adjust: 100%; }
+        body { background: #f1f5f9; min-height: 100vh; min-height: 100dvh; overflow-x: hidden; }
 
         /* Mobile: safe area and touch-friendly */
         @media (max-width: 991.98px) {
@@ -29,6 +30,33 @@
             .page-title { font-size: 1.35rem !important; }
             .page-subtitle { font-size: 0.875rem !important; }
         }
+        @media (max-width: 575.98px) {
+            .page-title { font-size: 1.2rem !important; }
+            .main-content { padding-left: max(0.75rem, env(safe-area-inset-left)) !important; padding-right: max(0.75rem, env(safe-area-inset-right)) !important; }
+        }
+
+        /* Main column never forces horizontal page scroll */
+        .main-content {
+            max-width: 100%;
+            word-wrap: break-word;
+            overflow-wrap: break-word;
+        }
+
+        /* Tables inside cards: horizontal scroll on narrow viewports */
+        @media (max-width: 991.98px) {
+            .card-body:has(> table.table) {
+                overflow-x: auto;
+                -webkit-overflow-scrolling: touch;
+                overscroll-behavior-x: contain;
+            }
+            .main-content .card .card-body:has(table.table) {
+                overflow-x: auto;
+                -webkit-overflow-scrolling: touch;
+                overscroll-behavior-x: contain;
+            }
+        }
+
+        body > .d-flex { align-items: stretch; min-height: calc(100vh - 56px); min-height: calc(100dvh - 56px); }
 
         /* Navbar */
         .app-navbar {
@@ -147,6 +175,9 @@
         .sidebar-link i { width: 20px; text-align: center; font-size: 1rem; }
         .sidebar-link { cursor: pointer; }
         .app-sidebar { z-index: 10; }
+        @media (max-width: 1199.98px) {
+            .sidebar-link { font-size: 0.875rem; padding: 0.55rem 0.85rem; }
+        }
 
         @keyframes slideInLeft {
             from { opacity: 0; transform: translateX(-15px); }
@@ -354,34 +385,101 @@
         @media (min-width: 768px) {
             .w-md-auto { width: auto !important; }
         }
+
+        /* Mobile / narrow screens: flex main shrinks; tables scroll inside wrappers */
+        body > .d-flex {
+            align-items: stretch;
+            max-width: 100vw;
+        }
+        body > .d-flex > main.main-content {
+            min-width: 0;
+            flex: 1 1 auto;
+            overflow-x: hidden;
+        }
+        .table-responsive {
+            -webkit-overflow-scrolling: touch;
+            max-width: 100%;
+        }
+        img, video, canvas { max-width: 100%; height: auto; }
+        iframe { max-width: 100%; }
+
+        /* Navbar: never overflow small screens; account menu bundles on compact widths */
+        .app-navbar .navbar-toolbar-desktop .btn-logout {
+            min-height: 2.25rem;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+        }
+        @media (max-width: 991.98px) {
+            .navbar .container-fluid {
+                flex-wrap: nowrap;
+                row-gap: 0.25rem;
+            }
+            .app-navbar .navbar-brand {
+                font-size: 1rem;
+                max-width: min(200px, 42vw);
+                overflow: hidden;
+                text-overflow: ellipsis;
+                white-space: nowrap;
+            }
+        }
+
+        /* Offcanvas nav: long labels wrap; larger tap targets */
+        #sidebarOffcanvas .offcanvas-nav-link {
+            color: #cbd5e1 !important;
+            white-space: normal;
+            word-break: break-word;
+            min-height: 2.75rem;
+            line-height: 1.3;
+        }
+        #sidebarOffcanvas .offcanvas-nav-link.active {
+            color: #fff !important;
+            background: var(--sidebar-active) !important;
+        }
+        #sidebarOffcanvas .offcanvas-nav-link:hover {
+            color: #fff !important;
+            background: var(--sidebar-hover);
+        }
     </style>
     {% block extra_head %}{% endblock %}
 </head>
 <body>
     <!-- Navbar -->
     <nav class="navbar navbar-expand-lg app-navbar sticky-top">
-        <div class="container-fluid px-3 px-lg-4">
+        <div class="container-fluid px-2 px-sm-3 px-lg-4 d-flex flex-wrap align-items-center">
             {% if user.is_authenticated and sidebar_links %}
-            <button class="btn btn-link text-white p-2 d-lg-none me-2" type="button" data-bs-toggle="offcanvas" data-bs-target="#sidebarOffcanvas" aria-label="Menu">
+            <button class="btn btn-link text-white p-2 d-lg-none me-1 flex-shrink-0" type="button" data-bs-toggle="offcanvas" data-bs-target="#sidebarOffcanvas" aria-label="Open menu">
                 <i class="fas fa-bars fa-lg"></i>
             </button>
             {% endif %}
-            <a class="navbar-brand d-flex align-items-center gap-2" href="{% url 'accounts:role_redirect' %}">
-                <img src="{% static 'images/ljiet-logo.png' %}" alt="LJIET" class="navbar-brand-logo">
-                <span class="d-none d-sm-inline">LJIET_Attendance</span>
-                <span class="d-inline d-sm-none">LJIET_Attendance</span>
+            <a class="navbar-brand d-flex align-items-center gap-2 flex-shrink-1 me-auto" href="{% url 'accounts:role_redirect' %}">
+                <img src="{% static 'images/ljiet-logo.png' %}" alt="LJIET" class="navbar-brand-logo flex-shrink-0">
+                <span class="text-truncate">LJIET_Attendance</span>
             </a>
             {% if user.is_authenticated %}
-            <div class="d-flex align-items-center gap-2 gap-lg-3">
+            <!-- Compact: dropdown (tablet & phone) -->
+            <div class="dropdown d-lg-none ms-1">
+                <button class="btn btn-link text-white text-decoration-none p-2" type="button" data-bs-toggle="dropdown" aria-expanded="false" aria-label="Account menu">
+                    <i class="fas fa-user-circle fa-lg"></i>
+                </button>
+                <ul class="dropdown-menu dropdown-menu-end shadow border-0 rounded-3 py-2" style="min-width: 220px;">
+                    <li><h6 class="dropdown-header text-truncate px-3">{{ user.get_full_name|default:user.username }}</h6></li>
+                    <li><a class="dropdown-item rounded-2 mx-1" href="{% url 'accounts:change_password' %}"><i class="fas fa-key me-2 text-secondary"></i>Change password</a></li>
+                    <li><hr class="dropdown-divider my-1"></li>
+                    <li><a class="dropdown-item rounded-2 mx-1 text-danger" href="{% url 'accounts:logout' %}"><i class="fas fa-sign-out-alt me-2"></i>Logout</a></li>
+                </ul>
+            </div>
+            <!-- Full toolbar (desktop) -->
+            <div class="navbar-toolbar-desktop d-none d-lg-flex align-items-center gap-2 gap-xl-3 flex-shrink-0">
                 <span class="user-badge" title="{{ user.get_full_name|default:user.username }}">
                     <span class="user-icon"><i class="fas fa-user"></i></span>
                     <span class="user-name text-truncate">{{ user.get_full_name|default:user.username }}</span>
                 </span>
                 <a href="{% url 'accounts:change_password' %}" class="btn btn-logout btn-sm text-nowrap" title="Change password">
-                    <i class="fas fa-key me-1"></i> <span class="d-none d-sm-inline">Change Password</span>
+                    <i class="fas fa-key me-1"></i> Change Password
                 </a>
                 <a href="{% url 'accounts:logout' %}" class="btn btn-logout btn-sm text-nowrap">
-                    <i class="fas fa-sign-out-alt me-1"></i> <span class="d-none d-sm-inline">Logout</span>
+                    <i class="fas fa-sign-out-alt me-1"></i> Logout
                 </a>
             </div>
             {% endif %}
@@ -397,7 +495,7 @@
         </div>
         <div class="offcanvas-body p-3">
             {% for item in sidebar_links %}
-            <a href="{{ item.url }}" class="sidebar-link offcanvas-nav-link d-flex align-items-center gap-3 text-decoration-none rounded-3 py-2 px-3 mb-1 {% if request.resolver_match.url_name == item.active_name %}active{% endif %}" data-bs-dismiss="offcanvas">
+            <a href="{{ item.url }}" class="sidebar-link offcanvas-nav-link d-flex align-items-center gap-3 text-decoration-none rounded-3 py-2 px-3 mb-1 {% if request.resolver_match.url_name == item.active_name %}active{% elif item.active_name_extra and request.resolver_match.url_name in item.active_name_extra %}active{% endif %}" data-bs-dismiss="offcanvas">
                 <i class="fas {{ item.icon }} fa-fw"></i>
                 <span>{{ item.label }}</span>
             </a>
@@ -411,7 +509,7 @@
         <aside class="app-sidebar d-none d-lg-block flex-shrink-0">
             <nav class="d-flex flex-column gap-0">
                 {% for item in sidebar_links %}
-                <a href="{{ item.url }}" class="sidebar-link {% if request.resolver_match.url_name == item.active_name %}active{% endif %}">
+                <a href="{{ item.url }}" class="sidebar-link {% if request.resolver_match.url_name == item.active_name %}active{% elif item.active_name_extra and request.resolver_match.url_name in item.active_name_extra %}active{% endif %}">
                     <i class="fas {{ item.icon }}"></i>
                     <span>{{ item.label }}</span>
                 </a>

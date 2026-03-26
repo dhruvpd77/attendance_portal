@@ -20,5 +20,9 @@ staticfiles/
 # IDE
 .idea/
 .vscode/
+.cursor/
 *.swp
 *.swo
+
+# Local spreadsheets / exports (keep out of git)
+*.xlsx

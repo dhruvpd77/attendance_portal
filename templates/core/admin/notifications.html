@@ -201,7 +201,7 @@
                             <td>{{ item.student.batch.name }}</td>
                             <td class="text-end">{{ item.held }}</td>
                             <td class="text-end">{{ item.attended }}</td>
-                            <td class="text-end {% if item.pct < 50 %}pct-low{% else %}pct-warn{% endif %}">{{ item.pct }}%</td>
+                            <td class="text-end {% if item.pct < 50 %}pct-low{% else %}pct-warn{% endif %}">{{ item.pct|floatformat:2 }}%</td>
                         </tr>
                         {% endfor %}
                     </tbody>

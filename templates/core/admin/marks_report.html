@@ -1,0 +1,212 @@
+{% extends 'base.html' %}
+{% load static %}
+{% block title %}Marks Report Generation - LJIET_Attendance{% endblock %}
+{% block extra_head %}
+{{ block.super }}
+<style>
+.sa-hero {
+    background: linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #334155 100%);
+    border-radius: 16px;
+    padding: 1.25rem 1.5rem;
+    margin-bottom: 1.5rem;
+    color: #fff;
+    box-shadow: 0 10px 40px rgba(15, 23, 42, 0.25);
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+}
+.sa-hero .page-title { color: #fff !important; font-size: 1.5rem; margin-bottom: 0.35rem !important; }
+.sa-hero .page-subtitle { color: #94a3b8 !important; font-size: 0.9rem; margin: 0; }
+.sa-hero .admin-logo { height: 44px; width: auto; max-width: 90px; object-fit: contain; filter: drop-shadow(0 2px 8px rgba(0,0,0,0.4)); }
+
+.sa-filter-card {
+    border: none;
+    border-radius: 14px;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+    margin-bottom: 1.5rem;
+    overflow: hidden;
+    border-left: 5px solid #3b82f6;
+    transition: box-shadow 0.3s ease;
+}
+.sa-filter-card:hover { box-shadow: 0 8px 30px rgba(59, 130, 246, 0.15); }
+.sa-filter-card .card-header {
+    background: linear-gradient(90deg, #1e293b 0%, #334155 100%);
+    color: #fff !important;
+    font-weight: 600;
+    padding: 0.9rem 1.25rem;
+    border: none;
+}
+
+.mr-info-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.6rem 1rem;
+    background: linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%);
+    border: 1px solid #93c5fd;
+    border-radius: 10px;
+    color: #1e40af;
+    font-size: 0.85rem;
+    margin-bottom: 1.25rem;
+}
+.mr-info-badge i { color: #3b82f6; }
+
+.mr-multi-select {
+    min-height: 120px;
+    padding: 0.5rem 0.75rem;
+    border-radius: 10px;
+    border: 1px solid #e2e8f0;
+    font-size: 0.9rem;
+    background: #fff;
+}
+.mr-multi-select:focus {
+    border-color: #3b82f6;
+    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15);
+}
+.mr-multi-select option {
+    padding: 0.4rem 0.5rem;
+    border-radius: 6px;
+}
+.mr-multi-select option:checked {
+    background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+    color: #fff;
+}
+
+.mr-btn-group {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.75rem;
+    padding-top: 0.5rem;
+}
+.mr-btn-primary {
+    background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+    color: #fff !important;
+    border: none;
+    padding: 0.6rem 1.25rem;
+    border-radius: 10px;
+    font-weight: 600;
+    transition: all 0.25s ease;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+.mr-btn-primary:hover {
+    background: linear-gradient(135deg, #059669 0%, #047857 100%);
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(16, 185, 129, 0.4);
+}
+.mr-btn-outline {
+    padding: 0.5rem 1rem;
+    border-radius: 10px;
+    font-weight: 600;
+    font-size: 0.9rem;
+    text-decoration: none !important;
+    transition: all 0.25s ease;
+    border: 2px solid #fecaca;
+    color: #dc2626;
+    background: #fff;
+}
+.mr-btn-outline:hover {
+    background: #fef2f2;
+    color: #b91c1c;
+    border-color: #fca5a5;
+}
+</style>
+{% endblock %}
+{% block content %}
+<div class="sa-hero">
+    <div class="d-flex align-items-center gap-3">
+        <img src="{% static 'images/ljiet-logo.png' %}" alt="LJIET" class="admin-logo">
+        <div>
+            <h1 class="page-title">Marks Report Generation</h1>
+            <p class="page-subtitle">Select phase(s), subject(s), and batch(es) to download a comprehensive marks report.</p>
+        </div>
+    </div>
+    {% if is_admin %}
+    <a href="{% url 'core:admin_dashboard' %}" class="btn btn-outline-light btn-sm"><i class="fas fa-arrow-left me-1"></i> Dashboard</a>
+    {% else %}
+    <a href="{% url 'core:faculty_dashboard' %}" class="btn btn-outline-light btn-sm"><i class="fas fa-arrow-left me-1"></i> Dashboard</a>
+    {% endif %}
+</div>
+
+<div class="card sa-filter-card mb-4">
+    <div class="card-header"><i class="fas fa-file-alt me-2"></i>Report Generation</div>
+    <div class="card-body p-4">
+        <div class="mr-info-badge">
+            <i class="fas fa-info-circle"></i>
+            <span>Format matches attendance sheet — Phase headers with subjects underneath. Cells with marks &lt; 9 are highlighted in red.</span>
+        </div>
+        <form method="get" action="{% if is_admin %}{% url 'core:admin_mark_analytics_report_excel' %}{% else %}{% url 'core:faculty_mark_analytics_report_excel' %}{% endif %}" class="needs-validation" novalidate>
+            <div class="row g-3 align-items-end">
+                <div class="col-12 col-md-6 col-lg-3">
+                    <label class="form-label small fw-semibold text-secondary mb-1">Phase</label>
+                    <select name="phase_combo" class="form-select form-select-app" required style="min-width: 100%;">
+                        <option value="">— Select phase —</option>
+                        {% for ep in exam_phases %}
+                        <option value="{{ ep.name }}">{{ ep.name }} only</option>
+                        {% endfor %}
+                        {% if exam_phases|length >= 2 %}
+                        <option value="combo_2">{% for ep in exam_phases|slice:":2" %}{{ ep.name }}{% if not forloop.last %} + {% endif %}{% endfor %}</option>
+                        {% endif %}
+                        {% if exam_phases|length >= 3 %}
+                        <option value="combo_3">{% for ep in exam_phases|slice:":3" %}{{ ep.name }}{% if not forloop.last %} + {% endif %}{% endfor %}</option>
+                        {% endif %}
+                        <option value="all">All phases</option>
+                    </select>
+                </div>
+                <div class="col-12 col-md-6 col-lg-3">
+                    <label class="form-label small fw-semibold text-secondary mb-1">Batch</label>
+                    <select name="batch_id" class="form-select form-select-app" style="min-width: 100%;">
+                        <option value="all">All Batches</option>
+                        {% for b in batches %}
+                        <option value="{{ b.id }}">{{ b.name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-12 col-md-6 col-lg-4">
+                    <label class="form-label small fw-semibold text-secondary mb-1">Subject(s) <span class="text-muted fw-normal">(Ctrl/Cmd to multi-select • empty = all)</span></label>
+                    <select name="subject_ids" class="form-select mr-multi-select" multiple size="5" style="width: 100%;">
+                        {% for s in all_subjects %}
+                        <option value="{{ s.id }}">{{ s.name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-12 col-md-6 col-lg-2 d-flex flex-column gap-2">
+                    <button type="submit" class="mr-btn-primary">
+                        <i class="fas fa-file-download"></i> Download Report
+                    </button>
+                    <div class="d-flex flex-column gap-2">
+                        <label class="form-label small fw-semibold text-secondary mb-0">All at-risk Excel</label>
+                        <select id="mrAtRiskPhase" class="form-select form-select-app form-select-sm">
+                            <option value="all">All phases</option>
+                            {% for ep in exam_phases %}
+                            <option value="{{ ep.name }}">{{ ep.name }} only</option>
+                            {% endfor %}
+                        </select>
+                        {% if is_admin %}
+                        <a href="#" id="mrAtRiskLink" class="mr-btn-outline text-center"><i class="fas fa-file-excel me-1"></i> Download</a>
+                        {% else %}
+                        <a href="#" id="mrAtRiskLink" class="mr-btn-outline text-center"><i class="fas fa-file-excel me-1"></i> Download</a>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+        </form>
+    </div>
+</div>
+<script>
+(function() {
+    var sel = document.getElementById('mrAtRiskPhase');
+    var link = document.getElementById('mrAtRiskLink');
+    if (sel && link) {
+        var baseUrl = "{% if is_admin %}{% url 'core:admin_mark_analytics_risk_all_excel' %}{% else %}{% url 'core:faculty_mark_analytics_risk_all_excel' %}{% endif %}";
+        function update() { link.href = baseUrl + '?phase=' + (sel.value || 'all'); }
+        update();
+        sel.addEventListener('change', update);
+    }
+})();
+</script>
+{% endblock %}

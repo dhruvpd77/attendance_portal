@@ -6,7 +6,7 @@ import json
 import os
 import re
 import random
-from collections import defaultdict
+from collections import Counter, defaultdict
 from datetime import datetime, timedelta
 from io import BytesIO
 
@@ -14,7 +14,7 @@ import openpyxl
 from django.conf import settings
 from django.contrib.auth.models import User
 from django.core.mail import send_mail
-from django.http import Http404, HttpResponse
+from django.http import Http404, HttpResponse, JsonResponse
 
 from django.shortcuts import render, redirect, get_object_or_404
 from django.urls import reverse
@@ -35,7 +35,9 @@ from openpyxl.utils import get_column_letter
 from .models import (
     Department, Batch, Subject, Faculty, Student,
     ScheduleSlot, TermPhase, FacultyAttendance, LectureAdjustment, LectureCancellation, ExtraLecture, PhaseHoliday,
-    AttendanceNotificationLog, AttendanceLockSetting,
+    AttendanceNotificationLog, AttendanceLockSetting, HODWeekLock,
+    ExamPhase, ExamPhaseSubject, StudentMark, FacultyDoubtSession,
+    FacultyDoubtRequest, FacultyDoubtRequestStudent, FacultyCombineDrCache,
 )
 from accounts.models import UserRole
 
@@ -87,6 +89,23 @@ def get_cancelled_lectures_set(dept):
         )
     except OperationalError:
         return set()  # Table may not exist if migrations not run yet
+
+
+def _is_admin_manual_locked_by_hod(dept, target_date):
+    """Return True if this date falls in a week locked for the department (HOD or super admin). Departmental admins cannot edit manual attendance that week; HOD and super admin may still edit."""
+    if not dept:
+        return False
+    try:
+        week_map = {p: _compile_phase_weeks_date_objects(dept, p) for p in ['T1', 'T2', 'T3', 'T4']}
+        for phase, weeks in week_map.items():
+            for week_idx, week_dates in enumerate(weeks):
+                if target_date in week_dates:
+                    if HODWeekLock.objects.filter(department=dept, phase=phase, week_index=week_idx).exists():
+                        return True
+                    return False
+    except Exception:
+        pass
+    return False
 
 
 def _is_attendance_locked_for_date(target_date):
@@ -159,14 +178,50 @@ def get_faculty_subject_for_slot(date, batch, time_slot):
     return None, None
 
 
+def _is_extra_lecture_slot(dept, d, batch, time_slot):
+    if not batch or not time_slot:
+        return False
+    return ExtraLecture.objects.filter(date=d, batch=batch, time_slot=time_slot).exists()
+
+
+def _dr_slot_effective_load(is_extra_lecture, attendance_filled, present_count):
+    """DR effective load: 0 if attendance not marked; extra (ETL) with present < 24 → 0.5 else 0.75."""
+    if not attendance_filled:
+        return 0
+    try:
+        p = int(present_count)
+    except (TypeError, ValueError):
+        p = 0
+    if is_extra_lecture and p < 24:
+        return 0.5
+    return 0.75
+
+
+def _add_batch_schedule_pairs_for_attendance(dept, batch, dates_iter, target_set, cancelled_set=None):
+    """Add (date, time_slot) to target_set for held/percent: timetable rows + extra lectures if dept flag on."""
+    if cancelled_set is None:
+        cancelled_set = get_cancelled_lectures_set(dept)
+    include_extra = bool(getattr(dept, 'include_extra_lectures_in_attendance', False))
+    for d in dates_iter:
+        weekday = d.strftime('%A')
+        slots = [s for s in _effective_slots_for_date(dept, d, extra_filters={'batch': batch}) if s.day == weekday]
+        for slot in set(s.time_slot for s in slots if s.time_slot):
+            if (d, batch.id, slot) not in cancelled_set:
+                target_set.add((d, slot))
+        if include_extra:
+            for ts in ExtraLecture.objects.filter(date=d, batch=batch).values_list('time_slot', flat=True):
+                if ts and (d, batch.id, ts) not in cancelled_set:
+                    target_set.add((d, ts))
+
+
 # ----------
 
 def get_admin_department(request):
-    """Department for admin: departmental admin has fixed dept; super admin uses session or first."""
+    """Department for admin/HOD: departmental admin or HOD has fixed dept; super admin uses session or first."""
     try:
         if request.user.is_authenticated and hasattr(request.user, 'role_profile'):
             rp = request.user.role_profile
-            if rp.role == 'admin' and rp.department_id:
+            if rp.role in ('admin', 'hod') and rp.department_id:
                 return rp.department
     except Exception:
         pass
@@ -177,7 +232,7 @@ def get_admin_department(request):
 
 
 def is_super_admin(request):
-    """True if current user is admin with no department (can create depts and departmental admins)."""
+    """True if current user is admin with no department (can create depts, admins, and HODs)."""
     if not user_can_admin(request):
         return False
     if request.user.is_superuser or request.user.is_staff:
@@ -204,10 +259,20 @@ def get_student_user(request):
 
 
 def user_can_admin(request):
+    """True if user can access admin features (admin, HOD, or superuser/staff)."""
     try:
-        return request.user.role_profile.role == 'admin' or request.user.is_superuser or request.user.is_staff
+        role = request.user.role_profile.role
+        return role in ('admin', 'hod') or request.user.is_superuser or request.user.is_staff
     except (UserRole.DoesNotExist, AttributeError):
         return request.user.is_superuser or request.user.is_staff
+
+
+def is_hod(request):
+    """True if current user is HOD (can manage week locks for their department)."""
+    try:
+        return request.user.role_profile.role == 'hod'
+    except (UserRole.DoesNotExist, AttributeError):
+        return False
 
 
 def user_can_faculty(request):
@@ -222,6 +287,37 @@ def user_can_student(request):
         return request.user.role_profile.role == 'student'
     except (UserRole.DoesNotExist, AttributeError):
         return False
+
+
+def faculty_portal_feature_allowed(faculty, url_name):
+    """Per-department toggles for optional faculty menu items (HOD / super admin). Default allow."""
+    if not faculty or not faculty.department:
+        return True
+    d = faculty.department
+    mapping = {
+        'faculty_doubt_solving': d.faculty_show_doubt_solving,
+        'faculty_doubt_students_data': d.faculty_show_doubt_solving,
+        'faculty_dr_load': d.faculty_show_dr_weekly_load,
+        'faculty_mark_analytics': d.faculty_show_mark_analytics,
+        'faculty_mark_analytics_risk_excel': d.faculty_show_mark_analytics,
+        'faculty_mark_analytics_risk_all_excel': d.faculty_show_mark_analytics,
+        'faculty_mark_analytics_report_excel': d.faculty_show_mark_analytics,
+        'faculty_marks_report': d.faculty_show_marks_report,
+        'faculty_student_marksheet': d.faculty_show_student_marksheet,
+    }
+    return mapping.get(url_name, True)
+
+
+def _faculty_portal_guard_redirect(request, url_name):
+    """If optional faculty feature is off, redirect to dashboard with message."""
+    faculty = get_faculty_user(request)
+    if not faculty_portal_feature_allowed(faculty, url_name):
+        messages.error(
+            request,
+            'This section is turned off for your department. Contact your HOD if you need access.',
+        )
+        return redirect('core:faculty_dashboard')
+    return None
 
 
 # ---------- Home & Dashboards ----------
@@ -501,6 +597,305 @@ def extra_lecture_delete(request):
     return redirect('core:extra_lecture')
 
 
+# ---------- Admin: Result / Exam Phases ----------
+
+@login_required
+def exam_phases_list(request):
+    """Admin: List exam phases, add new phase."""
+    if not user_can_admin(request):
+        return redirect('accounts:role_redirect')
+    dept = get_admin_department(request)
+    if not dept:
+        messages.error(request, 'Select a department first from Dashboard.')
+        return redirect('core:admin_dashboard')
+
+    if request.method == 'POST' and request.POST.get('action') == 'add_phase':
+        name = (request.POST.get('name', '') or '').strip().upper()
+        if name:
+            obj, created = ExamPhase.objects.get_or_create(department=dept, name=name)
+            if created:
+                messages.success(request, f'Exam phase "{name}" created.')
+            else:
+                messages.info(request, f'Exam phase "{name}" already exists.')
+        else:
+            messages.error(request, 'Enter a phase name.')
+        return redirect('core:exam_phases_list')
+
+    if request.method == 'POST' and request.POST.get('action') == 'delete_phase':
+        pk = request.POST.get('phase_id')
+        obj = ExamPhase.objects.filter(pk=pk, department=dept).first()
+        if obj:
+            obj.delete()
+            messages.success(request, f'Exam phase "{obj.name}" deleted.')
+        return redirect('core:exam_phases_list')
+
+    phases = list(ExamPhase.objects.filter(department=dept).order_by('name'))
+    ctx = {'department': dept, 'phases': phases}
+    return render(request, 'core/admin/exam_phases_list.html', ctx)
+
+
+@login_required
+def admin_performance_students(request):
+    """Hub: links to result, marks, and attendance-performance tools (HOD / departmental admin / super admin)."""
+    if not user_can_admin(request):
+        return redirect('accounts:role_redirect')
+    dept = get_admin_department(request)
+    if not dept:
+        messages.error(request, 'Select a department first.')
+        return redirect('core:admin_dashboard')
+    return render(request, 'core/admin/performance_students.html', {'department': dept})
+
+
+@login_required
+def admin_faculty_portal_management(request):
+    """HOD / super admin: toggle optional faculty sidebar features for the current department."""
+    if not user_can_admin(request):
+        return redirect('accounts:role_redirect')
+    if not (is_hod(request) or is_super_admin(request)):
+        messages.error(request, 'Only HOD or super admin can open Management.')
+        return redirect('core:admin_dashboard')
+    dept = get_admin_department(request)
+    if not dept:
+        messages.error(request, 'Select a department first.')
+        return redirect('core:admin_dashboard')
+    toggle_fields = (
+        'faculty_show_doubt_solving',
+        'faculty_show_dr_weekly_load',
+        'faculty_show_mark_analytics',
+        'faculty_show_marks_report',
+        'faculty_show_student_marksheet',
+    )
+    if request.method == 'POST':
+        for fn in toggle_fields:
+            setattr(dept, fn, request.POST.get(fn) == 'on')
+        dept.save(update_fields=list(toggle_fields))
+        messages.success(request, 'Faculty portal options saved.')
+        return redirect('core:admin_faculty_portal_management')
+    return render(request, 'core/admin/faculty_portal_management.html', {'department': dept})
+
+
+@login_required
+def exam_phase_detail(request, phase_id):
+    """Admin: Phase detail — manage subjects, upload marksheet per subject."""
+    if not user_can_admin(request):
+        return redirect('accounts:role_redirect')
+    dept = get_admin_department(request)
+    if not dept:
+        return redirect('core:admin_dashboard')
+    phase = ExamPhase.objects.filter(pk=phase_id, department=dept).first()
+    if not phase:
+        messages.error(request, 'Exam phase not found.')
+        return redirect('core:exam_phases_list')
+
+    dept_subjects = list(Subject.objects.filter(department=dept).order_by('name'))
+    phase_subject_ids = set(ExamPhaseSubject.objects.filter(exam_phase=phase).values_list('subject_id', flat=True))
+    phase_subjects = [s for s in dept_subjects if s.id in phase_subject_ids]
+    available_to_add = [s for s in dept_subjects if s.id not in phase_subject_ids]
+
+    if request.method == 'POST' and request.POST.get('action') == 'add_subject':
+        sub_id = request.POST.get('subject_id')
+        sub = Subject.objects.filter(pk=sub_id, department=dept).first()
+        if sub:
+            ExamPhaseSubject.objects.get_or_create(exam_phase=phase, subject=sub)
+            messages.success(request, f'Added subject "{sub.name}" to phase.')
+        return redirect('core:exam_phase_detail', phase_id=phase.id)
+
+    if request.method == 'POST' and request.POST.get('action') == 'remove_subject':
+        sub_id = request.POST.get('subject_id')
+        ExamPhaseSubject.objects.filter(exam_phase=phase, subject_id=sub_id).delete()
+        StudentMark.objects.filter(exam_phase=phase, subject_id=sub_id).delete()
+        messages.success(request, 'Subject removed from phase.')
+        return redirect('core:exam_phase_detail', phase_id=phase.id)
+
+    if request.method == 'POST' and request.POST.get('action') == 'add_all_subjects':
+        added = 0
+        for s in dept_subjects:
+            _, c = ExamPhaseSubject.objects.get_or_create(exam_phase=phase, subject=s)
+            if c:
+                added += 1
+        messages.success(request, f'Added {added} subject(s) to phase.')
+        return redirect('core:exam_phase_detail', phase_id=phase.id)
+
+    batches = list(Batch.objects.filter(department=dept).order_by('name'))
+    selected_subject_id = request.GET.get('subject_id')
+    selected_batch_id = request.GET.get('batch_id')
+    marks_list = []
+    selected_subject = None
+    if selected_subject_id and phase_subjects:
+        sub = next((s for s in phase_subjects if str(s.id) == str(selected_subject_id)), None)
+        if sub:
+            selected_subject = sub
+            qs = StudentMark.objects.filter(exam_phase=phase, subject=sub).select_related('student', 'student__batch')
+            if selected_batch_id:
+                qs = qs.filter(student__batch_id=selected_batch_id)
+            marks_list = list(qs)
+            marks_list.sort(key=lambda m: (m.student.batch.name if m.student.batch else '', _roll_sort_key(m.student)))
+
+    ctx = {
+        'department': dept,
+        'phase': phase,
+        'phase_subjects': phase_subjects,
+        'available_to_add': available_to_add,
+        'batches': batches,
+        'selected_subject_id': selected_subject_id,
+        'selected_batch_id': selected_batch_id,
+        'marks_list': marks_list,
+        'selected_subject': selected_subject,
+    }
+    return render(request, 'core/admin/exam_phase_detail.html', ctx)
+
+
+@login_required
+def exam_phase_upload_marks(request):
+    """Admin: Upload marksheet Excel for a phase+subject. Map enrollment_no, save marks."""
+    if request.method != 'POST' or not user_can_admin(request):
+        return redirect('core:exam_phases_list')
+    dept = get_admin_department(request)
+    if not dept:
+        return redirect('core:admin_dashboard')
+    phase_id = request.POST.get('phase_id')
+    subject_id = request.POST.get('subject_id')
+    phase = ExamPhase.objects.filter(pk=phase_id, department=dept).first()
+    subject = Subject.objects.filter(pk=subject_id, department=dept).first()
+    if not phase or not subject:
+        messages.error(request, 'Invalid phase or subject.')
+        return redirect('core:exam_phases_list')
+    if not ExamPhaseSubject.objects.filter(exam_phase=phase, subject=subject).exists():
+        messages.error(request, 'Subject not in this phase.')
+        return redirect('core:exam_phase_detail', phase_id=phase.id)
+
+    excel_file = request.FILES.get('marksheet_file')
+    if not excel_file:
+        messages.error(request, 'Select an Excel file.')
+        return redirect('core:exam_phase_detail', phase_id=phase.id)
+
+    try:
+        wb = openpyxl.load_workbook(excel_file, read_only=True, data_only=True)
+        ws = wb.active
+    except Exception as e:
+        messages.error(request, f'Invalid Excel file: {e}')
+        return redirect('core:exam_phase_detail', phase_id=phase.id)
+
+    # Find header row and columns: Enrollment (Enrolllment/Enrollment), Marks
+    enroll_col = marks_col = None
+    data_start_row = 0
+    for row_idx, row in enumerate(ws.iter_rows(values_only=True), 1):
+        if row_idx > 30:
+            break
+        row_str = [str(c).lower() if c is not None else '' for c in (row or [])]
+        if 'enroll' in ' '.join(row_str) or 'enrolllment' in ' '.join(row_str):
+            for c_idx, cell in enumerate(row_str):
+                if 'enroll' in cell or 'enrolllment' in cell:
+                    enroll_col = c_idx
+                if 'mark' in cell:
+                    marks_col = c_idx
+            if enroll_col is not None:
+                data_start_row = row_idx
+                break
+    if enroll_col is None:
+        enroll_col = 3  # Fallback: column D
+    if marks_col is None:
+        marks_col = 6   # Fallback: column G
+
+    students_by_enrollment = {
+        str(s.enrollment_no).strip(): s
+        for s in Student.objects.filter(department=dept).exclude(enrollment_no='')
+        if s.enrollment_no
+    }
+
+    created = updated = skipped = 0
+    for row_idx, row in enumerate(ws.iter_rows(values_only=True), 1):
+        if row_idx <= data_start_row or not row:  # Skip header and empty
+            continue
+        enroll_val = row[enroll_col] if enroll_col < len(row) else None
+        if enroll_val is None:
+            continue
+        enroll_str = str(enroll_val).strip()
+        if not enroll_str or not enroll_str.isdigit():
+            continue
+        marks_val = row[marks_col] if marks_col < len(row) else None
+        try:
+            marks_decimal = float(marks_val) if marks_val is not None else None
+        except (TypeError, ValueError):
+            marks_decimal = None
+
+        student = students_by_enrollment.get(enroll_str)
+        if not student:
+            skipped += 1
+            continue
+        obj, created_flag = StudentMark.objects.update_or_create(
+            student=student, exam_phase=phase, subject=subject,
+            defaults={'marks_obtained': marks_decimal}
+        )
+        if created_flag:
+            created += 1
+        else:
+            updated += 1
+
+    wb.close()
+    messages.success(request, f'Marks uploaded: {created} new, {updated} updated. {skipped} rows skipped (enrollment not found).')
+    return redirect('core:exam_phase_detail', phase_id=phase.id)
+
+
+@login_required
+def faculty_student_marksheet(request):
+    """Faculty: View mentorship students' marks — phase-wise, subject-wise (same format as attendance)."""
+    if not user_can_faculty(request):
+        return redirect('accounts:role_redirect')
+    blocked = _faculty_portal_guard_redirect(request, 'faculty_student_marksheet')
+    if blocked:
+        return blocked
+    faculty = get_faculty_user(request)
+    if not faculty:
+        return redirect('accounts:logout')
+    dept = faculty.department
+    phases = list(ExamPhase.objects.filter(department=dept).order_by('name'))
+    phase_subjects_map = {}
+    for p in phases:
+        subs = list(ExamPhaseSubject.objects.filter(exam_phase=p).select_related('subject').order_by('subject__name'))
+        phase_subjects_map[p.id] = subs
+
+    mentorship_students = list(
+        Student.objects.filter(mentor=faculty, department=dept)
+        .select_related('batch', 'mentor')
+    )
+    mentorship_students.sort(key=lambda s: (s.batch.name if s.batch else '', _roll_sort_key(s)))
+
+    marks_data = []
+    if mentorship_students:
+        student_ids = [s.id for s in mentorship_students]
+        marks_qs = StudentMark.objects.filter(
+            student_id__in=student_ids
+        ).select_related('exam_phase', 'subject', 'student')
+        marks_map = defaultdict(lambda: defaultdict(dict))  # student_id -> phase_id -> {subject_id: marks}
+        for m in marks_qs:
+            marks_map[m.student_id][m.exam_phase_id][m.subject_id] = m.marks_obtained
+
+    for student in mentorship_students:
+        row = {
+            'student': student,
+            'phases': [],
+        }
+        for phase in phases:
+            phase_subs = phase_subjects_map.get(phase.id, [])
+            subj_marks = []
+            for eps in phase_subs:
+                m = marks_map.get(student.id, {}).get(phase.id, {}).get(eps.subject_id)
+                subj_marks.append({'subject': eps.subject, 'marks': m})
+            row['phases'].append({'phase': phase, 'subjects': subj_marks})
+        marks_data.append(row)
+
+    phase_with_subjects = [(p, phase_subjects_map.get(p.id, [])) for p in phases]
+
+    ctx = {
+        'faculty': faculty,
+        'phases': phases,
+        'phase_with_subjects': phase_with_subjects,
+        'marks_data': marks_data,
+    }
+    return render(request, 'core/faculty/student_marksheet.html', ctx)
+
+
 @login_required
 def faculty_dashboard(request):
     if not user_can_faculty(request):
@@ -594,9 +989,13 @@ def department_add(request):
         return redirect('core:admin_dashboard')
     if request.method == 'POST':
         name = request.POST.get('name', '').strip()
-        code = request.POST.get('code', '').strip()
+        semester = request.POST.get('semester', '').strip()
+        include_x = request.POST.get('include_extra_lectures_in_attendance') == 'on'
         if name:
-            Department.objects.create(name=name, code=code)
+            Department.objects.create(
+                name=name, semester=semester,
+                include_extra_lectures_in_attendance=include_x,
+            )
             messages.success(request, 'Department added.')
             return redirect('core:department_list')
     return render(request, 'core/admin/department_form.html', {'form_type': 'add'})
@@ -612,7 +1011,8 @@ def department_edit(request, pk):
         return redirect('core:department_list')
     if request.method == 'POST':
         obj.name = request.POST.get('name', '').strip() or obj.name
-        obj.code = request.POST.get('code', '').strip()
+        obj.semester = request.POST.get('semester', '').strip()
+        obj.include_extra_lectures_in_attendance = request.POST.get('include_extra_lectures_in_attendance') == 'on'
         obj.save()
         messages.success(request, 'Department updated.')
         return redirect('core:department_list')
@@ -678,6 +1078,123 @@ def departmental_admin_create(request):
                 return redirect('core:departmental_admin_list')
     ctx = {'departments': Department.objects.order_by('name')}
     return render(request, 'core/admin/departmental_admin_form.html', ctx)
+
+
+@login_required
+def departmental_hod_list(request):
+    """List departmental HODs. Super admin only."""
+    if not user_can_admin(request):
+        return redirect('accounts:role_redirect')
+    if not is_super_admin(request):
+        messages.error(request, 'Only super admin can manage departmental HODs.')
+        return redirect('core:admin_dashboard')
+    if request.method == 'POST' and request.POST.get('action') == 'unlock_all_departments':
+        deleted, _ = HODWeekLock.objects.all().delete()
+        messages.success(request, f'All {deleted} week lock(s) removed. All weeks are now unlocked by default.')
+        return redirect('core:departmental_hod_list')
+    hods = UserRole.objects.filter(role='hod', department__isnull=False).select_related('user', 'department').order_by('department__name', 'user__username')
+    lock_count = HODWeekLock.objects.count()
+    ctx = {'hods': hods, 'lock_count': lock_count}
+    return render(request, 'core/admin/departmental_hod_list.html', ctx)
+
+
+@login_required
+def departmental_hod_create(request):
+    """Create a departmental HOD. Super admin only."""
+    if not user_can_admin(request):
+        return redirect('accounts:role_redirect')
+    if not is_super_admin(request):
+        messages.error(request, 'Only super admin can create departmental HODs.')
+        return redirect('core:admin_dashboard')
+    if request.method == 'POST':
+        username = (request.POST.get('username') or '').strip()
+        password = request.POST.get('password') or ''
+        password2 = request.POST.get('password2') or ''
+        department_id = request.POST.get('department_id')
+        if not username:
+            messages.error(request, 'Username is required.')
+        elif User.objects.filter(username=username).exists():
+            messages.error(request, 'That username is already taken.')
+        elif not password or len(password) < 6:
+            messages.error(request, 'Password must be at least 6 characters.')
+        elif password != password2:
+            messages.error(request, 'Passwords do not match.')
+        elif not department_id:
+            messages.error(request, 'Please select a department.')
+        else:
+            dept = Department.objects.filter(pk=department_id).first()
+            if not dept:
+                messages.error(request, 'Invalid department.')
+            else:
+                user = User.objects.create_user(username=username, password=password)
+                UserRole.objects.create(user=user, role='hod', department=dept)
+                messages.success(request, f'HOD "{username}" created for {dept.name}.')
+                return redirect('core:departmental_hod_list')
+    ctx = {'departments': Department.objects.order_by('name')}
+    return render(request, 'core/admin/departmental_hod_form.html', ctx)
+
+
+@login_required
+def hod_lock_admin_weeks(request):
+    """HOD or super admin: lock/unlock weeks for the current department only. When locked, departmental admins cannot edit manual attendance for that week (daily faculty time lock is unchanged)."""
+    if not user_can_admin(request):
+        return redirect('accounts:role_redirect')
+    if not (is_hod(request) or is_super_admin(request)):
+        messages.error(request, 'Only HOD or super admin can manage week locks.')
+        return redirect('core:admin_dashboard')
+    dept = get_admin_department(request)
+    if not dept:
+        messages.error(request, 'Select a department first from the Dashboard.')
+        return redirect('core:admin_dashboard')
+    tp = TermPhase.objects.filter(department=dept).first()
+    phases = ['T1', 'T2', 'T3', 'T4']
+    week_map = {}
+    for p in phases:
+        weeks = _compile_phase_weeks_date_objects(dept, p)
+        week_map[p] = weeks
+    locked_set = set(
+        HODWeekLock.objects.filter(department=dept).values_list('phase', 'week_index')
+    )
+    if request.method == 'POST':
+        action = request.POST.get('action')
+        if action == 'unlock_all':
+            deleted, _ = HODWeekLock.objects.filter(department=dept).delete()
+            messages.success(request, f'All {deleted} week(s) unlocked. Admin can now edit manual attendance for all weeks.')
+            return redirect('core:hod_lock_admin_weeks')
+        phase = request.POST.get('phase', '').strip()
+        week_index_str = request.POST.get('week_index', '')
+        if action and phase in phases and week_index_str != '':
+            try:
+                week_index = int(week_index_str)
+                weeks = week_map.get(phase, [])
+                if 0 <= week_index < len(weeks):
+                    if action == 'lock':
+                        HODWeekLock.objects.get_or_create(
+                            department=dept, phase=phase, week_index=week_index
+                        )
+                        messages.success(request, f'{phase} Week {week_index + 1} locked. Admin cannot edit manual attendance for that week.')
+                    elif action == 'unlock':
+                        HODWeekLock.objects.filter(
+                            department=dept, phase=phase, week_index=week_index
+                        ).delete()
+                        messages.success(request, f'{phase} Week {week_index + 1} unlocked.')
+            except (ValueError, TypeError):
+                pass
+        return redirect('core:hod_lock_admin_weeks')
+    phase_week_offsets = _get_phase_week_offsets(week_map)
+    phase_weeks_list = []
+    for p in phases:
+        weeks = week_map.get(p, [])
+        opts = [(i, phase_week_offsets.get(p, 0) + i + 1, (p, i) in locked_set, len(weeks[i]) if i < len(weeks) else 0) for i in range(len(weeks))]
+        phase_weeks_list.append((p, opts, weeks))
+    ctx = {
+        'department': dept,
+        'phases': phases,
+        'phase_weeks_list': phase_weeks_list,
+        'locked_set': locked_set,
+        'is_super_admin': is_super_admin(request),
+    }
+    return render(request, 'core/admin/hod_lock_admin_weeks.html', ctx)
 
 
 # ---------- Admin: Batch ----------
@@ -1894,6 +2411,848 @@ def _normalize_time_slot(val):
     return str(val).strip()
 
 
+def _batch_date_lecture_labels(dept, batch, d):
+    """Map time_slot -> 'Lec N' — same ordering as Lecture Adjustment (that weekday's slots for batch, sorted by time_slot), then ExtraLecture times."""
+    weekday = d.strftime('%A')
+    base_slots = sorted(
+        [s for s in _effective_slots_for_date(dept, d, extra_filters={'batch': batch}) if s.day == weekday],
+        key=lambda s: s.time_slot or ''
+    )
+    labels = {}
+    for i, s in enumerate(base_slots, start=1):
+        ts = (s.time_slot or '').strip()
+        if ts:
+            labels[ts] = f'Lec {i}'
+    scheduled = set(labels.keys())
+    extra_times = sorted(
+        set(ExtraLecture.objects.filter(date=d, batch=batch).values_list('time_slot', flat=True))
+        - scheduled
+    )
+    n = len(labels)
+    for j, ts in enumerate(extra_times):
+        ts = (ts or '').strip()
+        if ts:
+            labels[ts] = f'Lec {n + j + 1}'
+    return labels
+
+
+def _lecture_label_for_slot(dept, batch, d, time_slot_str, fallback_index=1):
+    """Excel column header label: Lec 1, Lec 2, … matching Lecture Adjustment; extra slots continue numbering."""
+    labels = _batch_date_lecture_labels(dept, batch, d)
+    ts = (time_slot_str or '').strip()
+    if ts in labels:
+        return labels[ts]
+    if ts:
+        return ts
+    return f'Lec {fallback_index}'
+
+
+def _user_can_daily_report(request):
+    """HOD or Super Admin only (not departmental admin)."""
+    if not request.user.is_authenticated:
+        return False
+    return is_hod(request) or is_super_admin(request)
+
+
+# Roman numerals for Daily Report semester (user-selected on export form).
+DR_SEMESTER_ROMAN_OPTIONS = ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X', 'XI', 'XII']
+_DR_SEMESTER_ROMAN_CHOICES = frozenset(DR_SEMESTER_ROMAN_OPTIONS)
+
+
+def _dr_normalize_semester(value):
+    """Return trimmed semester label or '' if invalid."""
+    if value is None:
+        return ''
+    s = re.sub(r'\s+', '', str(value).strip().upper())
+    if not s:
+        return ''
+    romans = {
+        '1': 'I', '2': 'II', '3': 'III', '4': 'IV', '5': 'V', '6': 'VI',
+        '7': 'VII', '8': 'VIII', '9': 'IX', '10': 'X', '11': 'XI', '12': 'XII',
+    }
+    if s.isdigit() and s in romans:
+        s = romans[s]
+    return s if s in _DR_SEMESTER_ROMAN_CHOICES else ''
+
+
+def _dr_semester_for_department(dept):
+    """Display semester for DR exports (from Department.semester)."""
+    if not dept:
+        return '—'
+    raw = (getattr(dept, 'semester', None) or '').strip()
+    if not raw:
+        return '—'
+    norm = _dr_normalize_semester(raw)
+    return norm if norm else raw[:20]
+
+
+def _dr_faculty_display_name(faculty):
+    return (faculty.full_name or '').strip()
+
+
+def _dr_slots_for_batch_on_date(dept, batch, d):
+    """Schedule + extra lectures for this batch/date, sorted by time_slot; excludes cancellations."""
+    cancelled = get_cancelled_lectures_set(dept)
+    weekday = d.strftime('%A')
+    slots = [s for s in _effective_slots_for_date(dept, d, extra_filters={'batch': batch}) if s.day == weekday]
+    seen = {(s.time_slot or '').strip() for s in slots if s.time_slot}
+    for ex in ExtraLecture.objects.filter(date=d, batch=batch):
+        ts = (ex.time_slot or '').strip()
+        if not ts or ts in seen:
+            continue
+        if (d, batch.id, ex.time_slot) in cancelled:
+            continue
+        seen.add(ts)
+        virtual = type('S', (), {'time_slot': ex.time_slot, 'subject': ex.subject, 'faculty': ex.faculty})()
+        slots.append(virtual)
+    slots.sort(key=lambda s: (s.time_slot or ''))
+    return [s for s in slots if (d, batch.id, s.time_slot) not in cancelled]
+
+
+def _dr_lec_no_from_label(lec_label):
+    s = (lec_label or '').strip()
+    low = s.lower()
+    if low.startswith('lec'):
+        parts = s.split()
+        if len(parts) >= 2:
+            try:
+                return int(parts[1])
+            except ValueError:
+                pass
+    return 0
+
+
+DR_FIXED_LECTURE_ROWS = 5
+
+
+def _dr_expand_fixed_rows_per_faculty(sorted_rows):
+    """
+    Exactly DR_FIXED_LECTURE_ROWS rows per faculty (Lec. 1–5). Places each real lecture in the
+    row matching its timetable lecture number when possible; conflicts use the next free row.
+    """
+    from itertools import groupby
+    if not sorted_rows:
+        return []
+    out = []
+    dr = DR_FIXED_LECTURE_ROWS
+    for _fac_id, group in groupby(sorted_rows, key=lambda r: r['faculty'].id):
+        group = list(group)
+        fac = group[0]['faculty']
+        sem = group[0].get('sem') or '—'
+        dept_label = group[0].get('dept') or ''
+        by_slot = []
+        no_num = []
+        for r in group:
+            ln = int(r.get('lec_no') or 0)
+            if 1 <= ln <= dr:
+                by_slot.append((ln, r))
+            elif ln > dr:
+                by_slot.append((dr, r))
+            else:
+                no_num.append(r)
+        by_slot.sort(key=lambda x: (x[0], x[1]['batch'].name))
+        placed = {}
+        for ln, r in by_slot:
+            slot = ln
+            while slot <= dr and slot in placed:
+                slot += 1
+            if slot > dr:
+                free = next((i for i in range(1, dr + 1) if i not in placed), None)
+                if free is not None:
+                    placed[free] = r
+                else:
+                    placed[dr] = r
+            else:
+                placed[slot] = r
+        for r in sorted(no_num, key=lambda x: x['batch'].name):
+            free = next((i for i in range(1, dr + 1) if i not in placed), None)
+            if free is not None:
+                placed[free] = r
+            else:
+                placed[dr] = r
+        for i in range(1, dr + 1):
+            if i in placed:
+                row = dict(placed[i])
+                row['lec_no'] = i
+                row['lec_label'] = f'Lec {i}'
+                row['is_blank'] = False
+                out.append(row)
+            else:
+                out.append({
+                    'faculty': fac,
+                    'batch': None,
+                    'subject': None,
+                    'lec_no': i,
+                    'lec_label': f'Lec {i}',
+                    'initials': fac.short_name,
+                    'course': '',
+                    'dept': dept_label,
+                    'sem': sem,
+                    'div': '',
+                    'sub_name': '',
+                    'lecture_type': '',
+                    'proxy': '',
+                    'present': '',
+                    'total': '',
+                    'eff': 0,
+                    'attendance_filled': False,
+                    'is_extra_lecture': False,
+                    'is_blank': True,
+                })
+    return out
+
+
+def _dr_collect_rows_for_date(dept, d):
+    """Teaching rows for date, then expanded to exactly 5 rows per faculty (Lec. 1–5); blanks fill gaps."""
+    sem = _dr_semester_for_department(dept)
+    dept_label = (dept.name or '')[:80]
+    batch_ids = list(Batch.objects.filter(department=dept).values_list('id', flat=True))
+    strength = {}
+    for bid in batch_ids:
+        strength[bid] = Student.objects.filter(batch_id=bid).count()
+    rows = []
+    for batch in Batch.objects.filter(department=dept).order_by('name'):
+        labels = _batch_date_lecture_labels(dept, batch, d)
+        for slot in _dr_slots_for_batch_on_date(dept, batch, d):
+            ts = (slot.time_slot or '').strip()
+            if not ts:
+                continue
+            fac, subj = get_faculty_subject_for_slot(d, batch, ts)
+            if not fac or not subj:
+                continue
+            lec_label = labels.get(ts) or _lecture_label_for_slot(dept, batch, d, ts)
+            lec_no = _dr_lec_no_from_label(lec_label)
+            is_extra = _is_extra_lecture_slot(dept, d, batch, ts)
+            adj = None
+            if is_extra:
+                proxy = ''
+                lecture_type = 'ETL'
+            else:
+                adj = LectureAdjustment.objects.filter(
+                    date=d, batch=batch, time_slot=slot.time_slot
+                ).select_related('original_faculty', 'new_faculty').first()
+                proxy = adj.original_faculty.short_name if adj else ''
+                lecture_type = 'PTL' if adj else 'TL'
+            tot = strength.get(batch.id, 0)
+            att = FacultyAttendance.objects.filter(date=d, batch=batch, lecture_slot=ts, faculty=fac).first()
+            if not att:
+                att = FacultyAttendance.objects.filter(date=d, batch=batch, lecture_slot=ts).first()
+            attendance_filled = att is not None
+            if attendance_filled:
+                absent_n = len([x for x in (att.absent_roll_numbers or '').split(',') if x.strip()])
+                present = tot - absent_n
+                eff = _dr_slot_effective_load(is_extra, True, present)
+            else:
+                present = '—'
+                eff = 0
+            rows.append({
+                'faculty': fac,
+                'batch': batch,
+                'subject': subj,
+                'lec_no': lec_no,
+                'lec_label': lec_label,
+                'initials': fac.short_name,
+                'course': 'UG',
+                'dept': dept_label,
+                'sem': sem,
+                'div': batch.name,
+                'sub_name': subj.name,
+                'lecture_type': lecture_type,
+                'proxy': proxy,
+                'present': present,
+                'total': tot,
+                'eff': eff,
+                'attendance_filled': attendance_filled,
+                'is_extra_lecture': is_extra,
+                'is_blank': False,
+            })
+    rows.sort(key=lambda r: (r['faculty'].full_name.lower(), r['lec_no'], r['batch'].name))
+    return _dr_expand_fixed_rows_per_faculty(rows)
+
+
+def _dr_write_daily_sheet(ws, dept, d, college_name):
+    """One date tab: DR layout with merged faculty blocks."""
+    thin = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
+    block_side = Side(style='medium', color='5C6B7A')
+    thick_sep = Side(style='thick', color='1F2937')
+    hdr_fill = PatternFill(start_color='FFD966', end_color='FFD966', fill_type='solid')
+    present_fill = PatternFill(start_color='FFFF00', end_color='FFFF00', fill_type='solid')
+    eff_fill = PatternFill(start_color='D9D2E9', end_color='D9D2E9', fill_type='solid')
+    band_fills = [
+        PatternFill(start_color='F7F9FC', end_color='F7F9FC', fill_type='solid'),
+        PatternFill(start_color='E8EDF5', end_color='E8EDF5', fill_type='solid'),
+    ]
+    etl_row_fill = PatternFill(start_color='1F497D', end_color='1F497D', fill_type='solid')
+    etl_data_font = Font(name='Calibri', size=10, color='FFFFFF')
+    etl_num_font = Font(name='Calibri', size=10, color='FFFFFF', bold=True)
+    ptl_row_fill = PatternFill(start_color='C6EFCE', end_color='C6EFCE', fill_type='solid')
+    ptl_data_font = Font(name='Calibri', size=10, color='006100', bold=True)
+    ptl_num_font = Font(name='Calibri', size=10, color='006100', bold=True)
+    title_font = Font(name='Calibri', size=14, bold=True)
+    subtitle_font = Font(name='Calibri', size=11, bold=True)
+    hdr_font = Font(name='Calibri', size=10, bold=True)
+    data_font = Font(name='Calibri', size=10)
+    num_font = Font(name='Calibri', size=10)
+    present_missing_font = Font(name='Calibri', size=10, bold=True, color='CC0000')
+    rows = _dr_collect_rows_for_date(dept, d)
+    ncols = 16
+    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=ncols)
+    c = ws.cell(1, 1, value=f'COLLEGE NAME : {college_name}')
+    c.font = title_font
+    c.alignment = Alignment(horizontal='center', vertical='center')
+
+    ws.merge_cells(start_row=2, start_column=1, end_row=2, end_column=ncols)
+    c2 = ws.cell(2, 1, value=f'DAILY REPORT — {d.strftime("%A")}, {d.strftime("%d-%b-%Y")} — Sem {_dr_semester_for_department(dept)}')
+    c2.font = subtitle_font
+    c2.alignment = Alignment(horizontal='center', vertical='center')
+
+    ws.merge_cells(start_row=3, start_column=1, end_row=3, end_column=2)
+    ws.cell(3, 1, value='FACULTY DETAILS').font = hdr_font
+    ws.cell(3, 1).fill = hdr_fill
+    ws.cell(3, 1).alignment = Alignment(horizontal='center', vertical='center')
+    ws.merge_cells(start_row=3, start_column=3, end_row=3, end_column=ncols)
+    ws.cell(3, 3, value='LECTURE DETAILS').font = hdr_font
+    ws.cell(3, 3).fill = hdr_fill
+    ws.cell(3, 3).alignment = Alignment(horizontal='center', vertical='center')
+
+    hdrs = [
+        'Sr No', 'Name of Faculty', 'Lec. No', 'Faculty Initials',
+        'Course (UG/PG)', 'Dept', 'SEM (Roman)', 'Div', 'Batch', 'Sub.', 'Lecture type', 'Faculty Initials for Proxy',
+        'No. of Students Present', 'Total Students', 'Effective Load', "Today's Eff. Load Alloted"
+    ]
+    for col, h in enumerate(hdrs, start=1):
+        cell = ws.cell(4, col, value=h)
+        cell.font = hdr_font
+        cell.border = thin
+        cell.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
+        if col >= 12 and col <= 13:
+            cell.fill = present_fill
+        elif col == 15:
+            cell.fill = eff_fill
+        elif col == 16:
+            cell.fill = eff_fill
+
+    if not rows:
+        msg = ws.cell(5, 1, value='No scheduled lectures for this date.')
+        msg.font = data_font
+        for col_letter, w in zip(
+            'ABCDEFGHIJKLMNOP',
+            (6, 32, 8, 10, 8, 12, 8, 10, 8, 22, 8, 12, 12, 10, 10, 12),
+        ):
+            ws.column_dimensions[col_letter].width = w
+        return
+
+    from itertools import groupby
+    data_row = 5
+    sr_fac = 0
+    group_idx = 0
+    for fac_id, group in groupby(rows, key=lambda r: r['faculty'].id):
+        group = list(group)
+        sr_fac += 1
+        band_fill = band_fills[group_idx % len(band_fills)]
+        group_idx += 1
+        day_total = sum(r['eff'] for r in group if not r.get('is_blank'))
+        first_r = data_row
+        for r in group:
+            is_blank = r.get('is_blank')
+            lt_raw = r.get('lecture_type')
+            if is_blank:
+                lt_disp = ''
+                is_ex = is_ptl = False
+                row_fill = band_fill
+            else:
+                lt_disp = lt_raw or 'TL'
+                is_ex = lt_disp == 'ETL'
+                is_ptl = lt_disp == 'PTL'
+                if is_ex:
+                    row_fill = etl_row_fill
+                elif is_ptl:
+                    row_fill = ptl_row_fill
+                else:
+                    row_fill = band_fill
+            ws.cell(data_row, 1, value=sr_fac)
+            ws.cell(data_row, 2, value=_dr_faculty_display_name(r['faculty']))
+            ws.cell(data_row, 3, value=r['lec_no'] if r['lec_no'] else r['lec_label'])
+            ws.cell(data_row, 4, value=r['initials'])
+            ws.cell(data_row, 5, value='' if is_blank else r['course'])
+            ws.cell(data_row, 6, value=r['dept'])
+            ws.cell(data_row, 7, value=r['sem'])
+            ws.cell(data_row, 8, value='' if is_blank else r['div'])
+            ws.cell(data_row, 9, value='')
+            ws.cell(data_row, 10, value='' if is_blank else r['sub_name'])
+            ws.cell(data_row, 11, value=lt_disp)
+            ws.cell(data_row, 12, value='' if is_blank else r['proxy'])
+            ws.cell(data_row, 13, value='' if is_blank else r['present'])
+            ws.cell(data_row, 14, value='' if is_blank else r['total'])
+            ws.cell(data_row, 15, value='' if is_blank else r['eff'])
+            for col in range(1, ncols + 1):
+                cell = ws.cell(data_row, col)
+                cell.border = thin
+                if is_blank:
+                    cell.font = data_font
+                elif col == 13:
+                    if r.get('attendance_filled'):
+                        if is_ex:
+                            cell.font = etl_num_font
+                        elif is_ptl:
+                            cell.font = ptl_num_font
+                        else:
+                            cell.font = num_font
+                    else:
+                        cell.font = present_missing_font
+                elif col in (1, 3, 14, 15, 16):
+                    if is_ex:
+                        cell.font = etl_num_font
+                    elif is_ptl:
+                        cell.font = ptl_num_font
+                    else:
+                        cell.font = num_font
+                else:
+                    if is_ex:
+                        cell.font = etl_data_font
+                    elif is_ptl:
+                        cell.font = ptl_data_font
+                    else:
+                        cell.font = data_font
+                cell.fill = row_fill
+                cell.alignment = Alignment(vertical='center', wrap_text=True)
+            data_row += 1
+        last_r = data_row - 1
+        if last_r > first_r:
+            ws.merge_cells(start_row=first_r, start_column=1, end_row=last_r, end_column=1)
+            ws.merge_cells(start_row=first_r, start_column=2, end_row=last_r, end_column=2)
+            ws.merge_cells(start_row=first_r, start_column=16, end_row=last_r, end_column=16)
+        tot_cell = ws.cell(first_r, 16, value=day_total)
+        tot_cell.fill = eff_fill
+        tot_cell.font = Font(name='Calibri', size=10, bold=True)
+        tot_cell.alignment = Alignment(horizontal='center', vertical='center')
+        ws.cell(first_r, 1).alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
+        ws.cell(first_r, 2).alignment = Alignment(horizontal='left', vertical='center', wrap_text=True)
+        for rr in range(first_r, last_r + 1):
+            for cc in range(1, ncols + 1):
+                b_kw = {'left': thin.left, 'right': thin.right, 'top': thin.top, 'bottom': thin.bottom}
+                if rr == first_r:
+                    b_kw['top'] = block_side
+                if rr == last_r:
+                    b_kw['bottom'] = thick_sep
+                elif rr < last_r:
+                    b_kw['bottom'] = thin.bottom
+                if cc == 1:
+                    b_kw['left'] = block_side
+                if cc == ncols:
+                    b_kw['right'] = block_side
+                ws.cell(rr, cc).border = Border(**b_kw)
+
+    for col_letter, w in zip(
+        'ABCDEFGHIJKLMNOP',
+        (6, 32, 8, 10, 8, 12, 8, 10, 8, 22, 8, 12, 12, 10, 10, 12),
+    ):
+        ws.column_dimensions[col_letter].width = w
+
+
+def _dr_aggregate_week(dept, week_dates):
+    """(fac_id, batch_id, subj_id) -> {'n': lecture count, 'eff': sum effective load} (attendance marked only)."""
+    agg = defaultdict(lambda: {'n': 0, 'eff': 0.0})
+    for d in week_dates:
+        for r in _dr_collect_rows_for_date(dept, d):
+            if r.get('is_blank') or not r.get('attendance_filled'):
+                continue
+            b, s = r.get('batch'), r.get('subject')
+            if b is None or s is None:
+                continue
+            key = (r['faculty'].id, b.id, s.id)
+            agg[key]['n'] += 1
+            agg[key]['eff'] += float(r.get('eff') or 0)
+    return agg
+
+
+def _dr_write_combine_sheet(
+    ws,
+    dept,
+    week_dates,
+    phase,
+    global_week_num,
+    college_name,
+    *,
+    counts_override=None,
+    title_line1=None,
+    subtitle_line3=None,
+    hdr_lectures='Total lectures (week)',
+    hdr_overall='Weekly overall effective',
+):
+    thin = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
+    block_side = Side(style='medium', color='5C6B7A')
+    thick_sep = Side(style='thick', color='1F2937')
+    hdr_fill = PatternFill(start_color='1F4E79', end_color='1F4E79', fill_type='solid')
+    hdr_font = Font(name='Calibri', size=10, bold=True, color='FFFFFF')
+    title_font = Font(name='Calibri', size=14, bold=True)
+    subtitle_font = Font(name='Calibri', size=11, bold=True)
+    data_font = Font(name='Calibri', size=10)
+    num_font = Font(name='Calibri', size=10)
+    band_fills = [
+        PatternFill(start_color='F7F9FC', end_color='F7F9FC', fill_type='solid'),
+        PatternFill(start_color='E8EDF5', end_color='E8EDF5', fill_type='solid'),
+    ]
+    agg = counts_override if counts_override is not None else _dr_aggregate_week(dept, week_dates)
+    fac_objs = {f.id: f for f in Faculty.objects.filter(department=dept)}
+    batch_objs = {b.id: b for b in Batch.objects.filter(department=dept)}
+    sub_objs = {s.id: s for s in Subject.objects.filter(department=dept)}
+    dept_label = (dept.name or '')[:80]
+    sem = _dr_semester_for_department(dept)
+
+    keys_sorted = sorted(
+        agg.keys(),
+        key=lambda k: (
+            fac_objs[k[0]].full_name.lower() if k[0] in fac_objs else '',
+            batch_objs[k[1]].name if k[1] in batch_objs else '',
+            sub_objs[k[2]].name.lower() if k[2] in sub_objs else '',
+        ),
+    )
+    if title_line1 is None:
+        title_line1 = 'WEEKLY REPORT — COMBINE'
+    if subtitle_line3 is None:
+        subtitle_line3 = f'{phase} — Week {global_week_num} — Sem {sem} ({len(week_dates)} lecture day(s))'
+
+    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=11)
+    ws.cell(1, 1, value=title_line1).font = title_font
+    ws.cell(1, 1).alignment = Alignment(horizontal='center', vertical='center')
+
+    ws.merge_cells(start_row=2, start_column=1, end_row=2, end_column=11)
+    ws.cell(2, 1, value=f'COLLEGE NAME : {college_name}').font = subtitle_font
+    ws.cell(2, 1).alignment = Alignment(horizontal='center', vertical='center')
+
+    ws.merge_cells(start_row=3, start_column=1, end_row=3, end_column=11)
+    ws.cell(3, 1, value=subtitle_line3).font = subtitle_font
+    ws.cell(3, 1).alignment = Alignment(horizontal='center', vertical='center')
+
+    hdrs = [
+        'Sr No', 'Name of Faculty', 'Short Form', 'Course', 'DEPT', 'SEM', 'DIV', 'SUBJECT',
+        hdr_lectures, 'Total effective load (0.75×)', hdr_overall,
+    ]
+    for col, h in enumerate(hdrs, start=1):
+        cell = ws.cell(4, col, value=h)
+        cell.font = hdr_font
+        cell.fill = hdr_fill
+        cell.border = thin
+        cell.alignment = Alignment(wrap_text=True, vertical='center')
+
+    if not keys_sorted:
+        ws.cell(5, 1, value='No data for this week.').font = data_font
+        return
+
+    from itertools import groupby
+    row = 5
+    sr = 0
+    group_idx = 0
+    for fac_id, fac_keys_iter in groupby(keys_sorted, key=lambda k: k[0]):
+        fac_keys = list(fac_keys_iter)
+        sr += 1
+        band_fill = band_fills[group_idx % len(band_fills)]
+        group_idx += 1
+        fac = fac_objs.get(fac_id)
+        week_sum = sum(agg[k]['eff'] for k in fac_keys)
+        first_r = row
+        for (fid, bid, sid) in fac_keys:
+            cell_agg = agg[(fid, bid, sid)]
+            nlec = cell_agg['n']
+            row_eff = cell_agg['eff']
+            b = batch_objs.get(bid)
+            su = sub_objs.get(sid)
+            ws.cell(row, 1, value=sr)
+            ws.cell(row, 2, value=_dr_faculty_display_name(fac) if fac else '')
+            ws.cell(row, 3, value=fac.short_name if fac else '')
+            ws.cell(row, 4, value='UG')
+            ws.cell(row, 5, value=dept_label)
+            ws.cell(row, 6, value=sem)
+            ws.cell(row, 7, value=b.name if b else '')
+            ws.cell(row, 8, value=su.name if su else '')
+            ws.cell(row, 9, value=nlec)
+            ws.cell(row, 10, value=round(row_eff, 2))
+            for col in range(1, 12):
+                cell = ws.cell(row, col)
+                cell.border = thin
+                cell.fill = band_fill
+                cell.font = num_font if col in (1, 9, 10, 11) else data_font
+                cell.alignment = Alignment(vertical='center', wrap_text=True)
+            row += 1
+        last_r = row - 1
+        if last_r > first_r:
+            ws.merge_cells(start_row=first_r, start_column=1, end_row=last_r, end_column=1)
+            ws.merge_cells(start_row=first_r, start_column=2, end_row=last_r, end_column=2)
+            ws.merge_cells(start_row=first_r, start_column=3, end_row=last_r, end_column=3)
+            ws.merge_cells(start_row=first_r, start_column=11, end_row=last_r, end_column=11)
+        tot = ws.cell(first_r, 11, value=round(week_sum, 2))
+        tot.font = Font(name='Calibri', size=10, bold=True)
+        tot.alignment = Alignment(horizontal='center', vertical='center')
+        ws.cell(first_r, 1).alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
+        ws.cell(first_r, 2).alignment = Alignment(horizontal='left', vertical='center', wrap_text=True)
+        ws.cell(first_r, 3).alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
+        for rr in range(first_r, last_r + 1):
+            for cc in range(1, 12):
+                b_kw = {'left': thin.left, 'right': thin.right, 'top': thin.top, 'bottom': thin.bottom}
+                if rr == first_r:
+                    b_kw['top'] = block_side
+                if rr == last_r:
+                    b_kw['bottom'] = thick_sep
+                elif rr < last_r:
+                    b_kw['bottom'] = thin.bottom
+                if cc == 1:
+                    b_kw['left'] = block_side
+                if cc == 11:
+                    b_kw['right'] = block_side
+                ws.cell(rr, cc).border = Border(**b_kw)
+
+    for col_letter, w in zip(
+        'ABCDEFGHIJK',
+        (6, 32, 10, 8, 12, 8, 10, 26, 12, 14, 14),
+    ):
+        ws.column_dimensions[col_letter].width = w
+
+
+def _build_daily_report_phase_workbook(dept, phase):
+    """One sheet per week in phase (weekly combine only) + final phase-wide combined sheet."""
+    college_name = getattr(settings, 'COLLEGE_DISPLAY_NAME', 'L.J. INSTITUTE OF ENGINEERING AND TECHNOLOGY')
+    phases = ['T1', 'T2', 'T3', 'T4']
+    week_map = {p: _compile_phase_weeks_date_objects(dept, p) for p in phases}
+    phase_week_offsets = _get_phase_week_offsets(week_map)
+    weeks_in_phase = week_map.get(phase, [])
+    wb = Workbook()
+    wb.remove(wb.active)
+    all_phase_dates = []
+    sem = _dr_semester_for_department(dept)
+    for week_idx, week_dates in enumerate(weeks_in_phase):
+        global_week_num = phase_week_offsets.get(phase, 0) + week_idx + 1
+        ws = wb.create_sheet(title=f'Week-{global_week_num}'[:31])
+        _dr_write_combine_sheet(
+            ws,
+            dept,
+            week_dates,
+            phase,
+            global_week_num,
+            college_name,
+            title_line1='WEEKLY COMBINE',
+            subtitle_line3=(
+                f'{phase} — Week {global_week_num} — Sem {sem} '
+                f'({len(week_dates)} lecture day(s))'
+            ),
+        )
+        all_phase_dates.extend(week_dates)
+    all_phase_dates = sorted(set(all_phase_dates))
+    counts_phase = _dr_aggregate_week(dept, all_phase_dates)
+    ws_p = wb.create_sheet(title='Combined'[:31])
+    _dr_write_combine_sheet(
+        ws_p,
+        dept,
+        all_phase_dates,
+        phase,
+        0,
+        college_name,
+        counts_override=counts_phase,
+        title_line1='PHASE COMBINE — ALL WEEKS',
+        subtitle_line3=(
+            f'{phase} — Full phase — Sem {sem} '
+            f'({len(all_phase_dates)} lecture day(s), {len(weeks_in_phase)} week(s))'
+        ),
+        hdr_lectures='Total lectures (phase)',
+        hdr_overall='Phase overall effective',
+    )
+    return wb
+
+
+def _build_daily_report_phases_range_workbook(dept, phases_included):
+    """One combine sheet per week (global Week-1…N) across consecutive phases, then one Combined for the full date range."""
+    college_name = getattr(settings, 'COLLEGE_DISPLAY_NAME', 'L.J. INSTITUTE OF ENGINEERING AND TECHNOLOGY')
+    all_phases = ['T1', 'T2', 'T3', 'T4']
+    week_map = {p: _compile_phase_weeks_date_objects(dept, p) for p in all_phases}
+    phase_week_offsets = _get_phase_week_offsets(week_map)
+    wb = Workbook()
+    wb.remove(wb.active)
+    all_range_dates = []
+    sem = _dr_semester_for_department(dept)
+    label_range = '+'.join(phases_included)
+    for phase in phases_included:
+        for week_idx, week_dates in enumerate(week_map.get(phase, [])):
+            global_week_num = phase_week_offsets.get(phase, 0) + week_idx + 1
+            ws = wb.create_sheet(title=f'Week-{global_week_num}'[:31])
+            _dr_write_combine_sheet(
+                ws,
+                dept,
+                week_dates,
+                phase,
+                global_week_num,
+                college_name,
+                title_line1='WEEKLY COMBINE',
+                subtitle_line3=(
+                    f'{phase} — Week {global_week_num} — Sem {sem} '
+                    f'({len(week_dates)} lecture day(s))'
+                ),
+            )
+            all_range_dates.extend(week_dates)
+    all_range_dates = sorted(set(all_range_dates))
+    n_weeks = sum(len(week_map.get(p, [])) for p in phases_included)
+    counts_range = _dr_aggregate_week(dept, all_range_dates)
+    ws_p = wb.create_sheet(title='Combined'[:31])
+    _dr_write_combine_sheet(
+        ws_p,
+        dept,
+        all_range_dates,
+        phases_included[-1],
+        0,
+        college_name,
+        counts_override=counts_range,
+        title_line1='MULTI-PHASE COMBINE',
+        subtitle_line3=(
+            f'{label_range} — Sem {sem} '
+            f'({len(all_range_dates)} lecture day(s), {n_weeks} week(s))'
+        ),
+        hdr_lectures='Total lectures (range)',
+        hdr_overall='Range overall effective',
+    )
+    return wb
+
+
+def _build_daily_report_workbook(dept, phase, week_index, week_dates, global_week_num):
+    college_name = getattr(settings, 'COLLEGE_DISPLAY_NAME', 'L.J. INSTITUTE OF ENGINEERING AND TECHNOLOGY')
+    wb = Workbook()
+    wb.remove(wb.active)
+    for d in week_dates:
+        title = d.strftime('%d-%b-%y')
+        ws = wb.create_sheet(title=title[:31])
+        _dr_write_daily_sheet(ws, dept, d, college_name)
+    combine_title = f'Combine W{global_week_num}'
+    ws_c = wb.create_sheet(title=combine_title[:31])
+    _dr_write_combine_sheet(ws_c, dept, week_dates, phase, global_week_num, college_name)
+    return wb
+
+
+@login_required
+def daily_report_export(request):
+    """HOD / Super Admin: page to download phase/week Daily Report Excel."""
+    if not _user_can_daily_report(request):
+        messages.error(request, 'Only HOD or Super Admin can download the Daily Report.')
+        return redirect('core:admin_dashboard')
+    dept = get_admin_department(request)
+    if not dept:
+        messages.error(request, 'Select a department first.')
+        return redirect('core:admin_dashboard')
+    if is_super_admin(request):
+        dept_override = request.GET.get('department_id')
+        if dept_override:
+            alt = Department.objects.filter(pk=dept_override).first()
+            if alt:
+                dept = alt
+    phases = ['T1', 'T2', 'T3', 'T4']
+    week_map = {p: _compile_phase_weeks_date_objects(dept, p) for p in phases}
+    phase_week_offsets = _get_phase_week_offsets(week_map)
+    week_map_serial = {p: [[d.isoformat() for d in w] for w in week_map[p]] for p in phases}
+    phase_weeks_list = []
+    for p in phases:
+        weeks = week_map.get(p, [])
+        opts = [
+            (i, phase_week_offsets.get(p, 0) + i + 1, len(weeks[i]) if i < len(weeks) else 0)
+            for i in range(len(weeks))
+        ]
+        phase_weeks_list.append((p, opts))
+    ctx = {
+        'department': dept,
+        'phases': phases,
+        'phase_weeks_list': phase_weeks_list,
+        'week_map_json': json.dumps(week_map_serial),
+        'phase_week_offsets_json': json.dumps(phase_week_offsets),
+        'departments': Department.objects.order_by('name') if is_super_admin(request) else [],
+        'is_super_admin': is_super_admin(request),
+    }
+    return render(request, 'core/admin/daily_report_export.html', ctx)
+
+
+@login_required
+def daily_report_excel(request):
+    """Download DR workbook: one sheet per date in week + Combine sheet."""
+    if not _user_can_daily_report(request):
+        messages.error(request, 'Only HOD or Super Admin can download the Daily Report.')
+        return redirect('core:admin_dashboard')
+    dept = get_admin_department(request)
+    if not dept:
+        return redirect('core:daily_report_export')
+    if is_super_admin(request):
+        dept_override = request.GET.get('department_id')
+        if dept_override:
+            alt = Department.objects.filter(pk=dept_override).first()
+            if alt:
+                dept = alt
+
+    phases = ['T1', 'T2', 'T3', 'T4']
+    safe_dept = re.sub(r'[^\w\-]+', '_', (dept.name or 'dept')[:40])
+    sem_tag = re.sub(r'[^\w\-]+', '', _dr_semester_for_department(dept)) or 'Sem'
+    report_scope = (request.GET.get('report_scope') or 'week').lower().strip()
+
+    range_scope_phases = {
+        'range_t1_t2': ['T1', 'T2'],
+        'range_t1_t2_t3': ['T1', 'T2', 'T3'],
+        'range_all': ['T1', 'T2', 'T3', 'T4'],
+    }
+    range_fname_tag = {
+        'range_t1_t2': 'T1plusT2',
+        'range_t1_t2_t3': 'T1plusT2plusT3',
+        'range_all': 'AllT1toT4',
+    }
+
+    if report_scope in range_scope_phases:
+        phases_subset = range_scope_phases[report_scope]
+        week_map_chk = {p: _compile_phase_weeks_date_objects(dept, p) for p in phases}
+        if sum(len(week_map_chk.get(p, [])) for p in phases_subset) == 0:
+            messages.error(
+                request,
+                'No weeks in the selected range. Set term phases and schedule.',
+            )
+            return redirect('core:daily_report_export')
+        wb = _build_daily_report_phases_range_workbook(dept, phases_subset)
+        fname = f'DR_{safe_dept}_{range_fname_tag[report_scope]}_{sem_tag}.xlsx'
+    else:
+        phase = (request.GET.get('phase') or '').upper().strip()
+        if phase not in phases:
+            messages.error(request, 'Invalid phase.')
+            return redirect('core:daily_report_export')
+
+        if report_scope == 'phase':
+            week_map_chk = {p: _compile_phase_weeks_date_objects(dept, p) for p in phases}
+            if not week_map_chk.get(phase):
+                messages.error(request, 'No weeks in this phase. Set term phases and schedule.')
+                return redirect('core:daily_report_export')
+            wb = _build_daily_report_phase_workbook(dept, phase)
+            fname = f'DR_{safe_dept}_{phase}_FullPhase_{sem_tag}.xlsx'
+        else:
+            week_index_str = request.GET.get('week_index', '').strip()
+            try:
+                week_index = int(week_index_str)
+            except (TypeError, ValueError):
+                messages.error(request, 'Select a week.')
+                return redirect('core:daily_report_export')
+            week_map = {p: _compile_phase_weeks_date_objects(dept, p) for p in phases}
+            weeks = week_map.get(phase, [])
+            if not weeks:
+                messages.error(request, 'No weeks in this phase. Set term phases and schedule.')
+                return redirect('core:daily_report_export')
+            if not (0 <= week_index < len(weeks)):
+                messages.error(request, 'Invalid week for this phase.')
+                return redirect('core:daily_report_export')
+            week_dates = weeks[week_index]
+            phase_week_offsets = _get_phase_week_offsets(week_map)
+            global_week_num = phase_week_offsets.get(phase, 0) + week_index + 1
+            wb = _build_daily_report_workbook(dept, phase, week_index, week_dates, global_week_num)
+            fname = f'DR_{safe_dept}_{phase}_Week{global_week_num}_{sem_tag}.xlsx'
+
+    bio = BytesIO()
+    wb.save(bio)
+    bio.seek(0)
+    resp = HttpResponse(
+        bio.getvalue(),
+        content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    )
+    resp['Content-Disposition'] = f'attachment; filename="{fname}"'
+    return resp
+
+
 def _parse_cell_faculty_subject(cell_value):
     """
     Parse timetable cell to get (faculty_short_name, subject_name).
@@ -2623,10 +3982,10 @@ def _write_all_batches_combined_sheet(ws, batches, all_students, date_slots_unio
             segs = next((segs for b, segs in overall_segments_per_batch if b.id == bid), [])
             for label, date_slots_seg in segs:
                 held, attended = _student_held_attended_for_segment(date_slots_seg, att_map, str_roll)
-                pct = round(attended / held * 100, 1) if held else 0
+                pct = round(attended / held * 100, 2) if held else 0
                 ws.cell(idx, c, held).border = thin_border
                 ws.cell(idx, c + 1, attended).border = thin_border
-                pct_cell = ws.cell(idx, c + 2, f'{pct}%')
+                pct_cell = ws.cell(idx, c + 2, f'{pct:.2f}%')
                 pct_cell.border = thin_border
                 if pct < 75 and held:
                     pct_cell.font = Font(color='FFFFFF', bold=True)
@@ -2760,10 +4119,10 @@ def _write_subject_all_batches_sheet(ws, subject_name, batches, all_students, ba
             segs = next((segs for b, segs in overall_segments_per_batch if b.id == bid), [])
             for label, date_slots_seg in segs:
                 held, attended = _student_held_attended_for_segment(date_slots_seg, att_map, str_roll)
-                pct = round(attended / held * 100, 1) if held else 0
+                pct = round(attended / held * 100, 2) if held else 0
                 ws.cell(idx, c, held).border = thin_border
                 ws.cell(idx, c + 1, attended).border = thin_border
-                pct_cell = ws.cell(idx, c + 2, f'{pct}%')
+                pct_cell = ws.cell(idx, c + 2, f'{pct:.2f}%')
                 pct_cell.border = thin_border
                 if pct < 75 and held:
                     pct_cell.font = Font(color='FFFFFF', bold=True)
@@ -2965,10 +4324,10 @@ def _write_one_batch_attendance_sheet(ws, batch, date_slots_list, students, att_
         if overall_segments:
             for label, date_slots_seg in overall_segments:
                 held, attended = _student_held_attended_for_segment(date_slots_seg, att_map, str_roll)
-                pct = round(attended / held * 100, 1) if held else 0
+                pct = round(attended / held * 100, 2) if held else 0
                 ws.cell(idx, c, held).border = thin_border
                 ws.cell(idx, c + 1, attended).border = thin_border
-                pct_cell = ws.cell(idx, c + 2, f'{pct}%')
+                pct_cell = ws.cell(idx, c + 2, f'{pct:.2f}%')
                 pct_cell.border = thin_border
                 if pct < 75 and held:
                     pct_cell.font = Font(color='FFFFFF', bold=True)
@@ -3447,12 +4806,7 @@ def _admin_analytics_data(dept, phase=None, week=None):
     cancelled_set = get_cancelled_lectures_set(dept)
     batch_scheduled = defaultdict(set)
     for batch in batches:
-        for d in all_dates:
-            weekday = d.strftime('%A')
-            slots = [s for s in _effective_slots_for_date(dept, d, extra_filters={'batch': batch}) if s.day == weekday]
-            for slot in set(s.time_slot for s in slots if s.time_slot):
-                if (d, batch.id, slot) not in cancelled_set:
-                    batch_scheduled[batch.id].add((d, slot))
+        _add_batch_schedule_pairs_for_attendance(dept, batch, all_dates, batch_scheduled[batch.id], cancelled_set)
     batch_att_map = defaultdict(lambda: defaultdict(set))
     for batch in batches:
         for att in FacultyAttendance.objects.filter(batch=batch, date__in=all_dates):
@@ -3472,7 +4826,7 @@ def _admin_analytics_data(dept, phase=None, week=None):
         scheduled = batch_scheduled.get(s.batch_id, set())
         held = batch_held.get(s.batch_id, 0)
         attended = sum(1 for (d, slot) in scheduled if (d, slot) in batch_att_map[s.batch_id] and str_roll not in batch_att_map[s.batch_id][(d, slot)])
-        pct = round(attended / held * 100, 1) if held else 0
+        pct = round(attended / held * 100, 2) if held else 0
         if held and pct < 75:
             at_risk.append({'student': s, 'held': held, 'attended': attended, 'pct': pct})
         batch_pcts[s.batch_id].append(pct)
@@ -3490,7 +4844,7 @@ def _admin_analytics_data(dept, phase=None, week=None):
     batch_wise = []
     for b in batches:
         pcts = batch_pcts.get(b.id, [])
-        avg_pct = round(sum(pcts) / len(pcts), 1) if pcts else 0
+        avg_pct = round(sum(pcts) / len(pcts), 2) if pcts else 0
         total_held = batch_held.get(b.id, 0) * len(pcts)
         total_attended = sum(
             sum(1 for (d, slot) in batch_scheduled.get(b.id, set())
@@ -3501,7 +4855,7 @@ def _admin_analytics_data(dept, phase=None, week=None):
     subject_wise = []
     for name in sorted(subject_totals.keys()):
         t = subject_totals[name]
-        pct = round(t['attended'] / t['held'] * 100, 1) if t['held'] else 0
+        pct = round(t['attended'] / t['held'] * 100, 2) if t['held'] else 0
         subject_wise.append({'name': name, 'held': t['held'], 'attended': t['attended'], 'pct': pct})
     offset = phase_week_offsets.get(phase, 0)
     weekly_trend = []
@@ -3517,7 +4871,7 @@ def _admin_analytics_data(dept, phase=None, week=None):
                 w_held += 1
                 if (d, slot) in batch_att_map[s.batch_id] and str_roll not in batch_att_map[s.batch_id][(d, slot)]:
                     w_attended += 1
-        pct = round(w_attended / w_held * 100, 1) if w_held else 0
+        pct = round(w_attended / w_held * 100, 2) if w_held else 0
         weekly_trend.append({'week': offset + i + 1, 'held': w_held, 'attended': w_attended, 'pct': pct})
     heat_map_list = []
     days_order = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
@@ -3528,7 +4882,7 @@ def _admin_analytics_data(dept, phase=None, week=None):
         row = {'day': day, 'slots': []}
         for slot in slots_order:
             t = heat_map[day].get(slot, {'held': 0, 'attended': 0})
-            pct = round(t['attended'] / t['held'] * 100, 1) if t['held'] else None
+            pct = round(t['attended'] / t['held'] * 100, 2) if t['held'] else None
             row['slots'].append({'slot': slot, 'pct': pct, 'held': t['held']})
         heat_map_list.append(row)
     return {
@@ -3620,7 +4974,7 @@ def admin_analytics_at_risk_excel(request):
         ws.cell(row_idx, 5, s.batch.name)
         ws.cell(row_idx, 6, r['held'])
         ws.cell(row_idx, 7, r['attended'])
-        ws.cell(row_idx, 8, f"{r['pct']}%")
+        ws.cell(row_idx, 8, f"{r['pct']:.2f}%")
     for col in range(1, 9):
         ws.column_dimensions[get_column_letter(col)].width = 16
     bio = BytesIO()
@@ -3772,12 +5126,7 @@ def _admin_notifications_build_mentor_data(dept, phase, week_idx):
     batch_scheduled = defaultdict(set)
     for s in students:
         batch = s.batch
-        for d in cum_dates:
-            weekday = d.strftime('%A')
-            slots = [x for x in _effective_slots_for_date(dept, d, extra_filters={'batch': batch}) if x.day == weekday]
-            for slot in set(x.time_slot for x in slots if x.time_slot):
-                if (d, batch.id, slot) not in cancelled_set:
-                    batch_scheduled[batch.id].add((d, slot))
+        _add_batch_schedule_pairs_for_attendance(dept, batch, cum_dates, batch_scheduled[batch.id], cancelled_set)
     batch_att_map = defaultdict(lambda: defaultdict(set))
     for batch_id in {s.batch_id for s in students}:
         batch = next(b for b in students if b.batch_id == batch_id).batch
@@ -3790,7 +5139,7 @@ def _admin_notifications_build_mentor_data(dept, phase, week_idx):
         str_roll = str(s.roll_no)
         held = len(scheduled)
         attended = sum(1 for (d, slot) in scheduled if (d, slot) in batch_att_map[s.batch_id] and str_roll not in batch_att_map[s.batch_id][(d, slot)])
-        pct = round(attended / held * 100, 1) if held else 0
+        pct = round(attended / held * 100, 2) if held else 0
         if held and pct < 75:
             week_wise = []
             cum_held = cum_attended = 0
@@ -3800,10 +5149,10 @@ def _admin_notifications_build_mentor_data(dept, phase, week_idx):
                 week_set = set(week_dates)
                 w_held = sum(1 for (d, slot) in scheduled if d in week_set)
                 w_attended = sum(1 for (d, slot) in scheduled if d in week_set and (d, slot) in batch_att_map[s.batch_id] and str_roll not in batch_att_map[s.batch_id][(d, slot)])
-                w_pct = round(w_attended / w_held * 100, 1) if w_held else 0
+                w_pct = round(w_attended / w_held * 100, 2) if w_held else 0
                 cum_held += w_held
                 cum_attended += w_attended
-                cum_pct = round(cum_attended / cum_held * 100, 1) if cum_held else 0
+                cum_pct = round(cum_attended / cum_held * 100, 2) if cum_held else 0
                 week_wise.append({'week': i + 1, 'held': w_held, 'attended': w_attended, 'pct': w_pct, 'cum_held': cum_held, 'cum_attended': cum_attended, 'cum_pct': cum_pct})
             subject_wise = defaultdict(lambda: {'held': 0, 'attended': 0})
             for (d, slot) in scheduled:
@@ -3812,7 +5161,7 @@ def _admin_notifications_build_mentor_data(dept, phase, week_idx):
                 subject_wise[subj_name]['held'] += 1
                 if (d, slot) in batch_att_map[s.batch_id] and str_roll not in batch_att_map[s.batch_id][(d, slot)]:
                     subject_wise[subj_name]['attended'] += 1
-            subj_list = [{'name': n, 'held': t['held'], 'attended': t['attended'], 'pct': round(t['attended'] / t['held'] * 100, 1) if t['held'] else 0} for n, t in sorted(subject_wise.items())]
+            subj_list = [{'name': n, 'held': t['held'], 'attended': t['attended'], 'pct': round(t['attended'] / t['held'] * 100, 2) if t['held'] else 0} for n, t in sorted(subject_wise.items())]
             mentor_data[s.mentor].append({
                 'student': s, 'held': held, 'attended': attended, 'pct': pct,
                 'week_wise': week_wise, 'subject_wise': subj_list,
@@ -4040,15 +5389,7 @@ def _student_analytics_build_data(dept, phase, week_idx, batch_id, roll_search=N
         return [], []
     cancelled_set = get_cancelled_lectures_set(dept)
     batch_scheduled = set()
-    for d in cum_dates:
-        weekday = d.strftime('%A')
-        slots = [s for s in _effective_slots_for_date(dept, d, extra_filters={'batch': batch}) if s.day == weekday]
-        for slot in set(s.time_slot for s in slots if s.time_slot):
-            if (d, batch.id, slot) not in cancelled_set:
-                batch_scheduled.add((d, slot))
-        for ex in ExtraLecture.objects.filter(date=d, batch=batch).values_list('time_slot', flat=True):
-            if (d, batch.id, ex) not in cancelled_set:
-                batch_scheduled.add((d, ex))
+    _add_batch_schedule_pairs_for_attendance(dept, batch, cum_dates, batch_scheduled, cancelled_set)
     batch_att_map = {}
     for att in FacultyAttendance.objects.filter(batch=batch, date__in=cum_dates).only('date', 'lecture_slot', 'absent_roll_numbers'):
         key = (att.date, att.lecture_slot)
@@ -4062,27 +5403,27 @@ def _student_analytics_build_data(dept, phase, week_idx, batch_id, roll_search=N
         str_roll = str(s.roll_no)
         held = len(batch_scheduled)
         attended = sum(1 for (d, slot) in batch_scheduled if (d, slot) in batch_att_map and str_roll not in batch_att_map[(d, slot)])
-        pct = round(attended / held * 100, 1) if held else 0
+        pct = round(attended / held * 100, 2) if held else 0
         week_wise = []
         cum_held = cum_attended = 0
         for prev_idx in range(phase_order_idx):
             prev_dates = prev_dates_list[prev_idx]
             prev_held = sum(1 for (d, slot) in batch_scheduled if d in prev_dates)
             prev_attended = sum(1 for (d, slot) in batch_scheduled if d in prev_dates and (d, slot) in batch_att_map and str_roll not in batch_att_map[(d, slot)])
-            prev_pct = round(prev_attended / prev_held * 100, 1) if prev_held else 0
+            prev_pct = round(prev_attended / prev_held * 100, 2) if prev_held else 0
             cum_held += prev_held
             cum_attended += prev_attended
-            cum_pct = round(cum_attended / cum_held * 100, 1) if cum_held else 0
+            cum_pct = round(cum_attended / cum_held * 100, 2) if cum_held else 0
             week_wise.append({'label': f'{phases[prev_idx]} Overall', 'held': prev_held, 'attended': prev_attended, 'pct': prev_pct, 'cum_held': cum_held, 'cum_attended': cum_attended, 'cum_pct': cum_pct})
         weeks_to_show = range(len(weeks)) if week_idx is None else range(min(week_idx + 1, len(weeks)))
         for i in weeks_to_show:
             week_set = set(weeks[i])
             w_held = sum(1 for (d, slot) in batch_scheduled if d in week_set)
             w_attended = sum(1 for (d, slot) in batch_scheduled if d in week_set and (d, slot) in batch_att_map and str_roll not in batch_att_map[(d, slot)])
-            w_pct = round(w_attended / w_held * 100, 1) if w_held else 0
+            w_pct = round(w_attended / w_held * 100, 2) if w_held else 0
             cum_held += w_held
             cum_attended += w_attended
-            cum_pct = round(cum_attended / cum_held * 100, 1) if cum_held else 0
+            cum_pct = round(cum_attended / cum_held * 100, 2) if cum_held else 0
             global_week = week_offset + i + 1
             week_wise.append({'label': f'Week {global_week}', 'week': global_week, 'held': w_held, 'attended': w_attended, 'pct': w_pct, 'cum_held': cum_held, 'cum_attended': cum_attended, 'cum_pct': cum_pct})
         subject_wise = defaultdict(lambda: {'held': 0, 'attended': 0})
@@ -4091,7 +5432,7 @@ def _student_analytics_build_data(dept, phase, week_idx, batch_id, roll_search=N
             subject_wise[subj_name]['held'] += 1
             if (d, slot) in batch_att_map and str_roll not in batch_att_map[(d, slot)]:
                 subject_wise[subj_name]['attended'] += 1
-        subj_list = [{'name': n, 'held': t['held'], 'attended': t['attended'], 'pct': round(t['attended'] / t['held'] * 100, 1) if t['held'] else 0} for n, t in sorted(subject_wise.items())]
+        subj_list = [{'name': n, 'held': t['held'], 'attended': t['attended'], 'pct': round(t['attended'] / t['held'] * 100, 2) if t['held'] else 0} for n, t in sorted(subject_wise.items())]
         result.append({'student': s, 'held': held, 'attended': attended, 'pct': pct, 'week_wise': week_wise, 'subject_wise': subj_list})
     batches = list(Batch.objects.filter(department=dept).order_by('name'))
     return result, batches
@@ -4206,6 +5547,846 @@ def student_analytics(request):
     return render(request, 'core/student_analytics.html', ctx)
 
 
+def _mark_analytics_build_data_from_students(students, dept):
+    """Build phase_wise marks data for a given student list. Returns list of {student, phase_wise}."""
+    if not students:
+        return []
+    exam_phases = list(ExamPhase.objects.filter(department=dept).order_by('name'))
+    phase_subjects = {}
+    for ep in exam_phases:
+        phase_subjects[ep.id] = list(ExamPhaseSubject.objects.filter(exam_phase=ep).select_related('subject').order_by('subject__name'))
+    marks_qs = StudentMark.objects.filter(
+        student__in=students,
+        exam_phase__department=dept
+    ).select_related('subject', 'exam_phase')
+    marks_by_student_phase = defaultdict(lambda: defaultdict(dict))
+    for m in marks_qs:
+        marks_by_student_phase[m.student_id][m.exam_phase_id][m.subject.name] = m.marks_obtained
+    result = []
+    for s in students:
+        phase_wise = []
+        for ep in exam_phases:
+            subs = phase_subjects.get(ep.id, [])
+            subject_marks = []
+            for eps in subs:
+                marks_val = marks_by_student_phase[s.id][ep.id].get(eps.subject.name)
+                try:
+                    is_low = marks_val is not None and float(marks_val) < 9
+                except (TypeError, ValueError):
+                    is_low = False
+                subject_marks.append({'name': eps.subject.name, 'marks': marks_val, 'is_low': is_low})
+            phase_wise.append({'phase_name': ep.name, 'subjects': subject_marks})
+        result.append({'student': s, 'phase_wise': phase_wise})
+    return result
+
+
+def _mark_analytics_build_data(dept, batch_id, roll_search=None):
+    """Build mark analytics for students: list of {student, phase_wise: [{phase_name, subjects: [{name, marks}]}]}."""
+    batch = Batch.objects.filter(pk=batch_id, department=dept).first()
+    if not batch:
+        return [], []
+    qs = Student.objects.filter(department=dept, batch=batch).select_related('batch')
+    if roll_search:
+        q = Q(roll_no__icontains=roll_search) | Q(name__icontains=roll_search) | Q(enrollment_no__icontains=roll_search)
+        qs = qs.filter(q)
+    students = list(qs)
+    students.sort(key=lambda s: (s.batch.name if s.batch else '', _roll_sort_key(s)))
+    result = _mark_analytics_build_data_from_students(students, dept)
+    batches = list(Batch.objects.filter(department=dept).order_by('name'))
+    return result, batches
+
+
+def _mark_analytics_build_risk_data(student_data, threshold=9):
+    """From student_data, extract subject-wise at-risk students (marks < threshold)."""
+    risk_data = []
+    subject_map = {}
+    for item in student_data:
+        for phase in item['phase_wise']:
+            for s in phase['subjects']:
+                if s.get('marks') is not None and float(s['marks']) < threshold:
+                    subj_name = s['name']
+                    if subj_name not in subject_map:
+                        subject_map[subj_name] = {'subject_name': subj_name, 'at_risk': []}
+                    subject_map[subj_name]['at_risk'].append({
+                        'student': item['student'],
+                        'phase_name': phase['phase_name'],
+                        'marks': s['marks'],
+                    })
+    for subj_name in sorted(subject_map.keys()):
+        entries = subject_map[subj_name]['at_risk']
+        entries.sort(key=lambda x: (x['student'].batch.name if x['student'].batch else '', _roll_sort_key(x['student'])))
+        risk_data.append(subject_map[subj_name])
+    return risk_data
+
+
+def _mark_analytics_build_data_by_roll_search(dept, roll_search):
+    """Search students by roll/name/enrollment across all batches. Return (result, batches)."""
+    batches = list(Batch.objects.filter(department=dept).order_by('name'))
+    if not roll_search:
+        return [], batches
+    q = Q(roll_no__icontains=roll_search) | Q(name__icontains=roll_search) | Q(enrollment_no__icontains=roll_search)
+    students = list(Student.objects.filter(department=dept).filter(q).select_related('batch'))
+    if not students:
+        return [], batches
+    result = []
+    for bid in {s.batch_id for s in students}:
+        part, _ = _mark_analytics_build_data(dept, str(bid), roll_search)
+        result.extend(part)
+    result.sort(key=lambda x: (x['student'].batch.name if x['student'].batch else '', _roll_sort_key(x['student'])))
+    return result, batches
+
+
+@login_required
+def mark_analytics(request):
+    """Admin: Mark analytics — same design as Student Analytics. Phase-wise: T1, T2, T3, SEE. Each phase shows Subject | Marks."""
+    if not user_can_admin(request):
+        return redirect('core:admin_dashboard')
+    dept = get_admin_department(request)
+    if not dept:
+        messages.error(request, 'Select a department first.')
+        return redirect('core:admin_dashboard')
+    batch_id = request.GET.get('batch_id')
+    roll_search = request.GET.get('roll_search', '').strip()
+    selected_phase = request.GET.get('phase', '').strip()
+    student_data = []
+    batches = list(Batch.objects.filter(department=dept).select_related('department').order_by('name'))
+    if not batches:
+        batches = list(Batch.objects.select_related('department').order_by('department__name', 'name'))
+    if roll_search and not batch_id:
+        student_data, _ = _mark_analytics_build_data_by_roll_search(dept, roll_search)
+    elif batch_id == 'all' or (batch_id and batch_id != 'all'):
+        if batch_id == 'all':
+            qs = Student.objects.filter(department=dept).select_related('batch')
+            if roll_search:
+                q = Q(roll_no__icontains=roll_search) | Q(name__icontains=roll_search) | Q(enrollment_no__icontains=roll_search)
+                qs = qs.filter(q)
+            students = list(qs)
+            students.sort(key=lambda s: (s.batch.name if s.batch else '', _roll_sort_key(s)))
+            student_data = _mark_analytics_build_data_from_students(students, dept)
+        else:
+            student_data, batches = _mark_analytics_build_data(dept, batch_id, roll_search or None)
+    risk_data = _mark_analytics_build_risk_data(student_data)
+    if selected_phase:
+        for item in student_data:
+            item['phase_wise'] = [p for p in item['phase_wise'] if p['phase_name'] == selected_phase]
+        _risk_filtered = []
+        for r in risk_data:
+            filtered_at_risk = [e for e in r['at_risk'] if e['phase_name'] == selected_phase]
+            if filtered_at_risk:
+                _risk_filtered.append({'subject_name': r['subject_name'], 'at_risk': filtered_at_risk})
+        risk_data = _risk_filtered
+    exam_phases = list(ExamPhase.objects.filter(department=dept).order_by('name'))
+    ctx = {
+        'department': dept,
+        'batches': batches,
+        'exam_phases': exam_phases,
+        'selected_batch_id': batch_id,
+        'selected_phase': selected_phase,
+        'roll_search': roll_search,
+        'student_data': student_data,
+        'risk_data': risk_data,
+        'is_admin': True,
+    }
+    return render(request, 'core/admin/mark_analytics.html', ctx)
+
+
+@login_required
+def faculty_mark_analytics(request):
+    """Faculty: Mark analytics — same design as admin, but only mentorship students."""
+    if not user_can_faculty(request):
+        return redirect('accounts:role_redirect')
+    blocked = _faculty_portal_guard_redirect(request, 'faculty_mark_analytics')
+    if blocked:
+        return blocked
+    faculty = get_faculty_user(request)
+    if not faculty:
+        return redirect('accounts:logout')
+    dept = faculty.department
+    batch_id = request.GET.get('batch_id')
+    roll_search = request.GET.get('roll_search', '').strip()
+    selected_phase = request.GET.get('phase', '').strip()
+    qs = Student.objects.filter(mentor=faculty, department=dept).select_related('batch')
+    if batch_id and batch_id != 'all':
+        qs = qs.filter(batch_id=batch_id)
+    if roll_search:
+        q = Q(roll_no__icontains=roll_search) | Q(name__icontains=roll_search) | Q(enrollment_no__icontains=roll_search)
+        qs = qs.filter(q)
+    students = list(qs)
+    students.sort(key=lambda s: (s.batch.name if s.batch else '', _roll_sort_key(s)))
+    student_data = _mark_analytics_build_data_from_students(students, dept)
+    batches = list(Batch.objects.filter(
+        id__in=Student.objects.filter(mentor=faculty, department=dept).values_list('batch_id', flat=True).distinct()
+    ).order_by('name'))
+    risk_data = _mark_analytics_build_risk_data(student_data)
+    risk_student_data = []
+    if selected_phase:
+        for item in student_data:
+            item['phase_wise'] = [p for p in item['phase_wise'] if p['phase_name'] == selected_phase]
+        _risk_filtered = []
+        for r in risk_data:
+            filtered_at_risk = [e for e in r['at_risk'] if e['phase_name'] == selected_phase]
+            if filtered_at_risk:
+                _risk_filtered.append({'subject_name': r['subject_name'], 'at_risk': filtered_at_risk})
+        risk_data = _risk_filtered
+        for item in student_data:
+            has_low = any(
+                s.get('marks') is not None and float(s['marks']) < 9
+                for p in item['phase_wise'] for s in p['subjects']
+            )
+            if has_low:
+                risk_student_data.append(item)
+    else:
+        for item in student_data:
+            has_low = any(
+                s.get('marks') is not None and float(s['marks']) < 9
+                for p in item['phase_wise'] for s in p['subjects']
+            )
+            if has_low:
+                risk_student_data.append(item)
+    exam_phases = list(ExamPhase.objects.filter(department=dept).order_by('name'))
+    ctx = {
+        'faculty': faculty,
+        'department': dept,
+        'batches': batches,
+        'exam_phases': exam_phases,
+        'selected_batch_id': batch_id,
+        'selected_phase': selected_phase,
+        'roll_search': roll_search,
+        'student_data': student_data,
+        'risk_student_data': risk_student_data,
+        'risk_data': risk_data,
+        'is_admin': False,
+    }
+    return render(request, 'core/admin/mark_analytics.html', ctx)
+
+
+def _build_detailed_mark_analytics(dept, phase_id=None, subject_id=None, batch_id=None):
+    """Build detailed mark analytics: top 10, highest, avg, batch-wise avg per phase×subject."""
+    qs = StudentMark.objects.filter(
+        student__department=dept,
+        exam_phase__department=dept
+    ).select_related('student', 'student__batch', 'exam_phase', 'subject')
+    if phase_id:
+        qs = qs.filter(exam_phase_id=phase_id)
+    if subject_id:
+        qs = qs.filter(subject_id=subject_id)
+    if batch_id and batch_id != 'all':
+        qs = qs.filter(student__batch_id=batch_id)
+    marks_list = list(qs)
+    phase_subject_data = defaultdict(lambda: defaultdict(list))
+    for m in marks_list:
+        if m.marks_obtained is not None:
+            try:
+                val = float(m.marks_obtained)
+            except (TypeError, ValueError):
+                continue
+            phase_subject_data[m.exam_phase.name][m.subject.name].append({
+                'student': m.student,
+                'marks': val,
+                'batch_name': m.student.batch.name if m.student.batch else '',
+            })
+    result = []
+    for phase_name in sorted(phase_subject_data.keys()):
+        for subj_name in sorted(phase_subject_data[phase_name].keys()):
+            entries = phase_subject_data[phase_name][subj_name]
+            entries_sorted = sorted(entries, key=lambda x: (-x['marks'], x['batch_name'], _roll_sort_key(x['student'])))
+            top_10 = entries_sorted[:10]
+            vals = [e['marks'] for e in entries]
+            highest = max(vals) if vals else None
+            avg = sum(vals) / len(vals) if vals else None
+            batch_totals = defaultdict(list)
+            for e in entries:
+                batch_totals[e['batch_name']].append(e['marks'])
+            batch_avg = {b: sum(v) / len(v) for b, v in batch_totals.items()}
+            batch_avg_sorted = sorted(batch_avg.items(), key=lambda x: (-x[1], x[0]))
+            result.append({
+                'phase_name': phase_name,
+                'subject_name': subj_name,
+                'top_10': top_10,
+                'highest': highest,
+                'avg': avg,
+                'count': len(entries),
+                'batch_avg': batch_avg_sorted,
+            })
+    return result
+
+
+@login_required
+def detailed_mark_analytics(request):
+    """Admin: Detailed Mark Analytics — top 10, highest, avg, batch-wise avg per phase×subject."""
+    if not user_can_admin(request):
+        return redirect('core:admin_dashboard')
+    dept = get_admin_department(request)
+    if not dept:
+        messages.error(request, 'Select a department first.')
+        return redirect('core:admin_dashboard')
+    phase_id = request.GET.get('phase_id', '').strip()
+    subject_id = request.GET.get('subject_id', '').strip()
+    batch_id = request.GET.get('batch_id', 'all')
+    if phase_id:
+        try:
+            phase_id = int(phase_id)
+        except ValueError:
+            phase_id = None
+    if subject_id:
+        try:
+            subject_id = int(subject_id)
+        except ValueError:
+            subject_id = None
+    analytics = _build_detailed_mark_analytics(dept, phase_id, subject_id, batch_id)
+    exam_phases = list(ExamPhase.objects.filter(department=dept).order_by('name'))
+    all_subjects = list(Subject.objects.filter(department=dept).order_by('name'))
+    batches = list(Batch.objects.filter(department=dept).select_related('department').order_by('name'))
+    ctx = {
+        'department': dept,
+        'analytics': analytics,
+        'exam_phases': exam_phases,
+        'all_subjects': all_subjects,
+        'batches': batches,
+        'selected_phase_id': phase_id or '',
+        'selected_subject_id': subject_id or '',
+        'selected_batch_id': batch_id,
+    }
+    return render(request, 'core/admin/detailed_mark_analytics.html', ctx)
+
+
+@login_required
+def detailed_mark_analytics_excel(request):
+    """Admin: Download Detailed Mark Analytics as Excel."""
+    if not user_can_admin(request):
+        return redirect('core:admin_dashboard')
+    dept = get_admin_department(request)
+    if not dept:
+        return redirect('core:admin_dashboard')
+    phase_id = request.GET.get('phase_id', '').strip()
+    subject_id = request.GET.get('subject_id', '').strip()
+    batch_id = request.GET.get('batch_id', 'all')
+    if phase_id:
+        try:
+            phase_id = int(phase_id)
+        except ValueError:
+            phase_id = None
+    if subject_id:
+        try:
+            subject_id = int(subject_id)
+        except ValueError:
+            subject_id = None
+    analytics = _build_detailed_mark_analytics(dept, phase_id, subject_id, batch_id)
+    wb = Workbook()
+    thin_border = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
+    header_fill = PatternFill(start_color='1e293b', end_color='1e293b', fill_type='solid')
+    header_font = Font(bold=True, color='FFFFFF')
+    sub_header_fill = PatternFill(start_color='334155', end_color='334155', fill_type='solid')
+    for idx, block in enumerate(analytics):
+        sheet_title = (block['phase_name'] + '_' + block['subject_name']).replace('/', '-')[:31]
+        ws = wb.active if idx == 0 else wb.create_sheet(title=sheet_title)
+        if idx == 0:
+            ws.title = sheet_title
+        row = 1
+        for h, v in [('Phase', block['phase_name']), ('Subject', block['subject_name']),
+                     ('Highest', block['highest']), ('Avg', f"{block['avg']:.2f}" if block['avg'] is not None else '-'),
+                     ('Count', block['count'])]:
+            ws.cell(row, 1, h)
+            ws.cell(row, 2, str(v) if v is not None else '-')
+            row += 1
+        row += 1
+        headers = ['Rank', 'Roll No', 'Name', 'Batch', 'Marks']
+        for c, h in enumerate(headers, 1):
+            cell = ws.cell(row, c, h)
+            cell.font = header_font
+            cell.fill = header_fill
+            cell.border = thin_border
+        row += 1
+        for i, e in enumerate(block['top_10'], 1):
+            s = e['student']
+            for c, v in enumerate([i, s.roll_no, s.name, e['batch_name'], e['marks']], 1):
+                cell = ws.cell(row, c, str(v) if v is not None else '')
+                cell.border = thin_border
+            row += 1
+        row += 1
+        for c, h in enumerate(['Batch', 'Avg Marks'], 1):
+            cell = ws.cell(row, c, h)
+            cell.font = header_font
+            cell.fill = sub_header_fill
+            cell.border = thin_border
+        row += 1
+        for b, avg in block['batch_avg']:
+            for c, v in enumerate([b, f"{avg:.2f}"], 1):
+                cell = ws.cell(row, c, str(v) if v is not None else '')
+                cell.border = thin_border
+            row += 1
+    if not analytics:
+        ws = wb.active
+        ws.title = 'No Data'
+        ws.cell(1, 1, 'No marks data for the selected filters.')
+    resp = HttpResponse(content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+    resp['Content-Disposition'] = 'attachment; filename="detailed_mark_analytics.xlsx"'
+    wb.save(resp)
+    return resp
+
+
+@login_required
+def marks_report(request):
+    """Admin: Report Generation — phase, subject, batch selection for marks Excel download."""
+    if not user_can_admin(request):
+        return redirect('core:admin_dashboard')
+    dept = get_admin_department(request)
+    if not dept:
+        messages.error(request, 'Select a department first.')
+        return redirect('core:admin_dashboard')
+    exam_phases = list(ExamPhase.objects.filter(department=dept).order_by('name'))
+    all_subjects = list(Subject.objects.filter(department=dept).order_by('name'))
+    batches = list(Batch.objects.filter(department=dept).select_related('department').order_by('name'))
+    ctx = {'department': dept, 'exam_phases': exam_phases, 'all_subjects': all_subjects, 'batches': batches, 'is_admin': True}
+    return render(request, 'core/admin/marks_report.html', ctx)
+
+
+@login_required
+def faculty_marks_report(request):
+    """Faculty: Report Generation (mentorship students only)."""
+    if not user_can_faculty(request):
+        return redirect('accounts:role_redirect')
+    blocked = _faculty_portal_guard_redirect(request, 'faculty_marks_report')
+    if blocked:
+        return blocked
+    faculty = get_faculty_user(request)
+    if not faculty:
+        return redirect('accounts:logout')
+    dept = faculty.department
+    exam_phases = list(ExamPhase.objects.filter(department=dept).order_by('name'))
+    all_subjects = list(Subject.objects.filter(department=dept).order_by('name'))
+    batches = list(Batch.objects.filter(
+        id__in=Student.objects.filter(mentor=faculty, department=dept).values_list('batch_id', flat=True).distinct()
+    ).order_by('name'))
+    ctx = {'faculty': faculty, 'department': dept, 'exam_phases': exam_phases, 'all_subjects': all_subjects, 'batches': batches, 'is_admin': False}
+    return render(request, 'core/admin/marks_report.html', ctx)
+
+
+@login_required
+def mark_analytics_risk_excel(request):
+    """Admin: Download at-risk Excel for a specific subject (or all from current filter)."""
+    if not user_can_admin(request):
+        return redirect('core:admin_dashboard')
+    dept = get_admin_department(request)
+    if not dept:
+        return redirect('core:admin_dashboard')
+    subject_name = request.GET.get('subject', '').strip()
+    batch_id = request.GET.get('batch_id', 'all')
+    if batch_id == 'all':
+        students = list(Student.objects.filter(department=dept).select_related('batch', 'mentor'))
+    else:
+        students = list(Student.objects.filter(department=dept, batch_id=batch_id).select_related('batch', 'mentor'))
+    students.sort(key=lambda s: (s.batch.name if s.batch else '', _roll_sort_key(s)))
+    student_data = _mark_analytics_build_data_from_students(students, dept)
+    risk_data = _mark_analytics_build_risk_data(student_data)
+    if subject_name:
+        risk_data = [r for r in risk_data if r['subject_name'] == subject_name]
+    if not risk_data:
+        messages.error(request, 'No at-risk data for this selection.')
+        return redirect('core:admin_mark_analytics')
+    from django.http import HttpResponse
+    wb = Workbook()
+    ws = wb.active
+    ws.title = subject_name or 'At Risk'
+    thin_border = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
+    header_fill = PatternFill(start_color='DC2626', end_color='DC2626', fill_type='solid')
+    header_font = Font(bold=True, color='FFFFFF')
+    red_fill = PatternFill(start_color='FECACA', end_color='FECACA', fill_type='solid')
+    for c, h in enumerate(['Roll No', 'Mentor', 'Name', 'Batch', 'Enrollment', 'Phase', 'Marks'], 1):
+        cell = ws.cell(1, c, h)
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.border = thin_border
+    row = 2
+    for subj_data in risk_data:
+        for entry in subj_data['at_risk']:
+            s = entry['student']
+            vals = [s.roll_no, s.mentor.short_name if s.mentor else '', s.name, s.batch.name if s.batch else '', s.enrollment_no or '', entry['phase_name'], entry['marks']]
+            for c, val in enumerate(vals, 1):
+                cell = ws.cell(row, c, str(val) if val is not None else '')
+                cell.border = thin_border
+                if c == 7 and val is not None and str(val) != '' and float(val) < 9:
+                    cell.fill = red_fill
+            row += 1
+    resp = HttpResponse(content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+    resp['Content-Disposition'] = f'attachment; filename="at_risk_{(subject_name or "all").replace(" ", "_")}.xlsx"'
+    wb.save(resp)
+    return resp
+
+
+@login_required
+def mark_analytics_risk_all_excel(request):
+    """Admin: Download ALL batches, ALL at-risk students. Phase selector. Two-row header: Phase (merged), subject names. Red for < 9."""
+    if not user_can_admin(request):
+        return redirect('core:admin_dashboard')
+    dept = get_admin_department(request)
+    if not dept:
+        return redirect('core:admin_dashboard')
+    phase_param = request.GET.get('phase', 'all')
+    students = list(Student.objects.filter(department=dept).select_related('batch', 'mentor'))
+    students.sort(key=lambda s: (s.batch.name if s.batch else '', _roll_sort_key(s)))
+    student_data = _mark_analytics_build_data_from_students(students, dept)
+    risk_data = _mark_analytics_build_risk_data(student_data)
+    exam_phases = list(ExamPhase.objects.filter(department=dept).order_by('name'))
+    phase_subjects = {ep.name: [eps.subject.name for eps in ExamPhaseSubject.objects.filter(exam_phase=ep).select_related('subject').order_by('subject__name')] for ep in exam_phases}
+    selected_phases = [p for p in exam_phases if p.name == phase_param] if phase_param and phase_param != 'all' else exam_phases
+    marks_by_student_phase_subj = defaultdict(lambda: defaultdict(dict))
+    for item in student_data:
+        for ph in item['phase_wise']:
+            for s in ph['subjects']:
+                if s.get('marks') is not None:
+                    marks_by_student_phase_subj[item['student'].id][ph['phase_name']][s['name']] = float(s['marks'])
+    at_risk_ids = set()
+    for r in risk_data:
+        for entry in r['at_risk']:
+            at_risk_ids.add(entry['student'].id)
+    from django.http import HttpResponse
+    wb = Workbook()
+    ws = wb.active
+    ws.title = 'All At Risk'
+    thin_border = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
+    header_fill = PatternFill(start_color='DC2626', end_color='DC2626', fill_type='solid')
+    phase_fill = PatternFill(start_color='B91C1C', end_color='B91C1C', fill_type='solid')
+    header_font = Font(bold=True, color='FFFFFF')
+    red_fill = PatternFill(start_color='FECACA', end_color='FECACA', fill_type='solid')
+    col = 1
+    for h in ['Mentor', 'Roll No', 'Enrollment', 'Name', 'Batch']:
+        cell = ws.cell(1, col, h)
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.border = thin_border
+        cell.alignment = Alignment(horizontal='center', vertical='center')
+        ws.merge_cells(start_row=1, start_column=col, end_row=2, end_column=col)
+        col += 1
+    for ep in selected_phases:
+        subs = phase_subjects.get(ep.name, [])
+        if not subs:
+            continue
+        start_col = col
+        for sub in subs:
+            cell = ws.cell(2, col, sub)
+            cell.font = header_font
+            cell.fill = phase_fill
+            cell.border = thin_border
+            cell.alignment = Alignment(horizontal='center', vertical='center')
+            col += 1
+        cell = ws.cell(1, start_col, ep.name)
+        cell.font = header_font
+        cell.fill = phase_fill
+        cell.border = thin_border
+        cell.alignment = Alignment(horizontal='center', vertical='center')
+        ws.merge_cells(start_row=1, start_column=start_col, end_row=1, end_column=col - 1)
+    row = 3
+    for item in student_data:
+        if item['student'].id not in at_risk_ids:
+            continue
+        s = item['student']
+        cols = [s.mentor.short_name if s.mentor else '', s.roll_no, s.enrollment_no or '', s.name, s.batch.name if s.batch else '']
+        for ep in selected_phases:
+            for subj in phase_subjects.get(ep.name, []):
+                m = marks_by_student_phase_subj[s.id].get(ep.name, {}).get(subj)
+                if m is not None and float(m) < 9:
+                    cols.append(str(m))
+                else:
+                    cols.append('-')
+        for c, val in enumerate(cols, 1):
+            cell = ws.cell(row, c, val)
+            cell.border = thin_border
+            if c >= 6 and val != '-' and val:
+                try:
+                    if float(val) < 9:
+                        cell.fill = red_fill
+                except ValueError:
+                    pass
+        row += 1
+    resp = HttpResponse(content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+    resp['Content-Disposition'] = f'attachment; filename="all_batches_all_students_at_risk_{phase_param or "all"}.xlsx"'
+    wb.save(resp)
+    return resp
+
+
+@login_required
+def faculty_mark_analytics_risk_excel(request):
+    """Faculty: Download at-risk Excel for a specific subject (mentorship students only)."""
+    if not user_can_faculty(request):
+        return redirect('core:faculty_mark_analytics')
+    blocked = _faculty_portal_guard_redirect(request, 'faculty_mark_analytics_risk_excel')
+    if blocked:
+        return blocked
+    faculty = get_faculty_user(request)
+    if not faculty:
+        return redirect('accounts:logout')
+    dept = faculty.department
+    subject_name = request.GET.get('subject', '').strip()
+    batch_id = request.GET.get('batch_id', 'all')
+    qs = Student.objects.filter(mentor=faculty, department=dept).select_related('batch', 'mentor')
+    if batch_id and batch_id != 'all':
+        qs = qs.filter(batch_id=batch_id)
+    students = list(qs)
+    students.sort(key=lambda s: (s.batch.name if s.batch else '', _roll_sort_key(s)))
+    student_data = _mark_analytics_build_data_from_students(students, dept)
+    risk_data = _mark_analytics_build_risk_data(student_data)
+    if subject_name:
+        risk_data = [r for r in risk_data if r['subject_name'] == subject_name]
+    if not risk_data:
+        messages.error(request, 'No at-risk data for this selection.')
+        return redirect('core:faculty_mark_analytics')
+    from django.http import HttpResponse
+    wb = Workbook()
+    ws = wb.active
+    ws.title = subject_name or 'At Risk'
+    thin_border = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
+    header_fill = PatternFill(start_color='DC2626', end_color='DC2626', fill_type='solid')
+    header_font = Font(bold=True, color='FFFFFF')
+    red_fill = PatternFill(start_color='FECACA', end_color='FECACA', fill_type='solid')
+    for c, h in enumerate(['Roll No', 'Mentor', 'Name', 'Batch', 'Enrollment', 'Phase', 'Marks'], 1):
+        cell = ws.cell(1, c, h)
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.border = thin_border
+    row = 2
+    for subj_data in risk_data:
+        for entry in subj_data['at_risk']:
+            s = entry['student']
+            vals = [s.roll_no, s.mentor.short_name if s.mentor else '', s.name, s.batch.name if s.batch else '', s.enrollment_no or '', entry['phase_name'], entry['marks']]
+            for c, val in enumerate(vals, 1):
+                cell = ws.cell(row, c, str(val) if val is not None else '')
+                cell.border = thin_border
+                if c == 7 and val is not None and str(val) != '' and float(val) < 9:
+                    cell.fill = red_fill
+            row += 1
+    resp = HttpResponse(content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+    resp['Content-Disposition'] = f'attachment; filename="at_risk_{(subject_name or "all").replace(" ", "_")}.xlsx"'
+    wb.save(resp)
+    return resp
+
+
+@login_required
+def faculty_mark_analytics_risk_all_excel(request):
+    """Faculty: Download all mentorship students at risk. Phase selector. Two-row header: Phase (merged), subject names only. Red for < 9."""
+    if not user_can_faculty(request):
+        return redirect('core:faculty_mark_analytics')
+    blocked = _faculty_portal_guard_redirect(request, 'faculty_mark_analytics_risk_all_excel')
+    if blocked:
+        return blocked
+    faculty = get_faculty_user(request)
+    if not faculty:
+        return redirect('accounts:logout')
+    dept = faculty.department
+    phase_param = request.GET.get('phase', 'all')
+    students = list(Student.objects.filter(mentor=faculty, department=dept).select_related('batch', 'mentor'))
+    students.sort(key=lambda s: (s.batch.name if s.batch else '', _roll_sort_key(s)))
+    student_data = _mark_analytics_build_data_from_students(students, dept)
+    risk_data = _mark_analytics_build_risk_data(student_data)
+    exam_phases = list(ExamPhase.objects.filter(department=dept).order_by('name'))
+    phase_subjects = {ep.name: [eps.subject.name for eps in ExamPhaseSubject.objects.filter(exam_phase=ep).select_related('subject').order_by('subject__name')] for ep in exam_phases}
+    selected_phases = [p for p in exam_phases if p.name == phase_param] if phase_param and phase_param != 'all' else exam_phases
+    marks_by_student_phase_subj = defaultdict(lambda: defaultdict(dict))
+    for item in student_data:
+        for ph in item['phase_wise']:
+            for s in ph['subjects']:
+                if s.get('marks') is not None:
+                    marks_by_student_phase_subj[item['student'].id][ph['phase_name']][s['name']] = float(s['marks'])
+    at_risk_ids = set()
+    for r in risk_data:
+        for entry in r['at_risk']:
+            at_risk_ids.add(entry['student'].id)
+    from django.http import HttpResponse
+    wb = Workbook()
+    ws = wb.active
+    ws.title = 'All At Risk'
+    thin_border = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
+    header_fill = PatternFill(start_color='DC2626', end_color='DC2626', fill_type='solid')
+    phase_fill = PatternFill(start_color='B91C1C', end_color='B91C1C', fill_type='solid')
+    header_font = Font(bold=True, color='FFFFFF')
+    red_fill = PatternFill(start_color='FECACA', end_color='FECACA', fill_type='solid')
+    col = 1
+    for h in ['Mentor', 'Roll No', 'Enrollment', 'Name', 'Batch']:
+        cell = ws.cell(1, col, h)
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.border = thin_border
+        cell.alignment = Alignment(horizontal='center', vertical='center')
+        ws.merge_cells(start_row=1, start_column=col, end_row=2, end_column=col)
+        col += 1
+    for ep in selected_phases:
+        subs = phase_subjects.get(ep.name, [])
+        if not subs:
+            continue
+        start_col = col
+        for sub in subs:
+            cell = ws.cell(2, col, sub)
+            cell.font = header_font
+            cell.fill = phase_fill
+            cell.border = thin_border
+            cell.alignment = Alignment(horizontal='center', vertical='center')
+            col += 1
+        cell = ws.cell(1, start_col, ep.name)
+        cell.font = header_font
+        cell.fill = phase_fill
+        cell.border = thin_border
+        cell.alignment = Alignment(horizontal='center', vertical='center')
+        ws.merge_cells(start_row=1, start_column=start_col, end_row=1, end_column=col - 1)
+    row = 3
+    for item in student_data:
+        if item['student'].id not in at_risk_ids:
+            continue
+        s = item['student']
+        cols = [s.mentor.short_name if s.mentor else '', s.roll_no, s.enrollment_no or '', s.name, s.batch.name if s.batch else '']
+        for ep in selected_phases:
+            for subj in phase_subjects.get(ep.name, []):
+                m = marks_by_student_phase_subj[s.id].get(ep.name, {}).get(subj)
+                if m is not None and float(m) < 9:
+                    cols.append(str(m))
+                else:
+                    cols.append('-')
+        for c, val in enumerate(cols, 1):
+            cell = ws.cell(row, c, val)
+            cell.border = thin_border
+            if c >= 6 and val != '-' and val:
+                try:
+                    if float(val) < 9:
+                        cell.fill = red_fill
+                except ValueError:
+                    pass
+        row += 1
+    resp = HttpResponse(content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+    resp['Content-Disposition'] = f'attachment; filename="all_mentorship_at_risk_{phase_param or "all"}.xlsx"'
+    wb.save(resp)
+    return resp
+
+
+def _mark_analytics_report_excel_impl(request, is_admin):
+    """Generate marks report Excel. Phase headers with subjects underneath, red for marks < 9."""
+    if is_admin:
+        if not user_can_admin(request):
+            return redirect('core:admin_dashboard')
+        dept = get_admin_department(request)
+        if not dept:
+            return redirect('core:admin_dashboard')
+        students = Student.objects.filter(department=dept).select_related('batch', 'mentor')
+    else:
+        if not user_can_faculty(request):
+            return redirect('core:faculty_mark_analytics')
+        blocked = _faculty_portal_guard_redirect(request, 'faculty_mark_analytics_report_excel')
+        if blocked:
+            return blocked
+        faculty = get_faculty_user(request)
+        if not faculty:
+            return redirect('accounts:logout')
+        dept = faculty.department
+        students = Student.objects.filter(mentor=faculty, department=dept).select_related('batch', 'mentor')
+    batch_id = request.GET.get('batch_id', 'all')
+    if batch_id and batch_id != 'all':
+        students = students.filter(batch_id=batch_id)
+    phase_combo = request.GET.get('phase_combo', '')
+    subject_ids = request.GET.getlist('subject_ids')
+    if not phase_combo:
+        messages.error(request, 'Select a phase.')
+        return redirect('core:admin_marks_report' if is_admin else 'core:faculty_marks_report')
+    students = list(students)
+    students.sort(key=lambda s: (s.batch.name if s.batch else '', _roll_sort_key(s)))
+    exam_phases = list(ExamPhase.objects.filter(department=dept).order_by('name'))
+    phase_names = [ep.name for ep in exam_phases]
+    if phase_combo == 'all':
+        selected_phases = phase_names
+    elif phase_combo.startswith('combo_'):
+        n = int(phase_combo.replace('combo_', '')) if phase_combo[6:].isdigit() else 2
+        selected_phases = phase_names[:min(n, len(phase_names))]
+    else:
+        selected_phases = [phase_combo] if phase_combo in phase_names else [p for p in phase_names if p == phase_combo]
+    if not selected_phases:
+        selected_phases = [phase_combo]
+    phase_subjects = {}
+    for ep in ExamPhase.objects.filter(department=dept, name__in=selected_phases).order_by('name'):
+        subs = list(ExamPhaseSubject.objects.filter(exam_phase=ep).select_related('subject').order_by('subject__name'))
+        if subject_ids:
+            try:
+                sid_set = {int(x) for x in subject_ids if str(x).strip().isdigit()}
+                if sid_set:
+                    subs = [s for s in subs if s.subject_id in sid_set]
+            except (ValueError, TypeError):
+                pass
+        phase_subjects[ep.name] = [eps.subject.name for eps in subs]
+    student_data = _mark_analytics_build_data_from_students(students, dept)
+    marks_map = defaultdict(lambda: defaultdict(dict))
+    for item in student_data:
+        for ph in item['phase_wise']:
+            for s in ph['subjects']:
+                if s.get('marks') is not None:
+                    marks_map[item['student'].id][ph['phase_name']][s['name']] = s['marks']
+    from django.http import HttpResponse
+    wb = Workbook()
+    ws = wb.active
+    ws.title = 'Marks Report'
+    thin_border = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
+    header_fill = PatternFill(start_color='4F81BD', end_color='4F81BD', fill_type='solid')
+    header_font = Font(bold=True, color='FFFFFF')
+    phase_fill = PatternFill(start_color='2E7D32', end_color='2E7D32', fill_type='solid')
+    red_fill = PatternFill(start_color='FECACA', end_color='FECACA', fill_type='solid')
+    col = 1
+    for h in ['Roll No', 'Name', 'Batch', 'Enrollment', 'Mentor']:
+        cell = ws.cell(1, col, h)
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.border = thin_border
+        cell.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
+        ws.merge_cells(start_row=1, start_column=col, end_row=2, end_column=col)
+        col += 1
+    for phase_name in selected_phases:
+        subs = phase_subjects.get(phase_name, [])
+        if not subs:
+            continue
+        start_col = col
+        for sub in subs:
+            cell = ws.cell(2, col, sub)
+            cell.font = header_font
+            cell.fill = phase_fill
+            cell.border = thin_border
+            cell.alignment = Alignment(horizontal='center', vertical='center')
+            col += 1
+        cell = ws.cell(1, start_col, phase_name)
+        cell.font = header_font
+        cell.fill = phase_fill
+        cell.border = thin_border
+        cell.alignment = Alignment(horizontal='center', vertical='center')
+        ws.merge_cells(start_row=1, start_column=start_col, end_row=1, end_column=col - 1)
+    data_row = 3
+    for item in student_data:
+        s = item['student']
+        col = 1
+        for val in [s.roll_no, s.name, s.batch.name if s.batch else '', s.enrollment_no or '', s.mentor.short_name if s.mentor else '']:
+            cell = ws.cell(data_row, col, str(val) if val is not None else '')
+            cell.border = thin_border
+            col += 1
+        for phase_name in selected_phases:
+            for sub in phase_subjects.get(phase_name, []):
+                m = marks_map[s.id].get(phase_name, {}).get(sub)
+                val = str(m) if m is not None else ''
+                cell = ws.cell(data_row, col, val)
+                cell.border = thin_border
+                if m is not None and float(m) < 9:
+                    cell.fill = red_fill
+                col += 1
+        data_row += 1
+    resp = HttpResponse(content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+    resp['Content-Disposition'] = f'attachment; filename="marks_report_{phase_combo}.xlsx"'
+    wb.save(resp)
+    return resp
+
+
+@login_required
+def mark_analytics_report_excel(request):
+    """Admin: Download marks report - phase/subject/batch selection."""
+    return _mark_analytics_report_excel_impl(request, is_admin=True)
+
+
+@login_required
+def faculty_mark_analytics_report_excel(request):
+    """Faculty: Download marks report (mentorship students only)."""
+    return _mark_analytics_report_excel_impl(request, is_admin=False)
+
+
 @login_required
 def compile_attendance_excel(request):
     """Download compile attendance: one sheet, all students, columns = Roll No, Name, Batch, W1 Held/Attended/%, W2 Cum Held/Attended/%, ..., Total Held, Total Attended, Total %."""
@@ -4244,12 +6425,7 @@ def compile_attendance_excel(request):
     batch_scheduled = defaultdict(set)
     for batch_id in {s.batch_id for s in students}:
         batch = next(b for b in students if b.batch_id == batch_id).batch
-        for d in all_dates_in_range:
-            weekday = d.strftime('%A')
-            slots = [x for x in _effective_slots_for_date(dept, d, extra_filters={'batch': batch}) if x.day == weekday]
-            for slot in set(x.time_slot for x in slots if x.time_slot):
-                if (d, batch_id, slot) not in cancelled_set:
-                    batch_scheduled[batch_id].add((d, slot))
+        _add_batch_schedule_pairs_for_attendance(dept, batch, all_dates_in_range, batch_scheduled[batch_id], cancelled_set)
     # Attendance: for each batch, (date, lecture_slot) -> set of absent roll numbers
     batch_att_map = defaultdict(lambda: defaultdict(set))
     for batch_id in {s.batch_id for s in students}:
@@ -4329,12 +6505,12 @@ def compile_attendance_excel(request):
         for i in range(week_idx + 1):
             date_set = cumulative_dates[i]
             h, a = held_attended_for_dates(s.batch_id, str_roll, date_set)
-            pct = round(a / h * 100, 1) if h else 0
+            pct = round(a / h * 100, 2) if h else 0
             ws.cell(row_idx, c, h).border = thin_border
             c += 1
             ws.cell(row_idx, c, a).border = thin_border
             c += 1
-            pct_cell = ws.cell(row_idx, c, f'{pct}%')
+            pct_cell = ws.cell(row_idx, c, f'{pct:.2f}%')
             pct_cell.border = thin_border
             if pct < 75 and h:
                 pct_cell.font = Font(bold=True, color='FFFFFF')
@@ -4344,8 +6520,8 @@ def compile_attendance_excel(request):
                 total_held, total_attended = h, a
         ws.cell(row_idx, total_col, total_held).border = thin_border
         ws.cell(row_idx, total_col + 1, total_attended).border = thin_border
-        tpct = round(total_attended / total_held * 100, 1) if total_held else 0
-        tpct_cell = ws.cell(row_idx, total_col + 2, f'{tpct}%')
+        tpct = round(total_attended / total_held * 100, 2) if total_held else 0
+        tpct_cell = ws.cell(row_idx, total_col + 2, f'{tpct:.2f}%')
         tpct_cell.border = thin_border
         if tpct < 75 and total_held:
             tpct_cell.font = Font(bold=True, color='FFFFFF')
@@ -4480,7 +6656,7 @@ def overall_attendance_excel(request):
         return subjects_ordered, rows
 
     year = datetime.now().year
-    dept_label = (dept.code or dept.name or 'SY-1').replace(' ', '-')[:20]
+    dept_label = (dept.name or 'SY-1').replace(' ', '-')[:20]
     if len(batches) == 1:
         batch_label = f'DIV-{batches[0].name}'
     else:
@@ -4574,8 +6750,8 @@ def overall_attendance_excel(request):
             c += 1
             ws.cell(row_idx, c, wo_held).border = thin_border
             c += 1
-            wo_pct = round(wo_attended / wo_held * 100, 1) if wo_held else 0
-            wo_pct_cell = ws.cell(row_idx, c, wo_pct if wo_held else '')
+            wo_pct = round(wo_attended / wo_held * 100, 2) if wo_held else 0
+            wo_pct_cell = ws.cell(row_idx, c, f'{wo_pct:.2f}%' if wo_held else '')
             wo_pct_cell.border = thin_border
             if wo_held and wo_pct < 75:
                 wo_pct_cell.font = Font(bold=True, color='FFFFFF')
@@ -4584,12 +6760,12 @@ def overall_attendance_excel(request):
             for subj in subjects_ordered:
                 sw = r['subject_wise'].get(subj, {'held': 0, 'attended': 0})
                 held, attended = sw['held'], sw['attended']
-                pct = round(attended / held * 100, 1) if held else 0
+                pct = round(attended / held * 100, 2) if held else 0
                 ws.cell(row_idx, c, attended).border = thin_border
                 c += 1
                 ws.cell(row_idx, c, held).border = thin_border
                 c += 1
-                pct_cell = ws.cell(row_idx, c, pct if held else '')
+                pct_cell = ws.cell(row_idx, c, f'{pct:.2f}%' if held else '')
                 pct_cell.border = thin_border
                 if held and pct < 75:
                     pct_cell.font = Font(bold=True, color='FFFFFF')
@@ -4599,8 +6775,8 @@ def overall_attendance_excel(request):
             c += 1
             ws.cell(row_idx, c, r['total_held']).border = thin_border
             c += 1
-            tpct = round(r['total_attended'] / r['total_held'] * 100, 1) if r['total_held'] else 0
-            tpct_cell = ws.cell(row_idx, c, tpct if r['total_held'] else '')
+            tpct = round(r['total_attended'] / r['total_held'] * 100, 2) if r['total_held'] else 0
+            tpct_cell = ws.cell(row_idx, c, f'{tpct:.2f}%' if r['total_held'] else '')
             tpct_cell.border = thin_border
             if r['total_held'] and tpct < 75:
                 tpct_cell.font = Font(bold=True, color='FFFFFF')
@@ -4761,6 +6937,11 @@ def faculty_attendance_entry(request):
         # Keep slots ordered by time_slot per batch
         for b in slots_by_batch:
             slots_by_batch[b].sort(key=lambda s: s.time_slot or '')
+        for batch, slots in slots_by_batch.items():
+            for slot in slots:
+                slot.is_extra_lecture = _is_extra_lecture_slot(
+                    dept, selected_date, batch, (slot.time_slot or '').strip()
+                )
 
     attendance_prefill = defaultdict(lambda: defaultdict(list))
     attendance_reasons = defaultdict(lambda: defaultdict(dict))  # batch_id -> lecture_slot -> {roll_no: reason}
@@ -4859,9 +7040,946 @@ def faculty_attendance_save(request):
             'absent_reasons': json.dumps(absent_reasons) if absent_reasons else '',
         }
     )
+    sync_faculty_combine_cache_for_attendance(
+        faculty.department, faculty, selected_date, batch, lecture_slot,
+    )
     messages.success(request, 'Attendance saved.')
     url = reverse('core:faculty_attendance_entry') + f'?date={date_str}'
     return redirect(url)
+
+
+def _doubt_date_phase_week(dept, d):
+    """Return (phase_str, week_index_within_phase) or (None, None) if date outside term weeks."""
+    if not dept or not d:
+        return None, None
+    for phase in ('T1', 'T2', 'T3', 'T4'):
+        weeks = _compile_phase_weeks_date_objects(dept, phase)
+        for wi, week_dates in enumerate(weeks):
+            if d in week_dates:
+                return phase, wi
+    return None, None
+
+
+def _doubt_global_week_for_date(dept, d):
+    return _build_date_to_week_map(dept).get(d)
+
+
+def _faculty_doubt_effective_breakdown(dept, faculty):
+    """Phase × week summary for accepted DS (effective h, session count, lecture date span)."""
+    accepted = list(
+        FacultyDoubtRequest.objects.filter(
+            faculty=faculty,
+            department=dept,
+            status=FacultyDoubtRequest.STATUS_ACCEPTED,
+        )
+    )
+    hours_by_pw = defaultdict(float)
+    counts_by_pw = defaultdict(int)
+    for dr in accepted:
+        phase, wi = _doubt_date_phase_week(dept, dr.date)
+        if phase is None or wi is None:
+            continue
+        key = (phase, wi)
+        hours_by_pw[key] += dr.nominal_ds_hours()
+        counts_by_pw[key] += 1
+
+    breakdown = []
+    scheduled_total = 0.0
+    for phase in ('T1', 'T2', 'T3', 'T4'):
+        weeks = _compile_phase_weeks_date_objects(dept, phase)
+        if not weeks:
+            continue
+        week_rows = []
+        phase_total = 0.0
+        for wi, week_dates in enumerate(weeks):
+            if not week_dates:
+                continue
+            dmin, dmax = min(week_dates), max(week_dates)
+            key = (phase, wi)
+            eff = hours_by_pw.get(key, 0.0)
+            scount = counts_by_pw.get(key, 0)
+            week_rows.append({
+                'week_num': wi + 1,
+                'date_min': dmin,
+                'date_max': dmax,
+                'lecture_days': len(week_dates),
+                'session_count': scount,
+                'effective_hours': round(eff, 2),
+            })
+            phase_total += eff
+        breakdown.append({
+            'phase': phase,
+            'weeks': week_rows,
+            'phase_total': round(phase_total, 2),
+        })
+        scheduled_total += phase_total
+
+    outside_h = 0.0
+    outside_n = 0
+    for dr in accepted:
+        phase, wi = _doubt_date_phase_week(dept, dr.date)
+        if phase is None:
+            outside_h += dr.nominal_ds_hours()
+            outside_n += 1
+
+    return {
+        'phases': breakdown,
+        'scheduled_total': round(scheduled_total, 2),
+        'outside_phase_hours': round(outside_h, 2),
+        'outside_session_count': outside_n,
+    }
+
+
+def _time_slot_duration_hours(ts):
+    """Clock hours from timetable string 'HH:MM-HH:MM'; default 1.0 if unparseable."""
+    ts = (ts or '').strip().replace('–', '-').replace('—', '-')
+    if not ts:
+        return 1.0
+    m = re.match(r'^(\d{1,2}):(\d{2})\s*-\s*(\d{1,2}):(\d{2})$', ts.replace(' ', ''))
+    if m:
+        h1, mi1, h2, mi2 = map(int, m.groups())
+        t1 = h1 * 60 + mi1
+        t2 = h2 * 60 + mi2
+        delta = t2 - t1
+        if delta <= 0:
+            delta += 24 * 60
+        return delta / 60.0
+    return 1.0
+
+
+def _faculty_teaching_on_date(dept, faculty, d):
+    """Scheduled teaching (incl. adjustments & extra) for this faculty on date; returns (hours, row dicts)."""
+    total = 0.0
+    rows = []
+    for batch in Batch.objects.filter(department=dept).order_by('name'):
+        for slot_obj in _dr_slots_for_batch_on_date(dept, batch, d):
+            ts = (slot_obj.time_slot or '').strip()
+            if not ts:
+                continue
+            fac, subj = get_faculty_subject_for_slot(d, batch, ts)
+            if not fac or fac.id != faculty.id:
+                continue
+            h = _time_slot_duration_hours(ts)
+            total += h
+            rows.append({
+                'batch': batch.name,
+                'time_slot': ts,
+                'subject': (subj.name if subj else '—'),
+                'hours': round(h, 2),
+            })
+    return round(total, 4), rows
+
+
+def _user_can_faculty_load_report(request):
+    return is_hod(request) or is_super_admin(request)
+
+
+def _dr_lecture_count_for_faculty_on_date(dept, faculty, d):
+    """Number of real (non-blank) Daily Report lecture rows for this faculty on date."""
+    rows = _dr_collect_rows_for_date(dept, d)
+    return sum(1 for r in rows if r['faculty'].id == faculty.id and not r.get('is_blank'))
+
+
+def _dates_cumulative_upto_phase_week(dept, end_phase, end_week_1based):
+    """All lecture-calendar dates from T1 week 1 through end of given phase/week (inclusive)."""
+    phases = ('T1', 'T2', 'T3', 'T4')
+    if end_phase not in phases:
+        end_phase = 'T1'
+    try:
+        end_week_1based = int(end_week_1based)
+    except (TypeError, ValueError):
+        end_week_1based = 1
+    end_week_1based = max(1, end_week_1based)
+    end_idx = phases.index(end_phase)
+    out = []
+    for pi, phase in enumerate(phases):
+        if pi > end_idx:
+            break
+        weeks = _compile_phase_weeks_date_objects(dept, phase)
+        if not weeks:
+            continue
+        if pi < end_idx:
+            iter_weeks = range(len(weeks))
+        else:
+            iter_weeks = range(min(end_week_1based, len(weeks)))
+        for wi in iter_weeks:
+            out.extend(weeks[wi])
+    return sorted(set(out))
+
+
+def sync_faculty_combine_cache_for_attendance(dept, faculty, day, batch, lecture_slot):
+    """Align FacultyCombineDrCache with saved attendance (DR weekly combine rules)."""
+    slot = (lecture_slot or '').strip()
+    FacultyCombineDrCache.objects.filter(
+        faculty=faculty, date=day, batch=batch, lecture_slot=slot,
+    ).delete()
+    cancelled = get_cancelled_lectures_set(dept)
+    if (day, batch.id, slot) in cancelled:
+        return
+    rf, rs = get_faculty_subject_for_slot(day, batch, slot)
+    if not rf or not rs or rf.id != faculty.id:
+        return
+    att = FacultyAttendance.objects.filter(
+        date=day, batch=batch, lecture_slot=slot, faculty=faculty,
+    ).first() or FacultyAttendance.objects.filter(date=day, batch=batch, lecture_slot=slot).first()
+    if not att:
+        return
+    tot = Student.objects.filter(batch=batch).count()
+    absent_n = len([x for x in (att.absent_roll_numbers or '').split(',') if x.strip()])
+    present = tot - absent_n
+    is_extra = _is_extra_lecture_slot(dept, day, batch, slot)
+    eff = _dr_slot_effective_load(is_extra, True, present)
+    FacultyCombineDrCache.objects.update_or_create(
+        faculty=faculty,
+        date=day,
+        batch=batch,
+        lecture_slot=slot,
+        defaults={'department': dept, 'subject': rs, 'effective_load': eff},
+    )
+
+
+def rebuild_faculty_combine_cache_dept(dept):
+    """Rebuild cache from all attendance rows. Run after deploy or if timetable changes."""
+    FacultyCombineDrCache.objects.filter(department=dept).delete()
+    qs = FacultyAttendance.objects.filter(batch__department=dept).select_related('faculty', 'batch')
+    for att in qs.iterator(chunk_size=1000):
+        sync_faculty_combine_cache_for_attendance(
+            dept, att.faculty, att.date, att.batch, att.lecture_slot,
+        )
+
+
+def _ensure_combine_dr_cache_populated(dept):
+    if FacultyCombineDrCache.objects.filter(department=dept).exists():
+        return
+    if FacultyAttendance.objects.filter(batch__department=dept).exists():
+        rebuild_faculty_combine_cache_dept(dept)
+
+
+def _faculty_upto_week_choices(dept):
+    choices = []
+    for phase in ('T1', 'T2', 'T3', 'T4'):
+        weeks = _compile_phase_weeks_date_objects(dept, phase)
+        for wi, week_dates in enumerate(weeks):
+            if not week_dates:
+                continue
+            d0, d1 = min(week_dates), max(week_dates)
+            choices.append({
+                'phase': phase,
+                'week_num': wi + 1,
+                'value': f'{phase}|{wi + 1}',
+                'label': f'{phase} — Week {wi + 1}: {d0.strftime("%d %b")} – {d1.strftime("%d %b %Y")}',
+            })
+    return choices
+
+
+def _build_faculty_dr_weekly_combine_upto(dept, faculty, end_phase, end_week_1based):
+    """Week rows (combine sheet rules) from FacultyCombineDrCache (updated on attendance save)."""
+    cum_dates_set = set(_dates_cumulative_upto_phase_week(dept, end_phase, end_week_1based))
+    phases = ('T1', 'T2', 'T3', 'T4')
+    end_idx = phases.index(end_phase) if end_phase in phases else 0
+    try:
+        end_week_1based = max(1, int(end_week_1based))
+    except (TypeError, ValueError):
+        end_week_1based = 1
+
+    week_specs = []
+    for pi, phase in enumerate(phases):
+        if pi > end_idx:
+            break
+        weeks = _compile_phase_weeks_date_objects(dept, phase)
+        if not weeks:
+            continue
+        if pi < end_idx:
+            wi_range = range(len(weeks))
+        else:
+            wi_range = range(min(end_week_1based, len(weeks)))
+        for wi in wi_range:
+            week_specs.append((phase, wi, weeks[wi]))
+        if pi == end_idx:
+            break
+
+    date_to_week = {}
+    for phase, wi, week_dates in week_specs:
+        for d0 in week_dates:
+            date_to_week[d0] = (phase, wi)
+
+    _ensure_combine_dr_cache_populated(dept)
+
+    week_trip_counts = defaultdict(lambda: defaultdict(int))
+    week_eff_sum = defaultdict(float)
+    date_batch_counts = defaultdict(Counter)
+    date_totals = defaultdict(int)
+
+    for row in FacultyCombineDrCache.objects.filter(
+        department=dept, faculty=faculty, date__in=cum_dates_set,
+    ).select_related('batch', 'subject'):
+        wk = date_to_week.get(row.date)
+        if wk is None:
+            continue
+        week_trip_counts[wk][(row.batch_id, row.subject_id)] += 1
+        week_eff_sum[wk] += float(row.effective_load)
+        date_batch_counts[row.date][row.batch.name] += 1
+        date_totals[row.date] += 1
+
+    week_rows = []
+    sr = 0
+    cum_lec = 0
+    cum_eff_raw = 0.0
+    for phase, wi, week_dates in week_specs:
+        wk = (phase, wi)
+        counts = week_trip_counts[wk]
+        n_lec = sum(counts.values())
+        eff_raw = week_eff_sum[wk]
+        cum_lec += n_lec
+        cum_eff_raw += eff_raw
+        sr += 1
+        date_details = []
+        for d0 in sorted(week_dates):
+            bc = date_batch_counts[d0]
+            batch_list = [{'batch': name, 'count': n} for name, n in sorted(bc.items())]
+            date_details.append({
+                'date': d0,
+                'total': date_totals[d0],
+                'batches': batch_list,
+            })
+        week_rows.append({
+            'sr_no': sr,
+            'phase': phase,
+            'week_num': wi + 1,
+            'week_label': f'{phase} — Week {wi + 1}',
+            'date_min': min(week_dates),
+            'date_max': max(week_dates),
+            'lecture_days': len(week_dates),
+            'total_lectures': n_lec,
+            'total_effective': round(eff_raw, 2),
+            'date_details': date_details,
+        })
+
+    return {
+        'week_rows': week_rows,
+        'cumulative_lectures': cum_lec,
+        'cumulative_effective': round(cum_eff_raw, 2),
+        'cumulative_calendar_days': len(cum_dates_set),
+    }
+
+
+def _parse_doubt_time(s):
+    s = (s or '').strip()
+    if not s:
+        return None
+    for fmt in ('%H:%M:%S', '%H:%M'):
+        try:
+            return datetime.strptime(s, fmt).time()
+        except ValueError:
+            continue
+    return None
+
+
+@login_required
+def faculty_doubt_students_data(request):
+    """JSON: students in batch (roll, name, phone) for doubt-solving form."""
+    if not user_can_faculty(request):
+        return JsonResponse({'error': 'Forbidden'}, status=403)
+    faculty = get_faculty_user(request)
+    if not faculty:
+        return JsonResponse({'error': 'Forbidden'}, status=403)
+    if not faculty_portal_feature_allowed(faculty, 'faculty_doubt_students_data'):
+        return JsonResponse({'error': 'Forbidden'}, status=403)
+    batch_ids = [x for x in request.GET.getlist('batch_id') if str(x).strip().isdigit()]
+    if not batch_ids:
+        return JsonResponse({'students': []})
+    batch_qs = Batch.objects.filter(pk__in=batch_ids, department=faculty.department).order_by('name')
+    found_ids = set(batch_qs.values_list('pk', flat=True))
+    data = []
+    for batch in batch_qs:
+        studs = (
+            Student.objects.filter(batch=batch, department=faculty.department)
+            .annotate(roll_no_int=Cast('roll_no', IntegerField()))
+            .order_by('roll_no_int', 'roll_no')
+        )
+        for s in studs:
+            data.append({
+                'id': s.id,
+                'batch_id': batch.id,
+                'batch_name': batch.name,
+                'roll_no': s.roll_no,
+                'name': s.name,
+                'phone': (s.student_phone_number or '').strip(),
+            })
+    return JsonResponse({'students': data, 'valid_batch_ids': sorted(found_ids)})
+
+
+@login_required
+def faculty_doubt_solving(request):
+    if not user_can_faculty(request):
+        return redirect('accounts:role_redirect')
+    blocked = _faculty_portal_guard_redirect(request, 'faculty_doubt_solving')
+    if blocked:
+        return blocked
+    faculty = get_faculty_user(request)
+    if not faculty:
+        return redirect('accounts:logout')
+    dept = faculty.department
+    batches = list(Batch.objects.filter(department=dept).order_by('name'))
+
+    if request.method == 'POST':
+        date_str = request.POST.get('date', '').strip()
+        batch_ids = [x for x in request.POST.getlist('batch_ids') if str(x).strip().isdigit()]
+        student_ids = request.POST.getlist('student_ids')
+        start_s = request.POST.get('start_time', '').strip()
+        end_s = request.POST.get('end_time', '').strip()
+        if not all([date_str, batch_ids, start_s, end_s]):
+            messages.error(request, 'Please select at least one batch, and fill date and times.')
+            return redirect('core:faculty_doubt_solving')
+        if not student_ids:
+            messages.error(request, 'Select at least one student.')
+            return redirect('core:faculty_doubt_solving')
+        try:
+            sess_date = datetime.strptime(date_str, '%Y-%m-%d').date()
+        except ValueError:
+            messages.error(request, 'Invalid date.')
+            return redirect('core:faculty_doubt_solving')
+        batch_list = list(Batch.objects.filter(pk__in=batch_ids, department=dept).order_by('name'))
+        if len(batch_list) != len(set(batch_ids)):
+            messages.error(request, 'Invalid batch selection.')
+            return redirect('core:faculty_doubt_solving')
+        allowed_batch_ids = {b.id for b in batch_list}
+        t_start = _parse_doubt_time(start_s)
+        t_end = _parse_doubt_time(end_s)
+        if not t_start or not t_end:
+            messages.error(request, 'Invalid start or end time.')
+            return redirect('core:faculty_doubt_solving')
+        req = FacultyDoubtRequest.objects.create(
+            faculty=faculty,
+            department=dept,
+            batch=None,
+            date=sess_date,
+            start_time=t_start,
+            end_time=t_end,
+            status=FacultyDoubtRequest.STATUS_PENDING,
+        )
+        req.batches.set(batch_list)
+        added = 0
+        for sid in student_ids:
+            st = Student.objects.filter(pk=sid, department=dept, batch_id__in=allowed_batch_ids).first()
+            if st:
+                FacultyDoubtRequestStudent.objects.get_or_create(request=req, student=st)
+                added += 1
+        if not added:
+            req.delete()
+            messages.error(request, 'No valid students selected.')
+            return redirect('core:faculty_doubt_solving')
+        messages.success(request, f'Request submitted to HOD with {added} student(s). Status: Pending.')
+        q = '&'.join(f'batch_id={b.id}' for b in batch_list)
+        return redirect(f"{reverse('core:faculty_doubt_solving')}?{q}")
+
+    batch_ids_get = [x for x in request.GET.getlist('batch_id') if str(x).strip().isdigit()]
+    selected_batches = list(Batch.objects.filter(pk__in=batch_ids_get, department=dept).order_by('name'))
+
+    requests_qs = (
+        FacultyDoubtRequest.objects.filter(faculty=faculty)
+        .select_related('batch')
+        .prefetch_related('batches', 'student_lines__student')
+        .order_by('-date', '-start_time', '-pk')
+    )
+    accepted_qs = requests_qs.filter(status=FacultyDoubtRequest.STATUS_ACCEPTED)
+    total_hours = round(sum(r.nominal_ds_hours() for r in accepted_qs), 2)
+    history = list(requests_qs[:200])
+
+    ctx = {
+        'faculty': faculty,
+        'batches': batches,
+        'selected_batches': selected_batches,
+        'selected_batch_ids': [b.id for b in selected_batches],
+        'history': history,
+        'total_hours': total_hours,
+        'students_json_url': reverse('core:faculty_doubt_students_data'),
+    }
+    return render(request, 'core/faculty/doubt_solving.html', ctx)
+
+
+@login_required
+def faculty_dr_load(request):
+    """Faculty DR weekly combine (0.75×); same cache-backed builder as HOD Faculty load."""
+    if not user_can_faculty(request):
+        return redirect('accounts:role_redirect')
+    blocked = _faculty_portal_guard_redirect(request, 'faculty_dr_load')
+    if blocked:
+        return blocked
+    faculty = get_faculty_user(request)
+    if not faculty:
+        return redirect('accounts:logout')
+    dept = faculty.department
+    choices = _faculty_upto_week_choices(dept)
+    sel_phase, sel_w = 'T1', 1
+    upto = (request.GET.get('upto') or '').strip()
+    if '|' in upto:
+        p, w = upto.split('|', 1)
+        if p in ('T1', 'T2', 'T3', 'T4') and w.strip().isdigit():
+            sel_phase, sel_w = p, int(w.strip())
+    if choices:
+        if f'{sel_phase}|{sel_w}' not in {c['value'] for c in choices}:
+            last = choices[-1]
+            sel_phase, sel_w = last['phase'], last['week_num']
+    selected_value = f'{sel_phase}|{sel_w}'
+    selected_label = next((c['label'] for c in choices if c['value'] == selected_value), '')
+    detail = (
+        _build_faculty_dr_weekly_combine_upto(dept, faculty, sel_phase, sel_w)
+        if choices
+        else None
+    )
+    ctx = {
+        'faculty': faculty,
+        'department': dept,
+        'upto_choices': choices,
+        'selected_upto': selected_value,
+        'selected_label': selected_label,
+        'detail': detail,
+    }
+    return render(request, 'core/faculty/dr_load.html', ctx)
+
+
+@login_required
+def hod_doubt_requests(request):
+    if not user_can_admin(request) or not is_hod(request):
+        messages.error(request, 'Only HOD can access doubt requests.')
+        return redirect('core:admin_dashboard')
+    dept = get_admin_department(request)
+    if not dept:
+        return redirect('core:admin_dashboard')
+    pending = list(
+        FacultyDoubtRequest.objects.filter(department=dept, status=FacultyDoubtRequest.STATUS_PENDING)
+        .select_related('faculty', 'batch')
+        .prefetch_related('batches', 'student_lines__student')
+        .order_by('date', 'start_time', 'pk')
+    )
+    recent = list(
+        FacultyDoubtRequest.objects.filter(department=dept)
+        .exclude(status=FacultyDoubtRequest.STATUS_PENDING)
+        .select_related('faculty', 'batch', 'reviewed_by')
+        .prefetch_related('batches', 'student_lines__student')
+        .order_by('-reviewed_at', '-pk')[:80]
+    )
+    ctx = {
+        'department': dept,
+        'pending': pending,
+        'recent': recent,
+    }
+    return render(request, 'core/admin/hod_doubt_requests.html', ctx)
+
+
+@login_required
+def admin_faculty_teaching_ds_load(request):
+    """HOD/superadmin: same DR weekly combine report as faculty 'My DR weekly load', with faculty selector."""
+    if not user_can_admin(request) or not _user_can_faculty_load_report(request):
+        messages.error(request, 'Only HOD or super admin can view faculty load.')
+        return redirect('core:admin_dashboard')
+    dept = get_admin_department(request)
+    if not dept:
+        messages.error(request, 'Select a department first.')
+        return redirect('core:admin_dashboard')
+    faculties = list(Faculty.objects.filter(department=dept).order_by('full_name'))
+    selected = None
+    raw_fid = request.GET.get('faculty_id')
+    if raw_fid and str(raw_fid).isdigit():
+        selected = next((f for f in faculties if f.id == int(raw_fid)), None)
+    if not selected and faculties:
+        myf = get_faculty_user(request)
+        if myf and myf.department_id == dept.id:
+            selected = next((f for f in faculties if f.id == myf.id), None)
+        if not selected:
+            selected = faculties[0]
+
+    choices = _faculty_upto_week_choices(dept)
+    sel_phase, sel_w = 'T1', 1
+    upto = (request.GET.get('upto') or '').strip()
+    if '|' in upto:
+        p, w = upto.split('|', 1)
+        if p in ('T1', 'T2', 'T3', 'T4') and w.strip().isdigit():
+            sel_phase, sel_w = p, int(w.strip())
+    if choices:
+        if f'{sel_phase}|{sel_w}' not in {c['value'] for c in choices}:
+            last = choices[-1]
+            sel_phase, sel_w = last['phase'], last['week_num']
+    selected_value = f'{sel_phase}|{sel_w}'
+    selected_label = next((c['label'] for c in choices if c['value'] == selected_value), '')
+    detail = (
+        _build_faculty_dr_weekly_combine_upto(dept, selected, sel_phase, sel_w)
+        if selected and choices
+        else None
+    )
+    ctx = {
+        'department': dept,
+        'faculties': faculties,
+        'selected_faculty': selected,
+        'upto_choices': choices,
+        'selected_upto': selected_value,
+        'selected_label': selected_label,
+        'detail': detail,
+    }
+    return render(request, 'core/admin/faculty_teaching_ds_load.html', ctx)
+
+
+@login_required
+def hod_doubt_request_review(request, pk):
+    if request.method != 'POST' or not user_can_admin(request) or not is_hod(request):
+        return redirect('core:hod_doubt_requests')
+    dept = get_admin_department(request)
+    if not dept:
+        return redirect('core:hod_doubt_requests')
+    dr = FacultyDoubtRequest.objects.filter(pk=pk, department=dept).first()
+    if not dr or dr.status != FacultyDoubtRequest.STATUS_PENDING:
+        messages.error(request, 'Request not found or already reviewed.')
+        return redirect('core:hod_doubt_requests')
+    action = request.POST.get('action')
+    notes = (request.POST.get('notes') or '').strip()[:500]
+    if action == 'accept':
+        dr.status = FacultyDoubtRequest.STATUS_ACCEPTED
+        dr.reviewed_at = timezone.now()
+        dr.reviewed_by = request.user
+        upd = ['status', 'reviewed_at', 'reviewed_by']
+        if notes:
+            dr.review_notes = notes
+            upd.append('review_notes')
+        dr.save(update_fields=upd)
+        messages.success(request, 'Request accepted. It now counts as doubt solving.')
+    elif action == 'reject':
+        dr.status = FacultyDoubtRequest.STATUS_REJECTED
+        dr.reviewed_at = timezone.now()
+        dr.reviewed_by = request.user
+        dr.review_notes = notes
+        dr.save(update_fields=['status', 'reviewed_at', 'reviewed_by', 'review_notes'])
+        messages.success(request, 'Request rejected.')
+    else:
+        messages.error(request, 'Invalid action.')
+    return redirect('core:hod_doubt_requests')
+
+
+@login_required
+def hod_doubt_request_delete(request, pk):
+    if request.method != 'POST' or not user_can_admin(request) or not is_hod(request):
+        return redirect('core:hod_doubt_requests')
+    dept = get_admin_department(request)
+    if not dept:
+        return redirect('core:hod_doubt_requests')
+    dr = FacultyDoubtRequest.objects.filter(pk=pk, department=dept).first()
+    if not dr:
+        messages.error(request, 'Request not found.')
+        return redirect('core:hod_doubt_requests')
+    if dr.status == FacultyDoubtRequest.STATUS_PENDING:
+        messages.error(
+            request, 'Pending requests cannot be deleted here—use Accept or Reject.',
+        )
+        return redirect('core:hod_doubt_requests')
+    dr.delete()
+    messages.success(
+        request,
+        'Record removed permanently. It no longer appears in totals or Excel exports.',
+    )
+    return redirect('core:hod_doubt_requests')
+
+
+@login_required
+def hod_doubt_reports_excel(request):
+    if not user_can_admin(request) or not is_hod(request):
+        return redirect('core:admin_dashboard')
+    dept = get_admin_department(request)
+    if not dept:
+        return redirect('core:admin_dashboard')
+    report = (request.GET.get('report') or 'full').lower()
+    thin = Border(
+        left=Side(style='thin'), right=Side(style='thin'),
+        top=Side(style='thin'), bottom=Side(style='thin'),
+    )
+    hdr_font = Font(bold=True)
+
+    def _detail_sheet(ws):
+        ws.append([
+            'Request ID', 'Status', 'Faculty', 'Date', 'Batches', 'Phase', 'Week in phase', 'Global week',
+            'Start', 'End', 'Effective hours (DS)', '# Students', 'Roll numbers', 'Names', 'Phones',
+            'Reviewed at', 'Notes',
+        ])
+        for c in ws[1]:
+            c.font = hdr_font
+            c.border = thin
+        qs = (
+            FacultyDoubtRequest.objects.filter(department=dept)
+            .select_related('faculty', 'batch')
+            .prefetch_related('batches', 'student_lines__student')
+            .order_by('-date', '-pk')
+        )
+        for dr in qs:
+            phase, wi = _doubt_date_phase_week(dept, dr.date)
+            gw = _doubt_global_week_for_date(dept, dr.date)
+            lines = list(dr.student_lines.all())
+            rolls = ', '.join(x.student.roll_no for x in lines)
+            names = ', '.join(x.student.name for x in lines)
+            phones = ', '.join((x.student.student_phone_number or '').strip() or '—' for x in lines)
+            ws.append([
+                dr.pk,
+                dr.get_status_display(),
+                dr.faculty.short_name,
+                dr.date.isoformat(),
+                dr.batches_label(),
+                phase or '—',
+                (wi + 1) if wi is not None else '—',
+                gw if gw is not None else '—',
+                dr.start_time.strftime('%H:%M'),
+                dr.end_time.strftime('%H:%M'),
+                round(dr.nominal_ds_hours(), 2),
+                len(lines),
+                rolls,
+                names,
+                phones,
+                dr.reviewed_at.strftime('%Y-%m-%d %H:%M') if dr.reviewed_at else '',
+                dr.review_notes or '',
+            ])
+        for row in ws.iter_rows(min_row=2, max_row=ws.max_row):
+            for c in row:
+                c.border = thin
+        for col in range(1, 18):
+            ws.column_dimensions[get_column_letter(col)].width = 14
+        ws.column_dimensions['N'].width = 28
+
+    def _doubt_accepted_qs():
+        return list(
+            FacultyDoubtRequest.objects.filter(
+                department=dept, status=FacultyDoubtRequest.STATUS_ACCEPTED
+            ).select_related('faculty').prefetch_related('batches', 'student_lines__student')
+        )
+
+    def _write_doubt_detail_block(ws, r, title_text, week_dates, accepted_all, thin_local, hdr_fill_blue, hdr_w, title_f, sub_f):
+        """Write one week’s detail table; return (next_row, week_effective_sum)."""
+        detail_ncol = 11
+        ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=detail_ncol)
+        c0 = ws.cell(r, 1, value=title_text)
+        c0.font = title_f
+        c0.alignment = Alignment(horizontal='left', vertical='center', wrap_text=True)
+        r += 1
+        headers = [
+            'Faculty', 'Date', 'Batches', 'Start', 'End', 'Clock (min)', 'Effective hours',
+            'Roll numbers', 'Student names', 'Phone numbers', '# Students',
+        ]
+        for col, h in enumerate(headers, 1):
+            c = ws.cell(r, col, value=h)
+            c.font = hdr_w
+            c.fill = hdr_fill_blue
+            c.border = thin_local
+            c.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
+        r += 1
+        week_set = set(week_dates)
+        week_reqs = [dr for dr in accepted_all if dr.date in week_set]
+        week_reqs.sort(key=lambda x: (x.faculty.short_name.lower(), x.date, x.pk))
+        week_sum = 0.0
+        for dr in week_reqs:
+            lines = list(dr.student_lines.all())
+            rolls = ', '.join(x.student.roll_no for x in lines)
+            names = ', '.join(x.student.name for x in lines)
+            phones = ', '.join((x.student.student_phone_number or '').strip() or '—' for x in lines)
+            nh = dr.nominal_ds_hours()
+            week_sum += nh
+            cm = round(dr.duration_minutes(), 1)
+            vals = [
+                dr.faculty.short_name,
+                dr.date.isoformat(),
+                dr.batches_label(),
+                dr.start_time.strftime('%H:%M'),
+                dr.end_time.strftime('%H:%M'),
+                cm,
+                round(nh, 2),
+                rolls,
+                names,
+                phones,
+                len(lines),
+            ]
+            for col, val in enumerate(vals, 1):
+                c = ws.cell(r, col, value=val)
+                c.border = thin_local
+                if col in (6, 7, 11):
+                    c.alignment = Alignment(horizontal='right', vertical='center')
+            r += 1
+        if not week_reqs:
+            ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=detail_ncol)
+            c = ws.cell(r, 1, value='No accepted doubt sessions in this week.')
+            c.font = Font(italic=True, color='666666')
+            r += 1
+        for col in range(1, detail_ncol + 1):
+            ws.cell(r, col).border = thin_local
+        ws.cell(r, 1, value='Week subtotal — effective hours (DS):').font = sub_f
+        ws.cell(r, 7, value=round(week_sum, 2)).font = sub_f
+        r += 2
+        return r, week_sum
+
+    def _phase_sheet(ws, phase):
+        weeks = _compile_phase_weeks_date_objects(dept, phase)
+        if not weeks:
+            ws.cell(1, 1, f'No lecture weeks in {phase} — set term phase dates for this department.')
+            return
+        accepted = _doubt_accepted_qs()
+        hdr_fill_blue = PatternFill(start_color='1F4E79', end_color='1F4E79', fill_type='solid')
+        hdr_w = Font(bold=True, color='FFFFFF', size=10)
+        title_f = Font(bold=True, size=11)
+        sub_f = Font(bold=True)
+        r = 1
+        for wi, week_dates in enumerate(weeks):
+            if not week_dates:
+                continue
+            wn = wi + 1
+            dmin, dmax = min(week_dates), max(week_dates)
+            title = (
+                f'Week {wn} — lecture days: {dmin.strftime("%d-%b-%Y")} → {dmax.strftime("%d-%b-%Y")} '
+                f'({len(week_dates)} day(s)) — detail (60 min clock = 0.5 effective h)'
+            )
+            r, _ = _write_doubt_detail_block(ws, r, title, week_dates, accepted, thin, hdr_fill_blue, hdr_w, title_f, sub_f)
+        date_to_wi = {}
+        for wi, dates in enumerate(weeks):
+            for d0 in dates:
+                date_to_wi[d0] = wi
+        nweeks = len(weeks)
+        ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=max(nweeks + 2, 3))
+        ws.cell(r, 1, value=f'Summary — {phase}: faculty × week (effective hours)').font = title_f
+        r += 1
+        header = ['Faculty'] + [f'Week {i + 1}' for i in range(nweeks)] + [f'Total ({phase})']
+        for col, h in enumerate(header, 1):
+            c = ws.cell(r, col, value=h)
+            c.font = hdr_font
+            c.border = thin
+        r += 1
+        facs = list(Faculty.objects.filter(department=dept).order_by('full_name'))
+        by_fac = defaultdict(list)
+        for dr in accepted:
+            by_fac[dr.faculty_id].append(dr)
+        col_totals = [0.0] * nweeks
+        for fac in facs:
+            wsum = [0.0] * nweeks
+            for dr in by_fac.get(fac.id, []):
+                wi = date_to_wi.get(dr.date)
+                if wi is not None and 0 <= wi < nweeks:
+                    h = dr.nominal_ds_hours()
+                    wsum[wi] += h
+            for i in range(nweeks):
+                col_totals[i] += wsum[i]
+            ftot = round(sum(wsum), 2)
+            fac_row = [fac.short_name] + [round(x, 2) if x else '' for x in wsum] + [ftot]
+            for col, val in enumerate(fac_row, 1):
+                ws.cell(r, col, value=val).border = thin
+            r += 1
+        for col in range(1, nweeks + 3):
+            ws.cell(r, col).border = thin
+        ws.cell(r, 1, value='ALL FACULTIES — week totals (effective h)').font = sub_f
+        for i in range(nweeks):
+            ws.cell(r, i + 2, value=round(col_totals[i], 2)).font = sub_f
+        ws.cell(r, nweeks + 2, value=round(sum(col_totals), 2)).font = sub_f
+        r += 1
+        ws.column_dimensions['A'].width = 12
+        ws.column_dimensions['B'].width = 12
+        ws.column_dimensions['C'].width = 14
+        ws.column_dimensions['G'].width = 12
+        ws.column_dimensions['H'].width = 22
+        ws.column_dimensions['I'].width = 28
+        ws.column_dimensions['J'].width = 22
+
+    def _semester_sheet(ws):
+        dmap = _build_date_to_week_map(dept)
+        if not dmap:
+            ws.cell(1, 1, 'Set term phases to generate semester summary.')
+            return
+        max_gw = max(dmap.values())
+        gw_to_dates = defaultdict(list)
+        for d0, gw in dmap.items():
+            gw_to_dates[gw].append(d0)
+        for gw in gw_to_dates:
+            gw_to_dates[gw] = sorted(gw_to_dates[gw])
+        accepted = _doubt_accepted_qs()
+        hdr_fill_blue = PatternFill(start_color='1F4E79', end_color='1F4E79', fill_type='solid')
+        hdr_w = Font(bold=True, color='FFFFFF', size=10)
+        title_f = Font(bold=True, size=11)
+        sub_f = Font(bold=True)
+        r = 1
+        for gw in range(1, max_gw + 1):
+            dates = gw_to_dates.get(gw, [])
+            if not dates:
+                continue
+            dmin, dmax = dates[0], dates[-1]
+            title = (
+                f'Global week W{gw} — {dmin.strftime("%d-%b-%Y")} → {dmax.strftime("%d-%b-%Y")} '
+                f'({len(dates)} lecture day(s)) — detail (60 min clock = 0.5 effective h)'
+            )
+            r, _ = _write_doubt_detail_block(ws, r, title, dates, accepted, thin, hdr_fill_blue, hdr_w, title_f, sub_f)
+        ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=max(max_gw + 2, 3))
+        ws.cell(r, 1, value='Summary — full semester: faculty × global week (effective hours)').font = title_f
+        r += 1
+        header = ['Faculty'] + [f'W{i}' for i in range(1, max_gw + 1)] + ['Total DS effective']
+        for col, h in enumerate(header, 1):
+            c = ws.cell(r, col, value=h)
+            c.font = hdr_font
+            c.border = thin
+        r += 1
+        facs = list(Faculty.objects.filter(department=dept).order_by('full_name'))
+        by_fac = defaultdict(list)
+        for dr in accepted:
+            by_fac[dr.faculty_id].append(dr)
+        col_totals = [0.0] * max_gw
+        for fac in facs:
+            parts = [0.0] * max_gw
+            for dr in by_fac.get(fac.id, []):
+                gw = dmap.get(dr.date)
+                if gw and 1 <= gw <= max_gw:
+                    h = dr.nominal_ds_hours()
+                    parts[gw - 1] += h
+            for i in range(max_gw):
+                col_totals[i] += parts[i]
+            tot = round(sum(parts), 2)
+            fac_row = [fac.short_name] + [round(x, 2) if x else '' for x in parts] + [tot]
+            for col, val in enumerate(fac_row, 1):
+                ws.cell(r, col, value=val).border = thin
+            r += 1
+        for col in range(1, max_gw + 3):
+            ws.cell(r, col).border = thin
+        ws.cell(r, 1, value='ALL FACULTIES — week totals (effective h)').font = sub_f
+        for i in range(max_gw):
+            ws.cell(r, i + 2, value=round(col_totals[i], 2)).font = sub_f
+        ws.cell(r, max_gw + 2, value=round(sum(col_totals), 2)).font = sub_f
+        r += 1
+        for col_letter, w in zip(
+            'ABCDEFGHIJK',
+            (12, 12, 14, 8, 8, 10, 12, 22, 28, 22, 10),
+        ):
+            ws.column_dimensions[col_letter].width = w
+
+    wb = Workbook()
+    if report == 'semester':
+        wb.remove(wb.active)
+        ws = wb.create_sheet('Semester_DS')
+        _semester_sheet(ws)
+    elif report == 'phase':
+        ph = (request.GET.get('phase') or 'T1').upper()
+        if ph not in ('T1', 'T2', 'T3', 'T4'):
+            ph = 'T1'
+        wb.remove(wb.active)
+        ws = wb.create_sheet(f'DS_{ph}'[:31])
+        _phase_sheet(ws, ph)
+    else:
+        ws0 = wb.active
+        ws0.title = 'Detail'
+        _detail_sheet(ws0)
+        for ph in ('T1', 'T2', 'T3', 'T4'):
+            wsp = wb.create_sheet(f'DS_{ph}'[:31])
+            _phase_sheet(wsp, ph)
+        wss = wb.create_sheet('Semester_DS')
+        _semester_sheet(wss)
+
+    bio = BytesIO()
+    wb.save(bio)
+    bio.seek(0)
+    safe_dept = re.sub(r'[^\w\-.]+', '_', (dept.name or 'dept'))[:60]
+    fname = f'Doubt_Solving_{safe_dept}_{report}_{timezone.localdate().isoformat()}.xlsx'
+    resp = HttpResponse(
+        bio.getvalue(),
+        content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    )
+    resp['Content-Disposition'] = f'attachment; filename="{fname}"'
+    return resp
 
 
 @login_required
@@ -4923,7 +8041,7 @@ def faculty_report_excel(request):
         cell.font = date_font
         cell.alignment = date_align
 
-    # Row 2: blank A,B; then "Lect 1\nSubject", "Lect 2\nSubject"...
+    # Row 2: blank A,B; actual time_slot label + subject per column
     lect_fill = PatternFill(start_color='4F81BD', end_color='4F81BD', fill_type='solid')
     lect_font = Font(bold=True, color='FFFFFF')
     lect_align = Alignment(horizontal='center', vertical='center', wrap_text=True)
@@ -4932,7 +8050,8 @@ def faculty_report_excel(request):
     for i, slot in enumerate(slots, start=1):
         fac, subj = get_faculty_subject_for_slot(selected_date, batch, slot.time_slot)
         subj_name = subj.name if subj else (slot.subject.name if slot.subject else 'N/A')
-        cell = ws.cell(row=2, column=2 + i, value=f'Lect {i}\n{subj_name}')
+        lect_label = _lecture_label_for_slot(faculty.department, batch, selected_date, slot.time_slot, i)
+        cell = ws.cell(row=2, column=2 + i, value=f'{lect_label}\n{subj_name}')
         cell.alignment = lect_align
         cell.fill = lect_fill
         cell.font = lect_font
@@ -5089,7 +8208,8 @@ def faculty_batchwise_attendance_excel(request):
     for d, slots, start_col, end_col in col_ranges:
         for i, (slot, subj_name) in enumerate(slots):
             c = start_col + i
-            cell = ws.cell(row=3, column=c, value=f'Lect {i + 1}\n{subj_name}')
+            lect_label = _lecture_label_for_slot(faculty.department, batch, d, slot, i + 1)
+            cell = ws.cell(row=3, column=c, value=f'{lect_label}\n{subj_name}')
             cell.alignment = lect_align
             cell.fill = lect_fill
             cell.font = lect_font
@@ -5203,10 +8323,12 @@ def _write_batchwise_subject_sheet(ws, batch, subject_name, date_slots_list, stu
                 ws.cell(1, c).border = thin_border
     for c in range(1, 5):
         ws.cell(row=base_row + 1, column=c, value='').border = thin_border
+    dept_for_batch = batch.department
     for d, slots, start_col, end_col in col_ranges:
         for i, (slot, _) in enumerate(slots):
             c = start_col + i
-            cell = ws.cell(row=base_row + 1, column=c, value=f'Lect {i + 1}\n{subject_name}')
+            lect_label = _lecture_label_for_slot(dept_for_batch, batch, d, slot, i + 1)
+            cell = ws.cell(row=base_row + 1, column=c, value=f'{lect_label}\n{subject_name}')
             cell.alignment, cell.fill, cell.font, cell.border = lect_align, lect_fill, lect_font, thin_border
     data_start = base_row + 2
     for idx, s in enumerate(students, start=data_start):
@@ -5486,6 +8608,11 @@ def admin_manual_attendance(request):
             slots_by_batch[ex.batch].append(virtual)
         for b in slots_by_batch:
             slots_by_batch[b].sort(key=lambda s: s.time_slot or '')
+        for batch, slots in slots_by_batch.items():
+            for slot in slots:
+                slot.is_extra_lecture = _is_extra_lecture_slot(
+                    dept, selected_date, batch, (slot.time_slot or '').strip()
+                )
 
     attendance_prefill = defaultdict(lambda: defaultdict(list))
     attendance_reasons = {}  # (batch_id, lecture_slot) -> {roll_no: reason}
@@ -5517,6 +8644,13 @@ def admin_manual_attendance(request):
                     slot.display_subject_name = subj.name if subj else (slot.subject.name if slot.subject else 'N/A')
                     slot.display_faculty_name = fac.short_name if fac else (slot.faculty.short_name if slot.faculty else '—')
 
+    admin_manual_locked = bool(
+        selected_date
+        and user_can_admin(request)
+        and not is_hod(request)
+        and not is_super_admin(request)
+        and _is_admin_manual_locked_by_hod(dept, selected_date)
+    )
     ctx = {
         'available_dates': available_dates,
         'selected_date': selected_date,
@@ -5526,18 +8660,35 @@ def admin_manual_attendance(request):
         'slots_by_batch': dict(slots_by_batch),
         'batch_students_sorted': batch_students_sorted,
         'is_admin_manual': True,
+        'admin_manual_locked': admin_manual_locked,
     }
     return render(request, 'core/admin/manual_attendance.html', ctx)
 
 
 @login_required
 def admin_manual_attendance_save(request):
-    """Save attendance on behalf of faculty. Admin only."""
+    """Save attendance on behalf of faculty. Departmental admin blocked if that week is locked for the dept; HOD and super admin may still save."""
     if not request.method == 'POST' or not user_can_admin(request):
         return redirect('core:admin_manual_attendance')
     dept = get_admin_department(request)
     if not dept:
         return redirect('core:admin_dashboard')
+    date_str = request.POST.get('date')
+    if date_str:
+        try:
+            selected_date = datetime.strptime(date_str, '%Y-%m-%d').date()
+            if (
+                not is_hod(request)
+                and not is_super_admin(request)
+                and _is_admin_manual_locked_by_hod(dept, selected_date)
+            ):
+                messages.error(
+                    request,
+                    'This week is locked for your department. Only HOD or super admin can change manual attendance for these dates.',
+                )
+                return redirect('core:admin_manual_attendance')
+        except Exception:
+            pass
     faculty_id = request.POST.get('faculty_id')
     batch_id = request.POST.get('batch_id')
     lecture_slot = request.POST.get('lecture_slot', '').strip()
@@ -5576,6 +8727,9 @@ def admin_manual_attendance_save(request):
             'absent_reasons': json.dumps(absent_reasons) if absent_reasons else '',
         }
     )
+    sync_faculty_combine_cache_for_attendance(
+        dept, faculty, selected_date, batch, lecture_slot,
+    )
     messages.success(request, f'Attendance saved for {faculty.short_name}.')
     url = reverse('core:admin_manual_attendance') + f'?date={date_str}&faculty_id={faculty_id}'
     return redirect(url)
@@ -5604,6 +8758,13 @@ def admin_manual_attendance_excel(request):
         return redirect('core:admin_manual_attendance')
     batch = Batch.objects.filter(pk=batch_id, department=dept).first()
     if not batch:
+        return redirect('core:admin_manual_attendance')
+    if (
+        not is_hod(request)
+        and not is_super_admin(request)
+        and _is_admin_manual_locked_by_hod(dept, selected_date)
+    ):
+        messages.error(request, 'This week is locked. Manual attendance export is disabled for departmental admins.')
         return redirect('core:admin_manual_attendance')
     weekday = selected_date.strftime('%A')
     cancelled_set = get_cancelled_lectures_set(dept)
@@ -5652,7 +8813,8 @@ def admin_manual_attendance_excel(request):
     for i, slot in enumerate(slots, start=1):
         fac, subj = get_faculty_subject_for_slot(selected_date, batch, slot.time_slot)
         subj_name = subj.name if subj else (slot.subject.name if slot.subject else 'N/A')
-        cell = ws.cell(row=2, column=2 + i, value=f'Lect {i}\n{subj_name}')
+        lect_label = _lecture_label_for_slot(dept, batch, selected_date, slot.time_slot, i)
+        cell = ws.cell(row=2, column=2 + i, value=f'{lect_label}\n{subj_name}')
         cell.alignment = lect_align
         cell.fill = lect_fill
         cell.font = lect_font
@@ -5737,12 +8899,7 @@ def faculty_mentorship(request):
         if bid not in batch_cache:
             cancelled_set = get_cancelled_lectures_set(dept)
             batch_scheduled = set()
-            for d in phase_dates_set:
-                weekday = d.strftime('%A')
-                slots = [x for x in _effective_slots_for_date(dept, d, extra_filters={'batch': s.batch}) if x.day == weekday]
-                for slot in set(x.time_slot for x in slots if x.time_slot):
-                    if (d, bid, slot) not in cancelled_set:
-                        batch_scheduled.add((d, slot))
+            _add_batch_schedule_pairs_for_attendance(dept, s.batch, phase_dates_set, batch_scheduled, cancelled_set)
             batch_att_map = {}
             for att in FacultyAttendance.objects.filter(batch=s.batch, date__in=phase_dates_set).only('date', 'lecture_slot', 'absent_roll_numbers'):
                 batch_att_map[(att.date, att.lecture_slot)] = set(x.strip() for x in (att.absent_roll_numbers or '').split(',') if x.strip())
@@ -5752,17 +8909,17 @@ def faculty_mentorship(request):
         held = len(batch_scheduled)
         str_roll = str(s.roll_no)
         attended = sum(1 for (d, slot) in batch_scheduled if (d, slot) in batch_att_map and str_roll not in batch_att_map[(d, slot)])
-        pct = round(attended / held * 100, 1) if held else 0
+        pct = round(attended / held * 100, 2) if held else 0
         week_wise = []
         cum_held = cum_attended = 0
         for prev_idx in range(phase_order_idx):
             prev_dates = prev_dates_list[prev_idx]
             prev_held = sum(1 for (d, slot) in batch_scheduled if d in prev_dates)
             prev_attended = sum(1 for (d, slot) in batch_scheduled if d in prev_dates and (d, slot) in batch_att_map and str_roll not in batch_att_map[(d, slot)])
-            prev_pct = round(prev_attended / prev_held * 100, 1) if prev_held else 0
+            prev_pct = round(prev_attended / prev_held * 100, 2) if prev_held else 0
             cum_held += prev_held
             cum_attended += prev_attended
-            cum_pct = round(cum_attended / cum_held * 100, 1) if cum_held else 0
+            cum_pct = round(cum_attended / cum_held * 100, 2) if cum_held else 0
             week_wise.append({'label': f'{phases[prev_idx]} Overall', 'held': prev_held, 'attended': prev_attended, 'pct': prev_pct, 'cum_held': cum_held, 'cum_attended': cum_attended, 'cum_pct': cum_pct})
         weeks_to_show = range(len(weeks)) if week_idx is None else range(min(week_idx + 1, len(weeks)))
         offset = phase_week_offsets.get(phase, 0)
@@ -5770,10 +8927,10 @@ def faculty_mentorship(request):
             week_set = set(weeks[i])
             w_held = sum(1 for (d, slot) in batch_scheduled if d in week_set)
             w_attended = sum(1 for (d, slot) in batch_scheduled if d in week_set and (d, slot) in batch_att_map and str_roll not in batch_att_map[(d, slot)])
-            w_pct = round(w_attended / w_held * 100, 1) if w_held else 0
+            w_pct = round(w_attended / w_held * 100, 2) if w_held else 0
             cum_held += w_held
             cum_attended += w_attended
-            cum_pct = round(cum_attended / cum_held * 100, 1) if cum_held else 0
+            cum_pct = round(cum_attended / cum_held * 100, 2) if cum_held else 0
             gw = offset + i + 1
             week_wise.append({'label': f'Week {gw}', 'week': gw, 'held': w_held, 'attended': w_attended, 'pct': w_pct, 'cum_held': cum_held, 'cum_attended': cum_attended, 'cum_pct': cum_pct})
         subject_wise = defaultdict(lambda: {'held': 0, 'attended': 0})
@@ -5782,7 +8939,7 @@ def faculty_mentorship(request):
             subject_wise[subj_name]['held'] += 1
             if (d, slot) in batch_att_map and str_roll not in batch_att_map[(d, slot)]:
                 subject_wise[subj_name]['attended'] += 1
-        subj_list = [{'name': n, 'held': t['held'], 'attended': t['attended'], 'pct': round(t['attended'] / t['held'] * 100, 1) if t['held'] else 0} for n, t in sorted(subject_wise.items())]
+        subj_list = [{'name': n, 'held': t['held'], 'attended': t['attended'], 'pct': round(t['attended'] / t['held'] * 100, 2) if t['held'] else 0} for n, t in sorted(subject_wise.items())]
         student_stats.append({
             'student': s, 'held': held, 'attended': attended, 'pct': pct,
             'week_wise': week_wise, 'subject_wise': subj_list,
@@ -5910,12 +9067,7 @@ def student_attendance_analytics(request):
         phase_dates_all.update(dates)
     cancelled_set = get_cancelled_lectures_set(dept)
     batch_scheduled = set()
-    for d in phase_dates_all:
-        weekday = d.strftime('%A')
-        slots = [x for x in _effective_slots_for_date(dept, d, extra_filters={'batch': batch}) if x.day == weekday]
-        for slot in set(x.time_slot for x in slots if x.time_slot):
-            if (d, batch.id, slot) not in cancelled_set:
-                batch_scheduled.add((d, slot))
+    _add_batch_schedule_pairs_for_attendance(dept, batch, phase_dates_all, batch_scheduled, cancelled_set)
     batch_scheduled_upto_today = batch_scheduled  # Use all scheduled (include future for demo/test data)
     batch_att_map = {}
     for att in FacultyAttendance.objects.filter(batch=batch, date__in=phase_dates_all):
@@ -5961,7 +9113,7 @@ def student_attendance_analytics(request):
                 'attended': attended,
                 'status': 'Present' if attended else 'Absent' if attended is False else '—',
             })
-        day_pct = round(day_attended / day_held * 100, 1) if day_held else None
+        day_pct = round(day_attended / day_held * 100, 2) if day_held else None
     else:
         day_pct = None
 
@@ -5980,10 +9132,10 @@ def student_attendance_analytics(request):
             week_set = week_dates_sets[i]
             week_held = sum(1 for (d, slot) in batch_scheduled_upto_today if d in week_set)
             week_attended = sum(1 for (d, slot) in batch_scheduled_upto_today if d in week_set and (d, slot) in batch_att_map and str_roll not in batch_att_map[(d, slot)])
-            week_pct = round(week_attended / week_held * 100, 1) if week_held else 0
+            week_pct = round(week_attended / week_held * 100, 2) if week_held else 0
             cumulative_held += week_held
             cumulative_attended += week_attended
-            cum_pct = round(cumulative_attended / cumulative_held * 100, 1) if cumulative_held else 0
+            cum_pct = round(cumulative_attended / cumulative_held * 100, 2) if cumulative_held else 0
             weeks_summary.append({
                 'week_num': phase_week_offsets.get(phase, 0) + i + 1,
                 'dates': week_dates,
@@ -6024,7 +9176,7 @@ def student_attendance_analytics(request):
     subject_wise = []
     for name in sorted(subject_stats.keys()):
         s = subject_stats[name]
-        pct = round(s['attended'] / s['held'] * 100, 1) if s['held'] else 0
+        pct = round(s['attended'] / s['held'] * 100, 2) if s['held'] else 0
         subject_wise.append({'name': name, 'held': s['held'], 'attended': s['attended'], 'pct': pct})
 
     # Summary cards: respect filters
@@ -6042,7 +9194,7 @@ def student_attendance_analytics(request):
         scheduled_in_period = {(d, slot) for (d, slot) in batch_scheduled_upto_today if d in phase_dates_set}
         total_held = len(scheduled_in_period)
         total_attended = sum(1 for (d, slot) in scheduled_in_period if (d, slot) in batch_att_map and str_roll not in batch_att_map[(d, slot)])
-        overall_pct = round(total_attended / total_held * 100, 1) if total_held else 0
+        overall_pct = round(total_attended / total_held * 100, 2) if total_held else 0
 
     phase_weeks = week_map.get(phase, [])
     week_options = [(i, phase_week_offsets.get(phase, 0) + i + 1) for i in range(len(phase_weeks))]

@@ -96,7 +96,7 @@
             <div class="card-body">
                 <div class="stat-icon"><i class="fas fa-percentage"></i></div>
                 <p class="stat-label">Overall attendance</p>
-                <p class="stat-value {% if overall_pct >= 75 %}good{% elif overall_pct >= 50 %}warn{% else %}low{% endif %}">{{ overall_pct }}%</p>
+                <p class="stat-value {% if overall_pct >= 75 %}good{% elif overall_pct >= 50 %}warn{% else %}low{% endif %}">{{ overall_pct|floatformat:2 }}%</p>
             </div>
         </div>
     </div>
@@ -163,7 +163,7 @@
 <div class="card card-section overflow-hidden mb-4">
     <div class="card-header d-flex flex-wrap align-items-center gap-2">
         <span>{{ selected_date|date:"l, d M Y" }} — Day attendance</span>
-        {% if day_pct is not None %}<span class="badge bg-light text-dark ms-2">{{ day_attended }}/{{ day_held }} ({{ day_pct }}%)</span>{% endif %}
+        {% if day_pct is not None %}<span class="badge bg-light text-dark ms-2">{{ day_attended }}/{{ day_held }} ({{ day_pct|floatformat:2 }}%)</span>{% endif %}
     </div>
     {% if day_slots %}
     <div class="table-responsive">
@@ -215,10 +215,10 @@
                     <td class="fw-medium">Week {{ w.week_num }}</td>
                     <td class="text-end">{{ w.held }}</td>
                     <td class="text-end">{{ w.attended }}</td>
-                    <td class="text-end {% if w.pct >= 75 %}pct-good{% elif w.pct >= 50 %}pct-warn{% else %}pct-low{% endif %}">{{ w.pct }}%</td>
+                    <td class="text-end {% if w.pct >= 75 %}pct-good{% elif w.pct >= 50 %}pct-warn{% else %}pct-low{% endif %}">{{ w.pct|floatformat:2 }}%</td>
                     <td class="text-end">{{ w.cum_held }}</td>
                     <td class="text-end">{{ w.cum_attended }}</td>
-                    <td class="text-end {% if w.cum_pct >= 75 %}pct-good{% elif w.cum_pct >= 50 %}pct-warn{% else %}pct-low{% endif %}">{{ w.cum_pct }}%</td>
+                    <td class="text-end {% if w.cum_pct >= 75 %}pct-good{% elif w.cum_pct >= 50 %}pct-warn{% else %}pct-low{% endif %}">{{ w.cum_pct|floatformat:2 }}%</td>
                 </tr>
                 {% endfor %}
             </tbody>
@@ -226,7 +226,7 @@
     </div>
     {% if selected_week_summary %}
     <div class="card-footer border-0 py-3" style="background: linear-gradient(90deg, #dbeafe 0%, #eff6ff 100%);">
-        <p class="small mb-0"><strong>Current cumulative:</strong> <strong>{{ selected_week_summary.cum_held }}</strong> held, <strong>{{ selected_week_summary.cum_attended }}</strong> attended — <span class="fw-bold {% if selected_week_summary.cum_pct >= 75 %}pct-good{% elif selected_week_summary.cum_pct >= 50 %}pct-warn{% else %}pct-low{% endif %}">{{ selected_week_summary.cum_pct }}%</span></p>
+        <p class="small mb-0"><strong>Current cumulative:</strong> <strong>{{ selected_week_summary.cum_held }}</strong> held, <strong>{{ selected_week_summary.cum_attended }}</strong> attended — <span class="fw-bold {% if selected_week_summary.cum_pct >= 75 %}pct-good{% elif selected_week_summary.cum_pct >= 50 %}pct-warn{% else %}pct-low{% endif %}">{{ selected_week_summary.cum_pct|floatformat:2 }}%</span></p>
     </div>
     {% endif %}
     {% else %}
@@ -248,7 +248,7 @@
                     <td class="fw-medium">{{ s.name }}</td>
                     <td class="text-end">{{ s.held }}</td>
                     <td class="text-end">{{ s.attended }}</td>
-                    <td class="text-end {% if s.pct >= 75 %}pct-good{% elif s.pct >= 50 %}pct-warn{% else %}pct-low{% endif %}">{{ s.pct }}%</td>
+                    <td class="text-end {% if s.pct >= 75 %}pct-good{% elif s.pct >= 50 %}pct-warn{% else %}pct-low{% endif %}">{{ s.pct|floatformat:2 }}%</td>
                 </tr>
                 {% endfor %}
             </tbody>

@@ -39,7 +39,7 @@ def role_redirect(request):
             return redirect('core:admin_dashboard')
         messages.warning(request, 'No role assigned. Contact administrator.')
         return redirect('accounts:login')
-    if role_profile.role == 'admin':
+    if role_profile.role in ('admin', 'hod'):
         return redirect('core:admin_dashboard')
     if role_profile.role == 'faculty':
         return redirect('core:faculty_dashboard')

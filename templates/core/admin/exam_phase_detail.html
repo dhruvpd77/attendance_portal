@@ -1,0 +1,165 @@
+{% extends 'core/admin/base_admin.html' %}
+{% load static %}
+{% block title %}{{ phase.name }} — Result - LJIET_Attendance{% endblock %}
+{% block content %}
+<div class="admin-hero">
+    <div class="d-flex align-items-center gap-3">
+        <img src="{% static 'images/ljiet-logo.png' %}" alt="LJIET" class="admin-logo">
+        <div>
+            <h1 class="page-title mb-1">{{ phase.name }} — Subjects & marksheets</h1>
+            <p class="page-subtitle">Add subjects from your department. Upload Excel marksheet per subject. Format: ROLL NO, DIV, BRANCH, Enrollment No, NAME, Mentor, Marks. Maps by enrollment.</p>
+        </div>
+    </div>
+    <a href="{% url 'core:exam_phases_list' %}" class="btn btn-outline-light btn-sm"><i class="fas fa-arrow-left me-1"></i> Back</a>
+</div>
+
+<div class="card admin-card mb-4">
+    <div class="card-header"><i class="fas fa-book me-2"></i>Add subject to phase</div>
+    <div class="card-body">
+        {% if available_to_add %}
+        <form method="post" class="d-inline me-2 mb-2">
+            {% csrf_token %}
+            <input type="hidden" name="action" value="add_all_subjects">
+            <button type="submit" class="btn btn-outline-primary btn-sm"><i class="fas fa-plus-circle me-1"></i> Add all department subjects</button>
+        </form>
+        <br>
+        <form method="post" class="d-flex flex-wrap align-items-end gap-3">
+            {% csrf_token %}
+            <input type="hidden" name="action" value="add_subject">
+            <div>
+                <label class="form-label mb-1">Subject</label>
+                <select name="subject_id" class="form-select form-select-app" style="min-width: 200px;">
+                    {% for s in available_to_add %}
+                    <option value="{{ s.id }}">{{ s.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <button type="submit" class="btn btn-primary-app"><i class="fas fa-plus me-1"></i> Add</button>
+        </form>
+        {% elif dept_subjects %}
+        <p class="text-secondary mb-0">All department subjects are already in this phase.</p>
+        {% else %}
+        <p class="text-secondary mb-0">No subjects in department. Add subjects in Subjects section first.</p>
+        {% endif %}
+    </div>
+</div>
+
+<div class="card admin-card">
+    <div class="card-header"><i class="fas fa-table me-2"></i>Subjects in {{ phase.name }}</div>
+    <div class="card-body p-0">
+        {% if phase_subjects %}
+        <div class="table-responsive">
+            <table class="table table-hover mb-0">
+                <thead>
+                    <tr>
+                        <th>Subject</th>
+                        <th class="text-end">Upload marksheet</th>
+                        <th class="text-end">Action</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for s in phase_subjects %}
+                    <tr>
+                        <td class="fw-medium">{{ s.name }}</td>
+                        <td class="text-end">
+                            <form method="post" action="{% url 'core:exam_phase_upload_marks' %}" enctype="multipart/form-data" class="d-inline">
+                                {% csrf_token %}
+                                <input type="hidden" name="phase_id" value="{{ phase.id }}">
+                                <input type="hidden" name="subject_id" value="{{ s.id }}">
+                                <input type="file" name="marksheet_file" accept=".xlsx,.xls" class="form-control form-control-sm d-inline-block" style="max-width: 200px;" required>
+                                <button type="submit" class="btn btn-sm btn-success ms-1"><i class="fas fa-upload me-1"></i> Upload</button>
+                            </form>
+                        </td>
+                        <td class="text-end">
+                            <form method="post" class="d-inline" onsubmit="return confirm('Remove {{ s.name }} from this phase? Existing marks will be deleted.');">
+                                {% csrf_token %}
+                                <input type="hidden" name="action" value="remove_subject">
+                                <input type="hidden" name="subject_id" value="{{ s.id }}">
+                                <button type="submit" class="btn btn-sm btn-outline-danger"><i class="fas fa-trash me-1"></i>Remove</button>
+                            </form>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <p class="text-secondary text-center py-5 mb-0">No subjects in this phase. Add subjects using the form above.</p>
+        {% endif %}
+    </div>
+</div>
+
+<div class="card admin-card mt-4">
+    <div class="card-header"><i class="fas fa-list-alt me-2"></i>View uploaded marks — filter by subject & batch</div>
+    <div class="card-body">
+        {% if phase_subjects %}
+        <form method="get" class="row g-3 mb-4">
+            <div class="col-auto">
+                <label class="form-label mb-0">Subject</label>
+                <select name="subject_id" class="form-select form-select-app form-select-sm" onchange="this.form.submit()" style="min-width: 140px;">
+                    <option value="">-- Select subject --</option>
+                    {% for s in phase_subjects %}
+                    <option value="{{ s.id }}" {% if selected_subject_id and selected_subject_id == s.id|stringformat:"d" %}selected{% endif %}>{{ s.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-auto">
+                <label class="form-label mb-0">Batch</label>
+                <select name="batch_id" class="form-select form-select-app form-select-sm" onchange="this.form.submit()" style="min-width: 120px;">
+                    <option value="">All batches</option>
+                    {% for b in batches %}
+                    <option value="{{ b.id }}" {% if selected_batch_id and selected_batch_id == b.id|stringformat:"d" %}selected{% endif %}>{{ b.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-auto align-self-end">
+                <button type="submit" class="btn btn-primary-app btn-sm"><i class="fas fa-filter me-1"></i> Show</button>
+            </div>
+        </form>
+        {% if selected_subject %}
+        <div class="table-responsive">
+            <table class="table table-hover mb-0">
+                <thead>
+                    <tr>
+                        <th>Roll No</th>
+                        <th>Name</th>
+                        <th>Batch</th>
+                        <th>Enrollment</th>
+                        <th class="text-end">Marks</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for m in marks_list %}
+                    <tr>
+                        <td class="fw-medium">{{ m.student.roll_no }}</td>
+                        <td>{{ m.student.name }}</td>
+                        <td>{{ m.student.batch.name }}</td>
+                        <td class="text-secondary">{{ m.student.enrollment_no|default:"—" }}</td>
+                        <td class="text-end fw-semibold">{{ m.marks_obtained|default:"—" }}</td>
+                    </tr>
+                    {% empty %}
+                    <tr>
+                        <td colspan="5" class="text-center text-secondary py-4">No marks uploaded for {{ selected_subject.name }}{% if selected_batch_id %} in selected batch{% endif %}.</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% elif selected_subject_id %}
+        <p class="text-secondary mb-0">Select a subject above to view marks.</p>
+        {% else %}
+        <p class="text-secondary mb-0">Select a subject to view uploaded marks.</p>
+        {% endif %}
+        {% else %}
+        <p class="text-secondary mb-0">Add subjects to this phase first, then upload marksheets.</p>
+        {% endif %}
+    </div>
+</div>
+
+<div class="card admin-card mt-4">
+    <div class="card-body">
+        <h6 class="fw-bold mb-2"><i class="fas fa-info-circle me-1"></i>Excel format (like pas mark.xlsx)</h6>
+        <p class="small text-secondary mb-0">Header row: <strong>ROLL NO., DIV, BRANCH, Enrolllment No:, NAME OF STUDENT, Mentor, Marks(25)</strong>. Data from row below. Enrollment column maps to department students. Marks column (e.g. G) stores the score.</p>
+    </div>
+</div>
+{% endblock %}

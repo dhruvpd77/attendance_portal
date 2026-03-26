@@ -1,0 +1,83 @@
+{% extends 'core/admin/base_admin.html' %}
+{% load static %}
+{% block title %}Lock Admin Access - LJIET_Attendance{% endblock %}
+{% block content %}
+<style>
+.hod-lock-card { border: none; border-radius: 14px; box-shadow: 0 4px 20px rgba(0,0,0,0.06); overflow: hidden; margin-bottom: 1.5rem; }
+.hod-lock-card .card-header { background: linear-gradient(90deg, #1e293b 0%, #334155 100%); color: #fff; font-weight: 600; padding: 1rem 1.25rem; border: none; }
+.hod-lock-card .week-item { display: flex; align-items: center; justify-content: space-between; padding: 0.75rem 1rem; border-bottom: 1px solid #e2e8f0; }
+.hod-lock-card .week-item:last-child { border-bottom: none; }
+.hod-lock-card .week-item.locked { background: #fef2f2; }
+.hod-lock-card .week-dates { font-size: 0.8rem; color: #64748b; }
+</style>
+<div class="admin-hero">
+    <div class="d-flex align-items-center gap-3">
+        <img src="{% static 'images/ljiet-logo.png' %}" alt="LJIET" class="admin-logo">
+        <div>
+            <h1 class="page-title mb-1">Lock Admin Access</h1>
+            <p class="page-subtitle mb-0">Lock weeks so <strong>departmental admins</strong> cannot edit <strong>manual attendance</strong> for those dates. Faculty daily lock time (<em>Lock Attendance Time</em>) is separate and still applies to all faculties. HOD and super admin can still correct manual attendance if needed.</p>
+        </div>
+    </div>
+    <a href="{% url 'core:admin_dashboard' %}" class="btn btn-outline-light btn-sm"><i class="fas fa-arrow-left me-1"></i> Dashboard</a>
+</div>
+
+{% if is_super_admin %}
+<div class="alert alert-warning mb-3">
+    <i class="fas fa-building me-2"></i>
+    <strong>Super admin:</strong> Week locks apply only to <strong>{{ department.name }}</strong> — the department currently set on the Dashboard. Change department there before locking if you mean a different program.
+</div>
+{% endif %}
+<div class="alert alert-info mb-4 d-flex flex-wrap align-items-center justify-content-between gap-3">
+    <span>
+        <i class="fas fa-info-circle me-2"></i>
+        <strong>{{ department.name }}</strong> — Lock a week to block departmental admins from manual attendance for any lecture day in that week. Unlock to allow edits again.
+    </span>
+    <form method="post" class="d-inline">
+        {% csrf_token %}
+        <input type="hidden" name="action" value="unlock_all">
+        <button type="submit" class="btn btn-success"><i class="fas fa-unlock-alt me-1"></i>Unlock All Weeks</button>
+    </form>
+</div>
+
+{% for phase, opts, weeks in phase_weeks_list %}
+<div class="card hod-lock-card">
+    <div class="card-header"><i class="fas fa-calendar-week me-2"></i>{{ phase }}</div>
+    <div class="card-body p-0">
+        {% for idx, global_num, is_locked, day_count in opts %}
+        <div class="week-item {% if is_locked %}locked{% endif %}">
+            <div>
+                <strong>Week {{ global_num }}</strong>
+                {% if day_count %}<div class="week-dates">({{ day_count }} lecture days)</div>{% endif %}
+            </div>
+            {% if is_locked %}
+            <form method="post" class="d-inline">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="unlock">
+                <input type="hidden" name="phase" value="{{ phase }}">
+                <input type="hidden" name="week_index" value="{{ idx }}">
+                <button type="submit" class="btn btn-sm btn-success"><i class="fas fa-unlock me-1"></i>Unlock</button>
+            </form>
+            {% else %}
+            <form method="post" class="d-inline">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="lock">
+                <input type="hidden" name="phase" value="{{ phase }}">
+                <input type="hidden" name="week_index" value="{{ idx }}">
+                <button type="submit" class="btn btn-sm btn-outline-danger"><i class="fas fa-lock me-1"></i>Lock</button>
+            </form>
+            {% endif %}
+        </div>
+        {% empty %}
+        <div class="p-4 text-center text-muted">No weeks in {{ phase }}. Set term phase dates.</div>
+        {% endfor %}
+    </div>
+</div>
+{% empty %}
+<div class="card hod-lock-card">
+    <div class="card-body p-5 text-center text-muted">
+        <i class="fas fa-calendar-plus fa-3x mb-3"></i>
+        <p class="mb-0">No term phases or weeks configured. Set <a href="{% url 'core:term_phases' %}">Term Phases</a> and Schedule first.</p>
+    </div>
+</div>
+{% endfor %}
+{% endblock %}

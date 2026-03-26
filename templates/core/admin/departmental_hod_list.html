@@ -1,0 +1,51 @@
+{% extends 'core/admin/base_admin.html' %}
+{% load static %}
+{% block title %}Departmental HODs - LJIET_Attendance{% endblock %}
+{% block content %}
+<div class="admin-hero">
+    <div class="d-flex align-items-center gap-3">
+        <img src="{% static 'images/ljiet-logo.png' %}" alt="LJIET" class="admin-logo">
+        <div>
+            <h1 class="page-title mb-1">Departmental HODs</h1>
+            <p class="page-subtitle">HODs can manage their department like admins and can lock admin's manual attendance access week-wise.</p>
+        </div>
+    </div>
+    <div class="d-flex gap-2 flex-wrap">
+        <a href="{% url 'core:admin_dashboard' %}" class="btn btn-outline-light btn-sm"><i class="fas fa-arrow-left me-1"></i> Dashboard</a>
+        <a href="{% url 'core:departmental_hod_create' %}" class="btn btn-primary-app btn-sm"><i class="fas fa-plus me-1"></i> Create HOD</a>
+        <form method="post" class="d-inline" onsubmit="return confirm('Unlock all weeks across all departments? Admins will be able to edit manual attendance everywhere.');">
+            {% csrf_token %}
+            <input type="hidden" name="action" value="unlock_all_departments">
+            <button type="submit" class="btn btn-success btn-sm"><i class="fas fa-unlock-alt me-1"></i>Set Unlock as Default (All Departments)</button>
+        </form>
+    </div>
+</div>
+{% if lock_count %}
+<div class="alert alert-info mb-4">
+    <i class="fas fa-info-circle me-2"></i>
+    <strong>{{ lock_count }} week(s)</strong> are currently locked. Click <strong>Set Unlock as Default (All Departments)</strong> to unlock all weeks.
+</div>
+{% endif %}
+<div class="card admin-card overflow-hidden">
+    <div class="table-responsive">
+        <table class="table table-hover mb-0">
+            <thead>
+                <tr>
+                    <th>Username</th>
+                    <th>Department</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for r in hods %}
+                <tr>
+                    <td class="fw-medium">{{ r.user.username }}</td>
+                    <td class="text-secondary">{{ r.department.name }}</td>
+                </tr>
+                {% empty %}
+                <tr><td colspan="2" class="text-center text-secondary py-5">No departmental HODs yet. Create one to assign a Head of Department per department.</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}

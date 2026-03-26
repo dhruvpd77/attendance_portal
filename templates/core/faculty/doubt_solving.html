@@ -1,0 +1,261 @@
+{% extends 'base.html' %}
+{% load static %}
+{% block title %}Doubt solving — LJIET_Attendance{% endblock %}
+{% block extra_head %}
+<style>
+.doubt-accepted-total-banner {
+    background: linear-gradient(105deg, #ecfdf5 0%, #f1f5f9 48%, #ffffff 100%);
+    border-left: 4px solid #059669;
+}
+.doubt-accepted-total-icon {
+    width: 3.25rem;
+    height: 3.25rem;
+    font-size: 1.25rem;
+    box-shadow: 0 4px 14px rgba(5, 150, 105, 0.25);
+}
+</style>
+{% endblock %}
+{% block content %}
+<div class="container-fluid main-content py-4">
+    <h1 class="page-title mb-1">Doubt solving</h1>
+    <p class="text-secondary page-subtitle mb-2">
+        Select <strong>one or more batches</strong>, then students from those batches. One date and one start/end time for the session.
+        Submit a <strong>request</strong> to your HOD. Hours count only after <strong>acceptance</strong>.
+        <strong>Effective DS:</strong> 60 minutes clock = <strong>0.5 h</strong> credited.
+    </p>
+
+    <p class="mb-4">
+        <a href="{% url 'core:faculty_dr_load' %}" class="btn btn-outline-primary btn-sm">
+            <i class="fas fa-chart-bar me-1"></i> My DR weekly load (combine, 0.75×)
+        </a>
+        <span class="small text-muted ms-2">Week-wise effective load like the DR combine sheet — attendance-marked lectures only.</span>
+    </p>
+
+    <div class="card shadow-sm border-0 mb-4">
+        <div class="card-header bg-white fw-semibold py-3">New request</div>
+        <div class="card-body">
+            <div class="mb-4">
+                <label class="form-label small text-uppercase text-muted">Batches (multi-select)</label>
+                <div id="ds-batch-box" class="border rounded p-3 bg-light d-flex flex-wrap gap-3">
+                    {% for b in batches %}
+                    <div class="form-check">
+                        <input class="form-check-input ds-batch-cb" type="checkbox" value="{{ b.id }}" id="batch_{{ b.id }}"
+                            {% if b.id in selected_batch_ids %}checked{% endif %}>
+                        <label class="form-check-label" for="batch_{{ b.id }}">{{ b.name }}</label>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+
+            <form id="ds-form" method="post" action="{% url 'core:faculty_doubt_solving' %}">
+                {% csrf_token %}
+                <div id="ds-hidden-batches"></div>
+
+                <div id="ds-student-box" class="mb-3 d-none">
+                    <label class="form-label">Students (multi-select)</label>
+                    <div id="ds-checkboxes" class="border rounded p-3 bg-light" style="max-height: 280px; overflow-y: auto;"></div>
+                    <div class="form-text">Name and phone from student records. Students are grouped by batch.</div>
+                </div>
+
+                <div id="ds-selected-preview" class="mb-3 small table-responsive d-none">
+                    <table class="table table-sm table-bordered mb-0 bg-white">
+                        <thead><tr><th>Batch</th><th>Roll</th><th>Name</th><th>Phone</th></tr></thead>
+                        <tbody id="ds-preview-body"></tbody>
+                    </table>
+                </div>
+
+                <div class="row g-3 mb-3">
+                    <div class="col-md-4">
+                        <label class="form-label">Date</label>
+                        <input type="date" name="date" class="form-control" required>
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label">Start time</label>
+                        <input type="time" name="start_time" class="form-control" required step="60">
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label">End time</label>
+                        <input type="time" name="end_time" class="form-control" required step="60">
+                    </div>
+                </div>
+                <button type="submit" id="ds-submit" class="btn btn-primary" disabled>Submit request to HOD</button>
+            </form>
+        </div>
+    </div>
+
+    <div class="card shadow-sm border-0 overflow-hidden">
+        <div class="card-header bg-white fw-semibold py-3 border-bottom">My requests</div>
+        <div class="d-flex flex-wrap align-items-center gap-3 px-3 py-3 border-bottom doubt-accepted-total-banner">
+            <div class="rounded-3 bg-success text-white d-flex align-items-center justify-content-center flex-shrink-0 doubt-accepted-total-icon">
+                <i class="fas fa-check-circle"></i>
+            </div>
+            <div class="flex-grow-1 min-w-0">
+                <div class="small text-muted text-uppercase fw-semibold mb-1" style="letter-spacing: 0.07em;">Accepted total (HOD approved)</div>
+                <div class="d-flex flex-wrap align-items-baseline gap-2">
+                    <span class="h3 mb-0 fw-bold text-success">{{ total_hours|floatformat:2 }}</span>
+                    <span class="fs-5 fw-semibold text-body">h</span>
+                    <span class="badge rounded-pill bg-success bg-opacity-15 text-success border border-success border-opacity-25">effective</span>
+                </div>
+                <p class="small text-secondary mb-0 mt-1">Only <strong>Accepted</strong> rows below are included. Pending and rejected are not.</p>
+            </div>
+        </div>
+        <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th>Date</th>
+                        <th>Batches</th>
+                        <th>Time</th>
+                        <th class="text-end">Clock (min)</th>
+                        <th>Status</th>
+                        <th>Students</th>
+                        <th class="text-end">Effective (h)</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for row in history %}
+                    <tr>
+                        <td>{{ row.date|date:"d M Y" }}</td>
+                        <td><small>{{ row.batches_label }}</small></td>
+                        <td>{{ row.start_time|time:"H:i" }} – {{ row.end_time|time:"H:i" }}</td>
+                        <td class="text-end">{{ row.duration_minutes|floatformat:2 }}</td>
+                        <td>
+                            {% if row.status == 'pending' %}<span class="badge bg-warning text-dark">Pending</span>
+                            {% elif row.status == 'accepted' %}<span class="badge bg-success">Accepted</span>
+                            {% elif row.status == 'rejected' %}<span class="badge bg-secondary">Rejected</span>
+                            {% endif %}
+                        </td>
+                        <td class="small">
+                            {% for line in row.student_lines.all %}
+                            <div><span class="text-muted">{{ line.student.batch.name }}</span> · {{ line.student.roll_no }} — {{ line.student.name }}</div>
+                            {% endfor %}
+                        </td>
+                        <td class="text-end">{{ row.duration_hours|floatformat:2 }}</td>
+                    </tr>
+                    {% empty %}
+                    <tr><td colspan="7" class="text-secondary py-4 text-center">No requests yet.</td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<script>
+(function() {
+    const batchBox = document.getElementById('ds-batch-box');
+    const hiddenWrap = document.getElementById('ds-hidden-batches');
+    const studentBox = document.getElementById('ds-student-box');
+    const cbxContainer = document.getElementById('ds-checkboxes');
+    const preview = document.getElementById('ds-selected-preview');
+    const previewBody = document.getElementById('ds-preview-body');
+    const submitBtn = document.getElementById('ds-submit');
+    const form = document.getElementById('ds-form');
+    const urlBase = "{{ students_json_url|escapejs }}";
+
+    function selectedBatchIds() {
+        return Array.from(batchBox.querySelectorAll('.ds-batch-cb:checked')).map(function(cb) { return cb.value; });
+    }
+
+    function syncHiddenBatches() {
+        hiddenWrap.innerHTML = '';
+        selectedBatchIds().forEach(function(id) {
+            const inp = document.createElement('input');
+            inp.type = 'hidden';
+            inp.name = 'batch_ids';
+            inp.value = id;
+            hiddenWrap.appendChild(inp);
+        });
+    }
+
+    function updatePreview() {
+        const checked = cbxContainer.querySelectorAll('input[type="checkbox"]:checked');
+        previewBody.innerHTML = '';
+        if (!checked.length) {
+            preview.classList.add('d-none');
+            submitBtn.disabled = true;
+            return;
+        }
+        preview.classList.remove('d-none');
+        checked.forEach(function(cb) {
+            const tr = document.createElement('tr');
+            ['batch_name', 'roll', 'name', 'phone'].forEach(function(k) {
+                const td = document.createElement('td');
+                td.textContent = cb.dataset[k] || '';
+                tr.appendChild(td);
+            });
+            previewBody.appendChild(tr);
+        });
+        submitBtn.disabled = false;
+    }
+
+    function loadStudents() {
+        cbxContainer.innerHTML = '';
+        preview.classList.add('d-none');
+        submitBtn.disabled = true;
+        const ids = selectedBatchIds();
+        syncHiddenBatches();
+        if (!ids.length) {
+            studentBox.classList.add('d-none');
+            return;
+        }
+        studentBox.classList.remove('d-none');
+        const params = new URLSearchParams();
+        ids.forEach(function(id) { params.append('batch_id', id); });
+        fetch(urlBase + '?' + params.toString(), { credentials: 'same-origin' })
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                var lastBatch = '';
+                (data.students || []).forEach(function(s) {
+                    if (s.batch_name !== lastBatch) {
+                        if (lastBatch !== '') {
+                            var hr = document.createElement('hr');
+                            hr.className = 'my-2';
+                            cbxContainer.appendChild(hr);
+                        }
+                        var hd = document.createElement('div');
+                        hd.className = 'fw-semibold small text-uppercase text-muted py-1';
+                        hd.textContent = 'Batch ' + s.batch_name;
+                        cbxContainer.appendChild(hd);
+                        lastBatch = s.batch_name;
+                    }
+                    var id = 'st_' + s.id;
+                    var wrap = document.createElement('div');
+                    wrap.className = 'form-check';
+                    var inp = document.createElement('input');
+                    inp.className = 'form-check-input ds-st-cb';
+                    inp.type = 'checkbox';
+                    inp.name = 'student_ids';
+                    inp.value = s.id;
+                    inp.id = id;
+                    inp.dataset.batch_name = s.batch_name || '';
+                    inp.dataset.roll = s.roll_no || '';
+                    inp.dataset.name = s.name || '';
+                    inp.dataset.phone = s.phone || '';
+                    var lab = document.createElement('label');
+                    lab.className = 'form-check-label';
+                    lab.setAttribute('for', id);
+                    lab.textContent = (s.roll_no || '') + ' — ' + (s.name || '');
+                    wrap.appendChild(inp);
+                    wrap.appendChild(lab);
+                    cbxContainer.appendChild(wrap);
+                });
+                cbxContainer.querySelectorAll('.ds-st-cb').forEach(function(cb) {
+                    cb.addEventListener('change', updatePreview);
+                });
+            })
+            .catch(function() { cbxContainer.innerHTML = '<p class="text-danger mb-0 small">Could not load students.</p>'; });
+    }
+
+    batchBox.querySelectorAll('.ds-batch-cb').forEach(function(cb) {
+        cb.addEventListener('change', loadStudents);
+    });
+
+    form.addEventListener('submit', function() { syncHiddenBatches(); });
+
+    if (selectedBatchIds().length) {
+        loadStudents();
+    }
+})();
+</script>
+{% endblock %}

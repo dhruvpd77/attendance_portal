@@ -46,7 +46,7 @@
                                                     <p style="margin:4px 0 0;font-size:0.9rem;color:#64748b;">Batch {{ item.student.batch.name }} • {{ item.attended }}/{{ item.held }} lectures attended</p>
                                                 </td>
                                                 <td align="right" width="100" style="vertical-align:middle;">
-                                                    <span style="display:inline-block;font-size:1.2rem;font-weight:700;padding:8px 16px;border-radius:10px;{% if item.pct < 50 %}background:#fef2f2;color:#dc2626;{% else %}background:#fffbeb;color:#b45309;{% endif %}">{{ item.pct|default:0|floatformat:1 }}&#37;</span>
+                                                    <span style="display:inline-block;font-size:1.2rem;font-weight:700;padding:8px 16px;border-radius:10px;{% if item.pct < 50 %}background:#fef2f2;color:#dc2626;{% else %}background:#fffbeb;color:#b45309;{% endif %}">{{ item.pct|default:0|floatformat:2 }}&#37;</span>
                                                 </td>
                                             </tr>
                                         </table>
@@ -68,7 +68,7 @@
                                                 <td style="padding:12px 14px;border:1px solid #e2e8f0;">{{ s.name }}</td>
                                                 <td style="padding:12px 14px;border:1px solid #e2e8f0;text-align:center;">{{ s.held }}</td>
                                                 <td style="padding:12px 14px;border:1px solid #e2e8f0;text-align:center;">{{ s.attended }}</td>
-                                                <td style="padding:12px 14px;border:1px solid #e2e8f0;text-align:center;font-weight:600;color:#1e40af;">{{ s.pct|default:0|floatformat:1 }}&#37;</td>
+                                                <td style="padding:12px 14px;border:1px solid #e2e8f0;text-align:center;font-weight:600;color:#1e40af;">{{ s.pct|default:0|floatformat:2 }}&#37;</td>
                                             </tr>
                                             {% endfor %}
                                         </table>
@@ -88,8 +88,8 @@
                                                 <td style="padding:12px 14px;border:1px solid #e2e8f0;">Week {{ w.week }}</td>
                                                 <td style="padding:12px 14px;border:1px solid #e2e8f0;text-align:center;">{{ w.held }}</td>
                                                 <td style="padding:12px 14px;border:1px solid #e2e8f0;text-align:center;">{{ w.attended }}</td>
-                                                <td style="padding:12px 14px;border:1px solid #e2e8f0;text-align:center;font-weight:600;color:#1e40af;">{{ w.pct|default:0|floatformat:1 }}&#37;</td>
-                                                <td style="padding:12px 14px;border:1px solid #e2e8f0;text-align:center;font-weight:600;color:#1e40af;">{{ w.cum_pct|default:0|floatformat:1 }}&#37;</td>
+                                                <td style="padding:12px 14px;border:1px solid #e2e8f0;text-align:center;font-weight:600;color:#1e40af;">{{ w.pct|default:0|floatformat:2 }}&#37;</td>
+                                                <td style="padding:12px 14px;border:1px solid #e2e8f0;text-align:center;font-weight:600;color:#1e40af;">{{ w.cum_pct|default:0|floatformat:2 }}&#37;</td>
                                             </tr>
                                             {% endfor %}
                                         </table>

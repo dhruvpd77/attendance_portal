@@ -59,7 +59,7 @@
         </div>
         <div class="my-att-pct {% if overall_pct >= 75 %}good{% elif overall_pct >= 50 %}warn{% else %}low{% endif %}">
             <p class="stat-label mb-1">Overall attendance</p>
-            <p class="stat-value mb-0">{{ overall_pct }}%</p>
+            <p class="stat-value mb-0">{{ overall_pct|floatformat:2 }}%</p>
             {% if overall_pct < 75 %}
             <p class="tip">Keep attendance above 75% to meet requirements.</p>
             {% endif %}

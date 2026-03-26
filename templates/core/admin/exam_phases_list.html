@@ -1,0 +1,68 @@
+{% extends 'core/admin/base_admin.html' %}
+{% load static %}
+{% block title %}Result - Exam Phases - LJIET_Attendance{% endblock %}
+{% block content %}
+<div class="admin-hero">
+    <div class="d-flex align-items-center gap-3">
+        <img src="{% static 'images/ljiet-logo.png' %}" alt="LJIET" class="admin-logo">
+        <div>
+            <h1 class="page-title mb-1">Result — Exam Phases</h1>
+            <p class="page-subtitle">Create exam phases (T1, T2, T3, SEE). Add subjects per phase and upload marksheets. Marks map by enrollment number.</p>
+        </div>
+    </div>
+    <a href="{% url 'core:admin_dashboard' %}" class="btn btn-outline-light btn-sm"><i class="fas fa-arrow-left me-1"></i> Dashboard</a>
+</div>
+
+<div class="card admin-card mb-4">
+    <div class="card-header"><i class="fas fa-plus-circle me-2"></i>Add exam phase</div>
+    <div class="card-body">
+        <form method="post" class="d-flex flex-wrap align-items-end gap-3">
+            {% csrf_token %}
+            <input type="hidden" name="action" value="add_phase">
+            <div>
+                <label class="form-label mb-1">Phase name</label>
+                <input type="text" name="name" class="form-control form-control-app" placeholder="e.g. T1, T2, T3, SEE" maxlength="50" style="width: 140px;">
+            </div>
+            <button type="submit" class="btn btn-primary-app"><i class="fas fa-plus me-1"></i> Add</button>
+        </form>
+    </div>
+</div>
+
+<div class="card admin-card">
+    <div class="card-header"><i class="fas fa-list me-2"></i>Exam phases</div>
+    <div class="card-body p-0">
+        {% if phases %}
+        <div class="table-responsive">
+            <table class="table table-hover mb-0">
+                <thead>
+                    <tr>
+                        <th>Phase</th>
+                        <th class="text-end">Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for p in phases %}
+                    <tr>
+                        <td class="fw-medium">
+                            <a href="{% url 'core:exam_phase_detail' p.id %}" class="text-decoration-none">{{ p.name }}</a>
+                        </td>
+                        <td class="text-end">
+                            <a href="{% url 'core:exam_phase_detail' p.id %}" class="btn btn-sm btn-primary me-1"><i class="fas fa-cog me-1"></i> Manage subjects</a>
+                            <form method="post" class="d-inline" onsubmit="return confirm('Delete phase &quot;{{ p.name }}&quot;? All marks for this phase will be removed.');">
+                                {% csrf_token %}
+                                <input type="hidden" name="action" value="delete_phase">
+                                <input type="hidden" name="phase_id" value="{{ p.id }}">
+                                <button type="submit" class="btn btn-sm btn-outline-danger"><i class="fas fa-trash me-1"></i>Delete</button>
+                            </form>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <p class="text-secondary text-center py-5 mb-0">No exam phases yet. Add one using the form above.</p>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

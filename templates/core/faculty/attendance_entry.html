@@ -148,7 +148,7 @@
         {% for slot in slots %}
         <div class="slot-attendance-form" data-slot-index="{{ forloop.counter0 }}">
             <div class="d-flex flex-wrap align-items-center justify-content-between gap-3 mb-3">
-                <p class="slot-title mb-0">{{ slot.time_slot }} — {{ slot.display_subject_name|default:slot.subject.name }}{% if slot.last_updated %} <span class="text-muted small fw-normal ms-2 slot-last-updated">(Last updated: {{ slot.last_updated|date:"d M Y" }} {{ slot.last_updated|time:"H:i" }})</span>{% endif %}</p>
+                <p class="slot-title mb-0">{{ slot.time_slot }} — {{ slot.display_subject_name|default:slot.subject.name }}{% if slot.is_extra_lecture %} <span class="badge bg-primary ms-1">Extra lecture</span>{% endif %}{% if slot.last_updated %} <span class="text-muted small fw-normal ms-2 slot-last-updated">(Last updated: {{ slot.last_updated|date:"d M Y" }} {{ slot.last_updated|time:"H:i" }})</span>{% endif %}</p>
                 {% if not attendance_locked %}
                 <div class="d-flex gap-2 flex-wrap faculty-slot-actions">
                     {% if not forloop.first %}

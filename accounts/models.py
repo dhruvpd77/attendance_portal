@@ -8,6 +8,7 @@ from django.contrib.auth.models import User
 class UserRole(models.Model):
     ROLE_CHOICES = [
         ('admin', 'Admin'),
+        ('hod', 'HOD'),
         ('faculty', 'Faculty'),
         ('student', 'Student'),
     ]

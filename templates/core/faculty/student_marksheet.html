@@ -1,0 +1,104 @@
+{% extends 'base.html' %}
+{% load static %}
+{% block title %}Student Marksheet - LJIET_Attendance{% endblock %}
+{% block extra_head %}
+{{ block.super }}
+<style>
+.ms-hero { background: linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #334155 100%); border-radius: 16px; padding: 1.25rem 1.5rem; margin-bottom: 1.5rem; color: #fff; }
+.ms-hero .page-title { color: #fff !important; }
+.ms-hero .admin-logo { height: 44px; width: auto; max-width: 90px; object-fit: contain; filter: drop-shadow(0 2px 8px rgba(0,0,0,0.4)); }
+
+.ms-card { border: none; border-radius: 14px; box-shadow: 0 4px 20px rgba(0,0,0,0.08); margin-bottom: 1.5rem; overflow: hidden; border-left: 5px solid #8b5cf6; }
+.ms-card .card-header { background: linear-gradient(90deg, #1e293b 0%, #334155 100%); color: #fff !important; font-weight: 600; padding: 0.9rem 1.25rem; border: none; }
+
+.ms-table thead th {
+    background: linear-gradient(180deg, #334155 0%, #475569 100%);
+    color: #fff !important;
+    font-weight: 600;
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    padding: 0.85rem 1rem;
+    border: none;
+}
+.ms-table tbody td { padding: 0.85rem 1rem; vertical-align: middle; }
+.ms-table tbody tr:nth-child(even) { background: #f8fafc; }
+.ms-table tbody tr:hover { background: #eff6ff !important; }
+.ms-marks-cell { font-weight: 600; min-width: 50px; }
+.ms-marks-good { color: #047857; }
+.ms-marks-warn { color: #b45309; }
+.ms-marks-low { color: #dc2626; }
+@media (max-width: 575.98px) {
+    .ms-hero { padding: 1rem 1.1rem; flex-wrap: wrap; }
+    .ms-table thead th, .ms-table tbody td { padding: 0.5rem 0.45rem; font-size: 0.72rem; }
+    .ms-marks-cell { min-width: 2.25rem; }
+}
+</style>
+{% endblock %}
+{% block content %}
+<div class="ms-hero d-flex align-items-center gap-3">
+    <img src="{% static 'images/ljiet-logo.png' %}" alt="LJIET" class="admin-logo">
+    <div>
+        <h1 class="page-title mb-1">Student Marksheet</h1>
+        <p class="text-white-50 mb-0">{{ faculty.full_name }} — Mentorship students: phase-wise, subject-wise marks</p>
+    </div>
+</div>
+
+<div class="ms-card">
+    <div class="card-header"><i class="fas fa-award me-2"></i>Marks by phase & subject</div>
+    <div class="card-body p-0">
+        {% if marks_data %}
+        <div class="table-responsive">
+            <table class="table ms-table table-hover mb-0">
+                <thead>
+                    <tr>
+                        <th>Roll No</th>
+                        <th>Name</th>
+                        <th>Batch</th>
+                        {% for phase, subs in phase_with_subjects %}
+                        <th colspan="{% if subs %}{{ subs|length }}{% else %}1{% endif %}" class="text-center" style="background: linear-gradient(180deg, #6366f1 0%, #4f46e5 100%) !important;">{{ phase.name }}</th>
+                        {% endfor %}
+                    </tr>
+                    <tr>
+                        <th></th>
+                        <th></th>
+                        <th></th>
+                        {% for phase, subs in phase_with_subjects %}
+                        {% for eps in subs %}
+                        <th class="text-center" style="font-size: 0.7rem;">{{ eps.subject.name|truncatechars:10 }}</th>
+                        {% empty %}
+                        <th></th>
+                        {% endfor %}
+                        {% endfor %}
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for row in marks_data %}
+                    <tr>
+                        <td class="fw-semibold">{{ row.student.roll_no }}</td>
+                        <td>{{ row.student.name }}</td>
+                        <td>{{ row.student.batch.name }}</td>
+                        {% for phase_data in row.phases %}
+                        {% for subj in phase_data.subjects %}
+                        <td class="text-center ms-marks-cell">
+                            {% if subj.marks is not None %}
+                            <span class="{% if subj.marks >= 18 %}ms-marks-good{% elif subj.marks >= 12 %}ms-marks-warn{% else %}ms-marks-low{% endif %}">{{ subj.marks|floatformat:2 }}</span>
+                            {% else %}
+                            <span class="text-secondary">—</span>
+                            {% endif %}
+                        </td>
+                        {% empty %}
+                        <td class="text-center text-secondary">—</td>
+                        {% endfor %}
+                        {% endfor %}
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <p class="text-center text-secondary py-5 mb-0">No mentorship students assigned. Or no exam phases/subjects configured yet.</p>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

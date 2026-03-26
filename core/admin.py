@@ -2,11 +2,13 @@ from django.contrib import admin
 from .models import (
     Department, Batch, Subject, Faculty, Student,
     ScheduleSlot, TermPhase, PhaseHoliday, FacultyAttendance, LectureCancellation, ExtraLecture,
+    ExamPhase, ExamPhaseSubject, StudentMark, HODWeekLock, FacultyDoubtSession,
+    FacultyDoubtRequest, FacultyDoubtRequestStudent,
 )
 
 @admin.register(Department)
 class DepartmentAdmin(admin.ModelAdmin):
-    list_display = ('name', 'code')
+    list_display = ('name', 'semester')
 
 @admin.register(Batch)
 class BatchAdmin(admin.ModelAdmin):
@@ -61,3 +63,58 @@ class ExtraLectureAdmin(admin.ModelAdmin):
     list_display = ('date', 'batch', 'time_slot', 'subject', 'faculty', 'room_number')
     list_filter = ('date', 'batch__department')
     search_fields = ('batch__name', 'time_slot', 'room_number')
+
+
+@admin.register(FacultyDoubtSession)
+class FacultyDoubtSessionAdmin(admin.ModelAdmin):
+    list_display = ('faculty', 'date', 'batch', 'student', 'start_time', 'end_time', 'created_at')
+    list_filter = ('date', 'batch__department')
+    search_fields = ('faculty__short_name', 'student__roll_no', 'student__name')
+    raw_id_fields = ('faculty', 'batch', 'student')
+    ordering = ('-date', '-start_time')
+
+
+class FacultyDoubtRequestStudentInline(admin.TabularInline):
+    model = FacultyDoubtRequestStudent
+    raw_id_fields = ('student',)
+    extra = 0
+
+
+@admin.register(FacultyDoubtRequest)
+class FacultyDoubtRequestAdmin(admin.ModelAdmin):
+    list_display = ('faculty', 'date', 'batches_list', 'status', 'start_time', 'end_time', 'created_at')
+    list_filter = ('status', 'date', 'department')
+    search_fields = ('faculty__short_name', 'batches__name')
+    filter_horizontal = ('batches',)
+    raw_id_fields = ('faculty', 'department', 'batch', 'reviewed_by')
+    inlines = [FacultyDoubtRequestStudentInline]
+    ordering = ('-date', '-pk')
+
+    @admin.display(description='Batches')
+    def batches_list(self, obj):
+        return obj.batches_label()
+
+
+@admin.register(ExamPhase)
+class ExamPhaseAdmin(admin.ModelAdmin):
+    list_display = ('name', 'department')
+    list_filter = ('department',)
+
+
+@admin.register(ExamPhaseSubject)
+class ExamPhaseSubjectAdmin(admin.ModelAdmin):
+    list_display = ('exam_phase', 'subject')
+    list_filter = ('exam_phase__department',)
+
+
+@admin.register(StudentMark)
+class StudentMarkAdmin(admin.ModelAdmin):
+    list_display = ('student', 'exam_phase', 'subject', 'marks_obtained')
+    list_filter = ('exam_phase', 'subject__department')
+    search_fields = ('student__roll_no', 'student__name', 'student__enrollment_no')
+
+
+@admin.register(HODWeekLock)
+class HODWeekLockAdmin(admin.ModelAdmin):
+    list_display = ('department', 'phase', 'week_index', 'locked_at')
+    list_filter = ('department', 'phase')

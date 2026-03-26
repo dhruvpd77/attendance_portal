@@ -1,0 +1,62 @@
+{% extends 'core/admin/base_admin.html' %}
+{% load static %}
+{% block title %}DR weekly load (faculty) — LJIET_Attendance{% endblock %}
+{% block extra_head %}
+{{ block.super }}
+{% include 'core/partials/dr_load_styles.html' %}
+{% endblock %}
+{% block content %}
+
+<div class="dr-load-hero d-flex flex-wrap align-items-center justify-content-between gap-3">
+    <div class="inner d-flex align-items-center gap-3 flex-grow-1">
+        <img src="{% static 'images/ljiet-logo.png' %}" alt="LJIET" class="hero-logo flex-shrink-0">
+        <div>
+            <h1 class="page-title mb-1">DR weekly load</h1>
+            <p class="page-subtitle mb-0">{{ department.name }} — Same report as <strong>My DR weekly load</strong> on the faculty portal: weekly combine from saved attendance, with <strong>0.75×</strong> / ETL rules. Pick a faculty to review their load.</p>
+        </div>
+    </div>
+    <a href="{% url 'core:admin_dashboard' %}" class="btn btn-light btn-sm align-self-start align-self-md-center flex-shrink-0 rounded-pill px-3 fw-semibold shadow-sm">
+        <i class="fas fa-arrow-left me-1"></i> Dashboard
+    </a>
+</div>
+
+{% if upto_choices and faculties %}
+<form method="get" class="card dr-load-filter-card mb-4">
+    <div class="card-body">
+        <div class="row g-3 align-items-end">
+            <div class="col-lg-5 col-md-6">
+                <label class="form-label"><i class="fas fa-chalkboard-teacher text-primary me-1"></i>Faculty</label>
+                <select name="faculty_id" class="form-select" onchange="this.form.submit()">
+                    {% for f in faculties %}
+                    <option value="{{ f.id }}" {% if selected_faculty and f.id == selected_faculty.id %}selected{% endif %}>{{ f.short_name }} — {{ f.full_name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-lg-5 col-md-6">
+                <label class="form-label"><i class="fas fa-filter text-primary me-1"></i>Show totals up to</label>
+                <select name="upto" class="form-select" onchange="this.form.submit()">
+                    {% for c in upto_choices %}
+                    <option value="{{ c.value }}" {% if c.value == selected_upto %}selected{% endif %}>{{ c.label }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-lg-2 col-md-12">
+                <button type="submit" class="btn btn-dr-apply w-100"><i class="fas fa-check me-1"></i> Apply</button>
+            </div>
+        </div>
+        <p class="small text-muted mb-0 mt-3">Earlier weeks stay included for the cutoff. Dropdowns submit on change; Apply refreshes with both selections.</p>
+    </div>
+</form>
+
+{% if selected_faculty %}
+{% include 'core/partials/dr_weekly_combine_report.html' with detail=detail selected_label=selected_label selected_faculty=selected_faculty %}
+{% endif %}
+
+{% elif not faculties %}
+<div class="alert alert-warning border-0 rounded-3 shadow-sm"><i class="fas fa-users-slash me-2"></i>No faculties in this department.</div>
+{% else %}
+<div class="alert alert-info border-0 rounded-3 shadow-sm" style="background: linear-gradient(135deg, #eff6ff 0%, #e0e7ff 100%); color: #1e3a8a;">
+    <i class="fas fa-calendar-alt me-2"></i>Term phases are not set up or have no lecture weeks. Configure <strong>Term phases</strong> for {{ department.name }}.
+</div>
+{% endif %}
+{% endblock %}

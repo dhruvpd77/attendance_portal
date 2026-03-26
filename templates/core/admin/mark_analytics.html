@@ -1,0 +1,506 @@
+{% extends 'base.html' %}
+{% load static %}
+{% block title %}Mark Analytics - LJIET_Attendance{% endblock %}
+{% block extra_head %}
+{{ block.super }}
+<style>
+.sa-hero {
+    background: linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #334155 100%);
+    border-radius: 16px;
+    padding: 1.25rem 1.5rem;
+    margin-bottom: 1.5rem;
+    color: #fff;
+    box-shadow: 0 10px 40px rgba(15, 23, 42, 0.25);
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+}
+.sa-hero .page-title { color: #fff !important; font-size: 1.5rem; margin-bottom: 0.35rem !important; }
+.sa-hero .page-subtitle { color: #94a3b8 !important; font-size: 0.9rem; margin: 0; }
+.sa-hero .admin-logo { height: 44px; width: auto; max-width: 90px; object-fit: contain; filter: drop-shadow(0 2px 8px rgba(0,0,0,0.4)); }
+
+.sa-filter-card {
+    border: none;
+    border-radius: 14px;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+    margin-bottom: 1.5rem;
+    overflow: hidden;
+    border-left: 5px solid #3b82f6;
+    transition: box-shadow 0.3s ease;
+}
+.sa-filter-card:hover { box-shadow: 0 8px 30px rgba(59, 130, 246, 0.15); }
+.sa-filter-card .card-header {
+    background: linear-gradient(90deg, #1e293b 0%, #334155 100%);
+    color: #fff !important;
+    font-weight: 600;
+    padding: 0.9rem 1.25rem;
+    border: none;
+}
+
+.sa-table thead th {
+    background: linear-gradient(180deg, #334155 0%, #475569 100%);
+    color: #fff !important;
+    font-weight: 600;
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    padding: 0.85rem 1rem;
+    border: none;
+}
+.sa-table tbody td { padding: 0.85rem 1rem; vertical-align: middle; }
+.sa-table tbody tr:nth-child(even) { background: #f8fafc; }
+.sa-table tbody tr:hover { background: #eff6ff !important; }
+
+/* Colorful expand row */
+.sa-expand-row {
+    background: linear-gradient(135deg, #eef2ff 0%, #f0f9ff 50%, #ecfdf5 100%) !important;
+    border-left: 4px solid #6366f1;
+}
+.sa-expand-row td { padding: 1.25rem 1.5rem !important; border-top: none; vertical-align: top; }
+
+/* Phase-wise card */
+.sa-phase-card {
+    background: linear-gradient(145deg, #fff 0%, #f8fafc 100%);
+    border-radius: 12px;
+    padding: 1rem;
+    border: 1px solid #e0e7ff;
+    box-shadow: 0 4px 14px rgba(99, 102, 241, 0.12);
+    margin-bottom: 1rem;
+}
+.sa-phase-card:last-child { margin-bottom: 0; }
+.sa-phase-card .sa-section-title {
+    background: linear-gradient(135deg, #6366f1 0%, #4f46e5 100%);
+    color: #fff !important;
+    padding: 0.5rem 0.9rem;
+    border-radius: 10px;
+    font-weight: 600;
+    font-size: 0.85rem;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    margin-bottom: 0.75rem;
+}
+
+.sa-expand-row .sub-table {
+    font-size: 0.9rem;
+    border-radius: 10px;
+    overflow: hidden;
+    border: 1px solid rgba(0,0,0,0.06);
+}
+.sa-expand-row .sub-table thead th {
+    padding: 0.6rem 0.85rem;
+    font-weight: 600;
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+.sa-phase-card .sub-table thead th {
+    background: linear-gradient(180deg, #818cf8 0%, #6366f1 100%);
+    color: #fff !important;
+}
+.sa-expand-row .sub-table tbody td {
+    padding: 0.6rem 0.85rem;
+}
+.sa-expand-row .sub-table tbody tr:nth-child(odd) { background: #fff; }
+.sa-expand-row .sub-table tbody tr:nth-child(even) { background: #f8fafc; }
+.sa-expand-row .sub-table tbody tr:hover { background: #eff6ff !important; }
+.sa-expand-row .sub-table .sa-marks-low { color: #dc2626; font-weight: 700; }
+
+.sa-toggle {
+    cursor: pointer;
+    color: #6366f1;
+    width: 28px;
+    height: 28px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 8px;
+    background: linear-gradient(135deg, #eef2ff 0%, #e0e7ff 100%);
+    transition: all 0.25s ease;
+}
+.sa-toggle:hover {
+    background: linear-gradient(135deg, #6366f1 0%, #4f46e5 100%);
+    color: #fff;
+    transform: scale(1.05);
+}
+
+.sa-contact-icons { display: inline-flex; align-items: center; gap: 6px; margin-left: 8px; }
+.sa-phone-btn {
+    width: 28px; height: 28px;
+    display: inline-flex; align-items: center; justify-content: center;
+    border-radius: 8px;
+    text-decoration: none !important;
+    transition: all 0.2s ease;
+    font-weight: 700;
+    font-size: 0.8rem;
+}
+.sa-phone-student {
+    background: linear-gradient(135deg, #dbeafe 0%, #bfdbfe 100%);
+    color: #2563eb;
+}
+.sa-phone-student:hover { background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%); color: #fff; transform: scale(1.08); }
+.sa-phone-parents {
+    background: linear-gradient(135deg, #fce7f3 0%, #fbcfe8 100%);
+    color: #be185d;
+}
+.sa-phone-parents:hover { background: linear-gradient(135deg, #be185d 0%, #9d174d 100%); color: #fff; transform: scale(1.08); }
+.sa-phone-disabled {
+    background: #f1f5f9;
+    color: #94a3b8;
+    cursor: not-allowed;
+    opacity: 0.6;
+}
+
+/* Risk section */
+.sa-risk-card {
+    background: linear-gradient(145deg, #fef2f2 0%, #fff5f5 100%);
+    border-radius: 12px;
+    padding: 1rem;
+    border: 1px solid #fecaca;
+    box-shadow: 0 4px 14px rgba(220, 38, 38, 0.1);
+    margin-bottom: 1rem;
+}
+.sa-risk-card .sa-section-title {
+    background: linear-gradient(135deg, #dc2626 0%, #b91c1c 100%);
+    color: #fff !important;
+    padding: 0.5rem 0.9rem;
+    border-radius: 10px;
+    font-weight: 600;
+    font-size: 0.85rem;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    margin-bottom: 0.75rem;
+}
+.sa-risk-card .sub-table thead th {
+    background: linear-gradient(180deg, #f87171 0%, #dc2626 100%);
+    color: #fff !important;
+}
+.sa-risk-table .marks-low { color: #dc2626; font-weight: 700; }
+
+@media (max-width: 767.98px) {
+    .sa-hero { padding: 1rem 1.15rem; flex-direction: column; align-items: flex-start !important; }
+    .sa-hero .page-title { font-size: 1.2rem !important; }
+    .sa-table thead th, .sa-table tbody td { padding: 0.55rem 0.6rem; font-size: 0.72rem; }
+    .sa-filter-card .card-body .row > [class*="col-"] { margin-bottom: 0.5rem; }
+}
+@media (max-width: 575.98px) {
+    .sa-filter-card .card-body .row.g-3 > div[class*="col-"] { flex: 0 0 100%; max-width: 100%; }
+}
+</style>
+{% endblock %}
+{% block content %}
+<div class="sa-hero">
+    <div class="d-flex align-items-center gap-3">
+        <img src="{% static 'images/ljiet-logo.png' %}" alt="LJIET" class="admin-logo">
+        <div>
+            <h1 class="page-title">Mark Analytics</h1>
+            <p class="page-subtitle">{% if is_admin %}Phase-wise marks — T1, T2, T3, SEE. Search by roll no (works without batch) or filter by batch.{% else %}Mentorship students: phase-wise marks — T1, T2, T3, SEE. Search or filter by batch.{% endif %}</p>
+        </div>
+    </div>
+    {% if is_admin %}
+    <a href="{% url 'core:admin_dashboard' %}" class="btn btn-outline-light btn-sm"><i class="fas fa-arrow-left me-1"></i> Dashboard</a>
+    {% else %}
+    <a href="{% url 'core:faculty_dashboard' %}" class="btn btn-outline-light btn-sm"><i class="fas fa-arrow-left me-1"></i> Dashboard</a>
+    {% endif %}
+</div>
+
+<div class="card sa-filter-card mb-4">
+    <div class="card-header"><i class="fas fa-filter me-2"></i>Select batch & search</div>
+    <div class="card-body p-4">
+        <form method="get" action="{% if is_admin %}{% url 'core:admin_mark_analytics' %}{% else %}{% url 'core:faculty_mark_analytics' %}{% endif %}" class="d-flex flex-wrap align-items-end gap-3">
+            <div>
+                <label class="form-label small fw-semibold text-secondary mb-1">Batch <span class="text-muted">(optional if searching by roll no)</span></label>
+                <select name="batch_id" class="form-select form-select-app" style="min-width: 180px;" onchange="this.form.submit()">
+                    <option value="">— Select batch —</option>
+                    <option value="all" {% if selected_batch_id == "all" %}selected{% endif %}>All Batches</option>
+                    {% for b in batches %}
+                    <option value="{{ b.id }}" {% if selected_batch_id == b.id|stringformat:"d" %}selected{% endif %}>{{ b.name }}{% if b.department %} ({{ b.department.name }}){% endif %}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div>
+                <label class="form-label small fw-semibold text-secondary mb-1">Phase</label>
+                <select name="phase" class="form-select form-select-app" style="min-width: 120px;" onchange="this.form.submit()">
+                    <option value="">All phases</option>
+                    {% for ep in exam_phases %}
+                    <option value="{{ ep.name }}" {% if selected_phase == ep.name %}selected{% endif %}>{{ ep.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div>
+                <label class="form-label small fw-semibold text-secondary mb-1">Search (roll / name / enrollment)</label>
+                <input type="text" name="roll_search" class="form-control" placeholder="e.g. 108 or 21CE001 (no batch needed)" value="{{ roll_search }}" style="min-width: 220px;">
+            </div>
+            <button type="submit" class="btn btn-primary-app"><i class="fas fa-search me-1"></i> Show</button>
+        </form>
+    </div>
+</div>
+
+{% if risk_data %}
+<div class="card sa-filter-card mb-4">
+    <div class="card-header d-flex align-items-center justify-content-between flex-wrap gap-2">
+        <span><i class="fas fa-exclamation-triangle me-2"></i>At Risk — Marks &lt; 9 (subject-wise)</span>
+        <div class="d-flex align-items-center gap-2 flex-wrap">
+            <select id="atRiskPhaseSelect" class="form-select form-select-app form-select-sm" style="min-width: 120px;">
+                <option value="all">All phases</option>
+                {% for ep in exam_phases %}
+                <option value="{{ ep.name }}">{{ ep.name }} only</option>
+                {% endfor %}
+            </select>
+            <a href="#" id="atRiskExcelLink" class="btn btn-sm btn-light"><i class="fas fa-file-excel me-1"></i> All Batches — All Students at Risk</a>
+        </div>
+    </div>
+    <div class="card-body p-4">
+        <p class="text-muted small mb-3">Students with less than 9 marks, grouped by subject. Based on current batch/search filter. Download per subject or all at-risk students.</p>
+        <div class="row g-3">
+            {% for subject in risk_data %}
+            <div class="col-12 col-md-6 col-xl-4">
+                <div class="sa-risk-card">
+                    <div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-2">
+                        <div class="sa-section-title"><i class="fas fa-book"></i> {{ subject.subject_name }}</div>
+                        <a href="{% if is_admin %}{% url 'core:admin_mark_analytics_risk_excel' %}?subject={{ subject.subject_name|urlencode }}&batch_id={{ selected_batch_id|default:'' }}{% else %}{% url 'core:faculty_mark_analytics_risk_excel' %}?subject={{ subject.subject_name|urlencode }}&batch_id={{ selected_batch_id|default:'' }}{% endif %}" class="btn btn-sm btn-outline-danger"><i class="fas fa-file-excel me-1"></i> Download Excel</a>
+                    </div>
+                    <table class="table sub-table table-sm mb-0 sa-risk-table">
+                        <thead>
+                            <tr><th>Roll No</th><th>Name</th><th>Batch</th><th>Phase</th><th class="text-end">Marks</th></tr>
+                        </thead>
+                        <tbody>
+                            {% for entry in subject.at_risk %}
+                            <tr>
+                                <td class="fw-semibold">{{ entry.student.roll_no }}</td>
+                                <td>{{ entry.student.name }}</td>
+                                <td>{{ entry.student.batch.name }}</td>
+                                <td>{{ entry.phase_name }}</td>
+                                <td class="text-end marks-low">{{ entry.marks }}</td>
+                            </tr>
+                            {% empty %}
+                            <tr><td colspan="5" class="text-muted">No at-risk students</td></tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+</div>
+{% endif %}
+
+{% if student_data %}
+<div class="card sa-filter-card">
+    <div class="card-header d-flex align-items-center justify-content-between flex-wrap gap-2">
+        {% if is_admin %}
+        <span><i class="fas fa-users me-2"></i>Students — Phase-wise marks{% if roll_search %} (filtered){% endif %}</span>
+        {% else %}
+        <ul class="nav nav-tabs border-0" role="tablist" style="--bs-nav-link-color: rgba(255,255,255,0.85); --bs-nav-link-hover-color: #fff; --bs-nav-tabs-link-active-color: #fff; --bs-nav-tabs-link-active-bg: rgba(255,255,255,0.15);">
+            <li class="nav-item">
+                <a class="nav-link rounded-2 px-3 py-2 {% if request.GET.tab != 'risk' %}active{% endif %}" href="?{% if selected_batch_id %}batch_id={{ selected_batch_id }}{% endif %}{% if selected_phase %}&phase={{ selected_phase }}{% endif %}{% if roll_search %}&roll_search={{ roll_search|urlencode }}{% endif %}"><i class="fas fa-users me-2"></i>Students — Phase-wise marks{% if roll_search %} (filtered){% endif %}</a>
+            </li>
+            <li class="nav-item">
+                <a class="nav-link rounded-2 px-3 py-2 {% if request.GET.tab == 'risk' %}active{% endif %}" href="?tab=risk{% if selected_batch_id %}&batch_id={{ selected_batch_id }}{% endif %}{% if selected_phase %}&phase={{ selected_phase }}{% endif %}{% if roll_search %}&roll_search={{ roll_search|urlencode }}{% endif %}"><i class="fas fa-exclamation-triangle me-2"></i>Risk Students List</a>
+            </li>
+        </ul>
+        {% endif %}
+    </div>
+    <div class="card-body p-0">
+        {% if not is_admin and request.GET.tab == 'risk' %}
+        {% if selected_phase %}
+        <p class="small text-muted px-4 pt-3 mb-0"><i class="fas fa-info-circle me-1"></i>Showing mentorship students with at least one subject &lt; 9 marks in <strong>{{ selected_phase }}</strong>.</p>
+        {% else %}
+        <p class="small text-muted px-4 pt-3 mb-0"><i class="fas fa-info-circle me-1"></i>Showing mentorship students with at least one subject &lt; 9 marks in any phase.</p>
+        {% endif %}
+        <div class="table-responsive">
+            <table class="table sa-table table-hover mb-0">
+                <thead>
+                    <tr>
+                        <th style="width: 40px;"></th>
+                        <th>Roll No</th>
+                        <th>Name</th>
+                        <th>Batch</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for item in risk_student_data %}
+                    <tr data-row-id="risk-{{ forloop.counter }}">
+                        <td>
+                            <span class="sa-toggle" onclick="toggleRow('risk-' + {{ forloop.counter }})" title="Expand details">
+                                <i class="fas fa-chevron-down" id="icon-risk-{{ forloop.counter }}"></i>
+                            </span>
+                        </td>
+                        <td class="fw-semibold">{{ item.student.roll_no }}</td>
+                        <td>
+                            <span class="d-inline-flex align-items-center flex-wrap">
+                                {{ item.student.name }}
+                                <span class="sa-contact-icons">
+                                    {% if item.student.student_phone_number %}
+                                    <a href="tel:{{ item.student.student_phone_number|striptags }}" class="sa-phone-btn sa-phone-student" title="Student: {{ item.student.student_phone_number }}">S</a>
+                                    {% else %}
+                                    <span class="sa-phone-btn sa-phone-disabled" title="No student number">S</span>
+                                    {% endif %}
+                                    {% if item.student.parents_contact_number %}
+                                    <a href="tel:{{ item.student.parents_contact_number|striptags }}" class="sa-phone-btn sa-phone-parents" title="Parents: {{ item.student.parents_contact_number }}">P</a>
+                                    {% else %}
+                                    <span class="sa-phone-btn sa-phone-disabled" title="No parents number">P</span>
+                                    {% endif %}
+                                </span>
+                            </span>
+                        </td>
+                        <td>{{ item.student.batch.name }}</td>
+                    </tr>
+                    <tr class="sa-expand-row" id="expand-risk-{{ forloop.counter }}" style="display: none;">
+                        <td colspan="4">
+                            <div class="row g-3">
+                                {% for phase in item.phase_wise %}
+                                <div class="col-12 col-md-6 col-lg-4">
+                                    <div class="sa-phase-card">
+                                        <div class="sa-section-title"><i class="fas fa-award"></i> {{ phase.phase_name }} Phase</div>
+                                        <table class="table sub-table table-sm mb-0">
+                                            <thead>
+                                                <tr><th>Subject</th><th class="text-end">Marks</th></tr>
+                                            </thead>
+                                            <tbody>
+                                                {% for s in phase.subjects %}
+                                                <tr>
+                                                    <td class="fw-medium">{{ s.name }}</td>
+                                                    <td class="text-end {% if s.is_low %}sa-marks-low{% endif %}">{{ s.marks|default:"—" }}</td>
+                                                </tr>
+                                                {% empty %}
+                                                <tr><td colspan="2" class="text-muted">No marks uploaded</td></tr>
+                                                {% endfor %}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+                                {% endfor %}
+                            </div>
+                        </td>
+                    </tr>
+                    {% empty %}
+                    <tr><td colspan="4" class="text-center py-4 text-muted"><i class="fas fa-check-circle me-2"></i>No risk students — all mentorship students have marks ≥ 9 in {% if selected_phase %}{{ selected_phase }}{% else %}all phases{% endif %}.</td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <div class="table-responsive">
+            <table class="table sa-table table-hover mb-0">
+                <thead>
+                    <tr>
+                        <th style="width: 40px;"></th>
+                        <th>Roll No</th>
+                        <th>Name</th>
+                        <th>Batch</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for item in student_data %}
+                    <tr data-row-id="{{ forloop.counter }}">
+                        <td>
+                            <span class="sa-toggle" onclick="toggleRow({{ forloop.counter }})" title="Expand details">
+                                <i class="fas fa-chevron-down" id="icon-{{ forloop.counter }}"></i>
+                            </span>
+                        </td>
+                        <td class="fw-semibold">{{ item.student.roll_no }}</td>
+                        <td>
+                            <span class="d-inline-flex align-items-center flex-wrap">
+                                {{ item.student.name }}
+                                <span class="sa-contact-icons">
+                                    {% if item.student.student_phone_number %}
+                                    <a href="tel:{{ item.student.student_phone_number|striptags }}" class="sa-phone-btn sa-phone-student" title="Student: {{ item.student.student_phone_number }}">S</a>
+                                    {% else %}
+                                    <span class="sa-phone-btn sa-phone-disabled" title="No student number">S</span>
+                                    {% endif %}
+                                    {% if item.student.parents_contact_number %}
+                                    <a href="tel:{{ item.student.parents_contact_number|striptags }}" class="sa-phone-btn sa-phone-parents" title="Parents: {{ item.student.parents_contact_number }}">P</a>
+                                    {% else %}
+                                    <span class="sa-phone-btn sa-phone-disabled" title="No parents number">P</span>
+                                    {% endif %}
+                                </span>
+                            </span>
+                        </td>
+                        <td>{{ item.student.batch.name }}</td>
+                    </tr>
+                    <tr class="sa-expand-row" id="expand-{{ forloop.counter }}" style="display: none;">
+                        <td colspan="4">
+                            <div class="row g-3">
+                                {% for phase in item.phase_wise %}
+                                <div class="col-12 col-md-6 col-lg-4">
+                                    <div class="sa-phase-card">
+                                        <div class="sa-section-title"><i class="fas fa-award"></i> {{ phase.phase_name }} Phase</div>
+                                        <table class="table sub-table table-sm mb-0">
+                                            <thead>
+                                                <tr><th>Subject</th><th class="text-end">Marks</th></tr>
+                                            </thead>
+                                            <tbody>
+                                                {% for s in phase.subjects %}
+                                                <tr>
+                                                    <td class="fw-medium">{{ s.name }}</td>
+                                                    <td class="text-end {% if s.is_low %}sa-marks-low{% endif %}">{{ s.marks|default:"—" }}</td>
+                                                </tr>
+                                                {% empty %}
+                                                <tr><td colspan="2" class="text-muted">No marks uploaded</td></tr>
+                                                {% endfor %}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+                                {% endfor %}
+                            </div>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% elif selected_batch_id or roll_search %}
+<div class="card sa-filter-card">
+    <div class="card-body p-5 text-center" style="background: linear-gradient(180deg, #fef2f2 0%, #fff 100%);">
+        <div class="mb-3" style="width: 64px; height: 64px; margin: 0 auto; background: linear-gradient(135deg, #fecaca 0%, #fca5a5 100%); border-radius: 16px; display: flex; align-items: center; justify-content: center;">
+            <i class="fas fa-search fa-2x" style="color: #dc2626;"></i>
+        </div>
+        <h5 class="fw-bold" style="color: #991b1b;">No students found</h5>
+        <p class="text-secondary mb-0">Try a different search or batch.</p>
+    </div>
+</div>
+{% else %}
+<div class="card sa-filter-card">
+    <div class="card-body p-5 text-center" style="background: linear-gradient(180deg, #eff6ff 0%, #fff 100%);">
+        <div class="mb-3" style="width: 64px; height: 64px; margin: 0 auto; background: linear-gradient(135deg, #93c5fd 0%, #60a5fa 100%); border-radius: 16px; display: flex; align-items: center; justify-content: center;">
+            <i class="fas fa-mouse-pointer fa-2x" style="color: #1d4ed8;"></i>
+        </div>
+        <h5 class="fw-bold" style="color: #1e40af;">Select batch and search</h5>
+        <p class="text-secondary mb-0">Choose a batch and click <strong>Show</strong> to view phase-wise marks (T1, T2, T3, SEE).</p>
+    </div>
+</div>
+{% endif %}
+
+<script>
+function toggleRow(id) {
+    var row = document.getElementById('expand-' + id);
+    var icon = document.getElementById('icon-' + id);
+    if (row.style.display === 'none') {
+        row.style.display = 'table-row';
+        icon.className = 'fas fa-chevron-up';
+    } else {
+        row.style.display = 'none';
+        icon.className = 'fas fa-chevron-down';
+    }
+}
+(function() {
+    var sel = document.getElementById('atRiskPhaseSelect');
+    var link = document.getElementById('atRiskExcelLink');
+    if (sel && link) {
+        var baseUrl = "{% if is_admin %}{% url 'core:admin_mark_analytics_risk_all_excel' %}{% else %}{% url 'core:faculty_mark_analytics_risk_all_excel' %}{% endif %}";
+        function update() { link.href = baseUrl + '?phase=' + (sel.value || 'all'); }
+        update();
+        sel.addEventListener('change', update);
+    }
+})();
+</script>
+{% endblock %}

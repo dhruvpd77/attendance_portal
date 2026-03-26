@@ -182,6 +182,15 @@
     cursor: not-allowed;
     opacity: 0.6;
 }
+
+@media (max-width: 767.98px) {
+    .sa-hero { padding: 1rem 1.15rem; flex-direction: column; align-items: flex-start !important; }
+    .sa-hero .page-title { font-size: 1.2rem !important; }
+    .sa-table thead th, .sa-table tbody td { padding: 0.55rem 0.6rem; font-size: 0.72rem; }
+}
+@media (max-width: 575.98px) {
+    .sa-filter-card .card-body .row.g-3 > div[class*="col-"] { flex: 0 0 100%; max-width: 100%; }
+}
 </style>
 {% endblock %}
 {% block content %}
@@ -307,7 +316,7 @@
                         <td>{{ item.student.batch.name }}</td>
                         <td class="text-end">{{ item.held }}</td>
                         <td class="text-end">{{ item.attended }}</td>
-                        <td class="text-end {% if item.pct < 50 %}pct-low{% elif item.pct < 75 %}pct-warn{% else %}pct-good{% endif %}">{{ item.pct }}%</td>
+                        <td class="text-end {% if item.pct < 50 %}pct-low{% elif item.pct < 75 %}pct-warn{% else %}pct-good{% endif %}">{{ item.pct|floatformat:2 }}%</td>
                     </tr>
                     <tr class="sa-expand-row" id="expand-{{ forloop.counter }}" style="display: none;">
                         <td colspan="7">
@@ -325,8 +334,8 @@
                                                     <td class="fw-medium">{{ w.label }}</td>
                                                     <td class="text-end">{{ w.held }}</td>
                                                     <td class="text-end">{{ w.attended }}</td>
-                                                    <td class="text-end"><span class="{% if w.pct >= 75 %}sa-pct-good{% elif w.pct >= 50 %}sa-pct-warn{% else %}sa-pct-low{% endif %}">{{ w.pct }}%</span></td>
-                                                    <td class="text-end fw-bold"><span class="{% if w.cum_pct >= 75 %}sa-pct-good{% elif w.cum_pct >= 50 %}sa-pct-warn{% else %}sa-pct-low{% endif %}">{{ w.cum_pct }}%</span></td>
+                                                    <td class="text-end"><span class="{% if w.pct >= 75 %}sa-pct-good{% elif w.pct >= 50 %}sa-pct-warn{% else %}sa-pct-low{% endif %}">{{ w.pct|floatformat:2 }}%</span></td>
+                                                    <td class="text-end fw-bold"><span class="{% if w.cum_pct >= 75 %}sa-pct-good{% elif w.cum_pct >= 50 %}sa-pct-warn{% else %}sa-pct-low{% endif %}">{{ w.cum_pct|floatformat:2 }}%</span></td>
                                                 </tr>
                                                 {% endfor %}
                                             </tbody>
@@ -346,7 +355,7 @@
                                                     <td class="fw-medium">{{ s.name }}</td>
                                                     <td class="text-end">{{ s.held }}</td>
                                                     <td class="text-end">{{ s.attended }}</td>
-                                                    <td class="text-end"><span class="{% if s.pct >= 75 %}sa-pct-good{% elif s.pct >= 50 %}sa-pct-warn{% else %}sa-pct-low{% endif %}">{{ s.pct }}%</span></td>
+                                                    <td class="text-end"><span class="{% if s.pct >= 75 %}sa-pct-good{% elif s.pct >= 50 %}sa-pct-warn{% else %}sa-pct-low{% endif %}">{{ s.pct|floatformat:2 }}%</span></td>
                                                 </tr>
                                                 {% endfor %}
                                             </tbody>

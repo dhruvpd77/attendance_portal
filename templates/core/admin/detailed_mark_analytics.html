@@ -1,0 +1,232 @@
+{% extends 'base.html' %}
+{% load static %}
+{% block title %}Detailed Mark Analytics - LJIET_Attendance{% endblock %}
+{% block extra_head %}
+{{ block.super }}
+<style>
+.dma-hero {
+    background: linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #334155 100%);
+    border-radius: 16px;
+    padding: 1.25rem 1.5rem;
+    margin-bottom: 1.5rem;
+    color: #fff;
+    box-shadow: 0 10px 40px rgba(15, 23, 42, 0.25);
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+}
+.dma-hero .page-title { color: #fff !important; font-size: 1.5rem; margin-bottom: 0.35rem !important; }
+.dma-hero .page-subtitle { color: #94a3b8 !important; font-size: 0.9rem; margin: 0; }
+.dma-hero .admin-logo { height: 44px; width: auto; max-width: 90px; object-fit: contain; filter: drop-shadow(0 2px 8px rgba(0,0,0,0.4)); }
+
+.dma-filter-card {
+    border: none;
+    border-radius: 14px;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+    margin-bottom: 1.5rem;
+    overflow: hidden;
+    border-left: 5px solid #3b82f6;
+}
+.dma-filter-card .card-header {
+    background: linear-gradient(90deg, #1e293b 0%, #334155 100%);
+    color: #fff !important;
+    font-weight: 600;
+    padding: 0.9rem 1.25rem;
+    border: none;
+}
+
+.dma-block {
+    background: linear-gradient(145deg, #fff 0%, #f8fafc 100%);
+    border-radius: 14px;
+    padding: 1.25rem;
+    margin-bottom: 1.5rem;
+    border: 1px solid #e2e8f0;
+    box-shadow: 0 4px 14px rgba(0,0,0,0.06);
+}
+.dma-block-header {
+    background: linear-gradient(135deg, #6366f1 0%, #4f46e5 100%);
+    color: #fff !important;
+    padding: 0.6rem 1rem;
+    border-radius: 10px;
+    font-weight: 600;
+    font-size: 1rem;
+    margin-bottom: 1rem;
+    display: inline-block;
+}
+.dma-stats-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1rem;
+    margin-bottom: 1rem;
+}
+.dma-stat-badge {
+    padding: 0.5rem 1rem;
+    border-radius: 10px;
+    font-size: 0.9rem;
+    font-weight: 600;
+}
+.dma-stat-highest { background: linear-gradient(135deg, #dcfce7 0%, #bbf7d0 100%); color: #166534; }
+.dma-stat-avg { background: linear-gradient(135deg, #dbeafe 0%, #bfdbfe 100%); color: #1e40af; }
+.dma-stat-count { background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%); color: #92400e; }
+
+.dma-table { width: 100%; font-size: 0.9rem; border-collapse: collapse; border-radius: 10px; overflow: hidden; }
+.dma-table thead th {
+    background: linear-gradient(180deg, #334155 0%, #475569 100%);
+    color: #fff !important;
+    font-weight: 600;
+    padding: 0.75rem 1rem;
+    text-align: left;
+}
+.dma-table tbody td { padding: 0.65rem 1rem; border-bottom: 1px solid #e2e8f0; }
+.dma-table tbody tr:nth-child(even) { background: #f8fafc; }
+.dma-table tbody tr:hover { background: #eff6ff !important; }
+.dma-table .marks-col { font-weight: 600; color: #1e40af; }
+
+.dma-batch-avg {
+    margin-top: 1rem;
+    padding-top: 1rem;
+    border-top: 1px dashed #cbd5e1;
+}
+.dma-batch-avg-title { font-weight: 600; color: #475569; margin-bottom: 0.5rem; font-size: 0.85rem; }
+.dma-batch-avg-table { width: 100%; max-width: 400px; font-size: 0.9rem; }
+.dma-batch-avg-table th, .dma-batch-avg-table td { padding: 0.4rem 0.75rem; text-align: left; }
+.dma-batch-avg-table th { background: #f1f5f9; color: #475569; font-weight: 600; }
+
+.dma-download-btn {
+    background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+    color: #fff !important;
+    border: none;
+    padding: 0.5rem 1rem;
+    border-radius: 10px;
+    font-weight: 600;
+    font-size: 0.9rem;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    text-decoration: none !important;
+    transition: all 0.2s ease;
+}
+.dma-download-btn:hover { background: linear-gradient(135deg, #059669 0%, #047857 100%); color: #fff; transform: translateY(-1px); }
+
+.dma-empty { color: #64748b; padding: 2rem; text-align: center; }
+</style>
+{% endblock %}
+{% block content %}
+<div class="dma-hero">
+    <div class="d-flex align-items-center gap-3">
+        <img src="{% static 'images/ljiet-logo.png' %}" alt="LJIET" class="admin-logo">
+        <div>
+            <h1 class="page-title">Detailed Mark Analytics</h1>
+            <p class="page-subtitle">Phase-wise, subject-wise analytics: top 10 students, highest marks, average marks, batch-wise averages. Filter by phase, subject, or batch.</p>
+        </div>
+    </div>
+    <a href="{% url 'core:admin_dashboard' %}" class="btn btn-outline-light btn-sm"><i class="fas fa-arrow-left me-1"></i> Dashboard</a>
+</div>
+
+<div class="card dma-filter-card mb-4">
+    <div class="card-header"><i class="fas fa-filter me-2"></i>Filter analytics</div>
+    <div class="card-body p-4">
+        <form method="get" action="{% url 'core:admin_detailed_mark_analytics' %}" class="d-flex flex-wrap align-items-end gap-3">
+            <div>
+                <label class="form-label small fw-semibold text-secondary mb-1">Phase</label>
+                <select name="phase_id" class="form-select form-select-app" style="min-width: 140px;">
+                    <option value="">All phases</option>
+                    {% for ep in exam_phases %}
+                    <option value="{{ ep.id }}" {% if selected_phase_id == ep.id|stringformat:"d" %}selected{% endif %}>{{ ep.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div>
+                <label class="form-label small fw-semibold text-secondary mb-1">Subject</label>
+                <select name="subject_id" class="form-select form-select-app" style="min-width: 160px;">
+                    <option value="">All subjects</option>
+                    {% for s in all_subjects %}
+                    <option value="{{ s.id }}" {% if selected_subject_id == s.id|stringformat:"d" %}selected{% endif %}>{{ s.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div>
+                <label class="form-label small fw-semibold text-secondary mb-1">Batch</label>
+                <select name="batch_id" class="form-select form-select-app" style="min-width: 140px;">
+                    <option value="all" {% if selected_batch_id == "all" %}selected{% endif %}>All batches</option>
+                    {% for b in batches %}
+                    <option value="{{ b.id }}" {% if selected_batch_id == b.id|stringformat:"d" %}selected{% endif %}>{{ b.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <button type="submit" class="btn btn-primary"><i class="fas fa-search me-1"></i> Show</button>
+        </form>
+    </div>
+</div>
+
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <h5 class="mb-0 text-secondary">Analytics by Phase × Subject</h5>
+    <a href="{% url 'core:admin_detailed_mark_analytics_excel' %}?phase_id={{ selected_phase_id }}&subject_id={{ selected_subject_id }}&batch_id={{ selected_batch_id }}" class="dma-download-btn">
+        <i class="fas fa-file-excel"></i> Download Excel
+    </a>
+</div>
+
+{% if analytics %}
+    {% for block in analytics %}
+    <div class="dma-block">
+        <span class="dma-block-header">{{ block.phase_name }} — {{ block.subject_name }}</span>
+        <div class="dma-stats-row">
+            <span class="dma-stat-badge dma-stat-highest">Highest: {{ block.highest|floatformat:2|default:"—" }}</span>
+            <span class="dma-stat-badge dma-stat-avg">Average: {{ block.avg|floatformat:2|default:"—" }}</span>
+            <span class="dma-stat-badge dma-stat-count">Students: {{ block.count }}</span>
+        </div>
+        <h6 class="small fw-semibold text-secondary mb-2">Top 10 students</h6>
+        <table class="dma-table table">
+            <thead>
+                <tr>
+                    <th>#</th>
+                    <th>Roll No</th>
+                    <th>Name</th>
+                    <th>Batch</th>
+                    <th>Marks</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for e in block.top_10 %}
+                <tr>
+                    <td>{{ forloop.counter }}</td>
+                    <td>{{ e.student.roll_no }}</td>
+                    <td>{{ e.student.name }}</td>
+                    <td>{{ e.batch_name }}</td>
+                    <td class="marks-col">{{ e.marks|floatformat:2 }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% if block.batch_avg %}
+        <div class="dma-batch-avg">
+            <div class="dma-batch-avg-title">Batch-wise average marks</div>
+            <table class="dma-batch-avg-table table table-sm">
+                <thead>
+                    <tr>
+                        <th>Batch</th>
+                        <th>Avg Marks</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for b, avg in block.batch_avg %}
+                    <tr>
+                        <td>{{ b|default:"—" }}</td>
+                        <td>{{ avg|floatformat:2 }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% endif %}
+    </div>
+    {% endfor %}
+{% else %}
+<div class="dma-block dma-empty">
+    <i class="fas fa-chart-bar fa-2x mb-2 text-muted"></i>
+    <p class="mb-0">No marks data for the selected filters. Try changing phase, subject, or batch.</p>
+</div>
+{% endif %}
+{% endblock %}

@@ -8,7 +8,35 @@ from django.contrib.auth.models import User
 
 class Department(models.Model):
     name = models.CharField(max_length=200)
-    code = models.CharField(max_length=20, blank=True)
+    semester = models.CharField(
+        max_length=20,
+        blank=True,
+        help_text='Semester label (e.g. Roman IV). Used on Daily Report exports.',
+    )
+    include_extra_lectures_in_attendance = models.BooleanField(
+        default=False,
+        help_text='If on, extra lectures count in held/percentages like regular slots. If off, faculty can still mark attendance but totals exclude extras.',
+    )
+    faculty_show_doubt_solving = models.BooleanField(
+        default=True,
+        help_text='If off, faculty sidebar hides Doubt solving and the feature is blocked.',
+    )
+    faculty_show_dr_weekly_load = models.BooleanField(
+        default=True,
+        help_text='If off, faculty sidebar hides My DR weekly load.',
+    )
+    faculty_show_mark_analytics = models.BooleanField(
+        default=True,
+        help_text='If off, faculty sidebar hides Mark analytics and related exports.',
+    )
+    faculty_show_marks_report = models.BooleanField(
+        default=True,
+        help_text='If off, faculty sidebar hides Marks report.',
+    )
+    faculty_show_student_marksheet = models.BooleanField(
+        default=True,
+        help_text='If off, faculty sidebar hides Student marksheet.',
+    )
 
     class Meta:
         ordering = ['name']
@@ -156,6 +184,32 @@ class FacultyAttendance(models.Model):
         return f"{self.faculty.short_name} {self.date} {self.batch.name} {self.lecture_slot}"
 
 
+class FacultyCombineDrCache(models.Model):
+    """Denormalized DR weekly-combine unit: one row when attendance is saved and matches DR faculty+subject for that slot."""
+    department = models.ForeignKey(Department, on_delete=models.CASCADE, related_name='combine_dr_cache_rows')
+    faculty = models.ForeignKey(Faculty, on_delete=models.CASCADE, related_name='combine_dr_cache_rows')
+    batch = models.ForeignKey(Batch, on_delete=models.CASCADE)
+    subject = models.ForeignKey(Subject, on_delete=models.CASCADE)
+    date = models.DateField()
+    lecture_slot = models.CharField(max_length=50)
+    effective_load = models.FloatField(
+        default=0.75,
+        help_text='DR effective load (0.75 default; ETL with present < 24 → 0.5).',
+    )
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = ('faculty', 'date', 'batch', 'lecture_slot')
+        indexes = [
+            models.Index(fields=['department', 'faculty', 'date']),
+        ]
+        verbose_name = 'Faculty DR combine cache row'
+        verbose_name_plural = 'Faculty DR combine cache rows'
+
+    def __str__(self):
+        return f'{self.faculty.short_name} {self.date} {self.batch.name} {self.lecture_slot}'
+
+
 class AttendanceNotificationLog(models.Model):
     """Track when low-attendance emails were sent to students to avoid spam."""
     student = models.ForeignKey(Student, on_delete=models.CASCADE)
@@ -183,6 +237,23 @@ class AttendanceLockSetting(models.Model):
         if not self.enabled:
             return 'Lock disabled'
         return f'{self.lock_hour:02d}:{self.lock_minute:02d} IST (locked after this time each day)'
+
+
+class HODWeekLock(models.Model):
+    """Per-department week lock (set by HOD or super admin for the selected dept). When locked, departmental admins cannot edit manual attendance for dates in that week; faculty time lock is unchanged."""
+    department = models.ForeignKey(Department, on_delete=models.CASCADE)
+    phase = models.CharField(max_length=10)  # T1, T2, T3, T4
+    week_index = models.PositiveSmallIntegerField()  # 0-based week index within phase
+    locked_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = ('department', 'phase', 'week_index')
+        verbose_name = 'HOD week lock'
+        verbose_name_plural = 'HOD week locks'
+        ordering = ['department', 'phase', 'week_index']
+
+    def __str__(self):
+        return f'{self.department.name} {self.phase} Week {self.week_index + 1}'
 
 
 class LectureCancellation(models.Model):
@@ -238,3 +309,160 @@ class ExtraLecture(models.Model):
 
     def __str__(self):
         return f"{self.date} {self.batch.name} {self.time_slot} — {self.subject.name} ({self.faculty.short_name})"
+
+
+class FacultyDoubtSession(models.Model):
+    """Legacy: direct logged session (pre–request workflow). Prefer FacultyDoubtRequest for new data."""
+    faculty = models.ForeignKey(Faculty, on_delete=models.CASCADE, related_name='doubt_sessions')
+    date = models.DateField()
+    batch = models.ForeignKey(Batch, on_delete=models.CASCADE)
+    student = models.ForeignKey(Student, on_delete=models.CASCADE)
+    start_time = models.TimeField()
+    end_time = models.TimeField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-date', '-start_time', '-pk']
+        verbose_name = 'Doubt solving session'
+        verbose_name_plural = 'Doubt solving sessions'
+
+    def duration_minutes(self):
+        from datetime import datetime, timedelta
+        d = self.date
+        a = datetime.combine(d, self.start_time)
+        b = datetime.combine(d, self.end_time)
+        if b <= a:
+            b += timedelta(days=1)
+        return (b - a).total_seconds() / 60.0
+
+    def duration_hours(self):
+        return round(self.duration_minutes() / 60.0, 2)
+
+    def __str__(self):
+        return f"{self.faculty.short_name} {self.date} {self.student.roll_no}"
+
+
+class FacultyDoubtRequest(models.Model):
+    """Faculty submits multi-student doubt session; HOD must accept before it counts as DS hours."""
+    STATUS_PENDING = 'pending'
+    STATUS_ACCEPTED = 'accepted'
+    STATUS_REJECTED = 'rejected'
+    STATUS_CHOICES = [
+        (STATUS_PENDING, 'Pending'),
+        (STATUS_ACCEPTED, 'Accepted'),
+        (STATUS_REJECTED, 'Rejected'),
+    ]
+
+    faculty = models.ForeignKey(Faculty, on_delete=models.CASCADE, related_name='doubt_requests')
+    department = models.ForeignKey(Department, on_delete=models.CASCADE, related_name='doubt_requests')
+    batch = models.ForeignKey(
+        Batch, on_delete=models.CASCADE, null=True, blank=True,
+        help_text='Deprecated: use batches. Kept for older rows.',
+    )
+    batches = models.ManyToManyField(Batch, related_name='faculty_doubt_requests', blank=True)
+    date = models.DateField()
+    start_time = models.TimeField()
+    end_time = models.TimeField()
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default=STATUS_PENDING)
+    created_at = models.DateTimeField(auto_now_add=True)
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+    reviewed_by = models.ForeignKey(
+        User, on_delete=models.SET_NULL, null=True, blank=True, related_name='doubt_requests_reviewed'
+    )
+    review_notes = models.CharField(max_length=500, blank=True)
+
+    class Meta:
+        ordering = ['-date', '-start_time', '-pk']
+        verbose_name = 'Doubt solving request'
+        verbose_name_plural = 'Doubt solving requests'
+
+    def duration_minutes(self):
+        from datetime import datetime, timedelta
+        d = self.date
+        a = datetime.combine(d, self.start_time)
+        b = datetime.combine(d, self.end_time)
+        if b <= a:
+            b += timedelta(days=1)
+        return (b - a).total_seconds() / 60.0
+
+    def nominal_ds_hours(self):
+        """Effective DS hours: 1 clock hour = 0.5 effective h (e.g. 60 min clock → 0.5 h)."""
+        return self.duration_minutes() / 120.0
+
+    def duration_hours(self):
+        """Rounded effective DS hours for display (use nominal_ds_hours() in sums)."""
+        return round(self.nominal_ds_hours(), 2)
+
+    def batches_label(self):
+        names = sorted(self.batches.values_list('name', flat=True))
+        if names:
+            return ', '.join(names)
+        if self.batch_id:
+            return self.batch.name
+        return '—'
+
+    def __str__(self):
+        return f"{self.faculty.short_name} {self.date} ({self.status})"
+
+
+class FacultyDoubtRequestStudent(models.Model):
+    request = models.ForeignKey(
+        FacultyDoubtRequest, on_delete=models.CASCADE, related_name='student_lines'
+    )
+    student = models.ForeignKey(Student, on_delete=models.CASCADE)
+
+    class Meta:
+        unique_together = ('request', 'student')
+        ordering = ['student__roll_no']
+        verbose_name = 'Doubt request student'
+        verbose_name_plural = 'Doubt request students'
+
+
+class ExamPhase(models.Model):
+    """Exam phase (T1, T2, T3, SEE) per department."""
+    department = models.ForeignKey(Department, on_delete=models.CASCADE)
+    name = models.CharField(max_length=50)  # T1, T2, T3, SEE
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['department', 'name']
+        unique_together = ('department', 'name')
+        verbose_name = 'Exam phase'
+        verbose_name_plural = 'Exam phases'
+
+    def __str__(self):
+        return f"{self.name} ({self.department.name})"
+
+
+class ExamPhaseSubject(models.Model):
+    """Subjects included in an exam phase."""
+    exam_phase = models.ForeignKey(ExamPhase, on_delete=models.CASCADE)
+    subject = models.ForeignKey(Subject, on_delete=models.CASCADE)
+
+    class Meta:
+        ordering = ['exam_phase', 'subject']
+        unique_together = ('exam_phase', 'subject')
+        verbose_name = 'Exam phase subject'
+        verbose_name_plural = 'Exam phase subjects'
+
+    def __str__(self):
+        return f"{self.exam_phase.name} — {self.subject.name}"
+
+
+class StudentMark(models.Model):
+    """Marks for a student in a phase for a subject."""
+    student = models.ForeignKey(Student, on_delete=models.CASCADE)
+    exam_phase = models.ForeignKey(ExamPhase, on_delete=models.CASCADE)
+    subject = models.ForeignKey(Subject, on_delete=models.CASCADE)
+    marks_obtained = models.DecimalField(max_digits=6, decimal_places=2, null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['exam_phase', 'subject', 'student']
+        unique_together = ('student', 'exam_phase', 'subject')
+        verbose_name = 'Student mark'
+        verbose_name_plural = 'Student marks'
+
+    def __str__(self):
+        return f"{self.student.roll_no} {self.exam_phase.name} {self.subject.name}: {self.marks_obtained}"

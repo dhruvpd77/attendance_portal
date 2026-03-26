@@ -23,7 +23,7 @@
             <thead>
                 <tr>
                     <th>Name</th>
-                    <th>Code</th>
+                    <th>Semester</th>
                     <th class="text-end">Actions</th>
                 </tr>
             </thead>
@@ -31,7 +31,7 @@
                 {% for d in departments %}
                 <tr>
                     <td class="fw-medium">{{ d.name }}</td>
-                    <td class="text-secondary">{{ d.code|default:"—" }}</td>
+                    <td class="text-secondary">{{ d.semester|default:"—" }}</td>
                     <td class="text-end">
                         {% if is_super_admin or d == department %}
                         <a href="{% url 'core:department_edit' d.pk %}" class="btn btn-sm btn-outline-primary btn-edit-sm me-1">Edit</a>

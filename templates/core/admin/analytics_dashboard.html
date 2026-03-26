@@ -20,6 +20,10 @@
 .heat-map-cell.warn { background: #fef3c7; color: #92400e; }
 .heat-map-cell.low { background: #fee2e2; color: #991b1b; }
 .heat-map-cell.na { background: #f1f5f9; color: #64748b; }
+@media (max-width: 575.98px) {
+    .analytics-hero form .form-select { max-width: 100% !important; width: 100%; }
+    .heat-map-cell { min-width: 48px; font-size: 0.7rem; padding: 0.35rem !important; }
+}
 </style>
 {% endblock %}
 {% block content %}
@@ -105,7 +109,7 @@
                                 <td>{{ r.student.batch.name }}</td>
                                 <td>{{ r.held }}</td>
                                 <td>{{ r.attended }}</td>
-                                <td class="{% if r.pct < 50 %}pct-low{% else %}pct-warn{% endif %}">{{ r.pct }}%</td>
+                                <td class="{% if r.pct < 50 %}pct-low{% else %}pct-warn{% endif %}">{{ r.pct|floatformat:2 }}%</td>
                             </tr>
                             {% endfor %}
                         </tbody>
@@ -140,7 +144,7 @@
                         <td class="fw-medium">{{ row.day }}</td>
                         {% for s in row.slots %}
                         <td class="heat-map-cell {% if s.pct == None %}na{% elif s.pct >= 75 %}good{% elif s.pct >= 50 %}warn{% else %}low{% endif %}">
-                            {% if s.pct != None %}{{ s.pct }}%{% else %}—{% endif %}
+                            {% if s.pct != None %}{{ s.pct|floatformat:2 }}%{% else %}—{% endif %}
                         </td>
                         {% endfor %}
                     </tr>
@@ -160,6 +164,19 @@
     var subjectData = {{ subject_wise_json|safe }};
     var batchData = {{ batch_wise_json|safe }};
 
+    function tooltipLabelLineBar(ctx) {
+        var v = ctx.parsed && ctx.parsed.y !== undefined && ctx.parsed.y !== null ? ctx.parsed.y : null;
+        if (v === null || typeof v !== 'number' || isNaN(v)) return ctx.formattedValue;
+        var prefix = (ctx.dataset && ctx.dataset.label) ? (ctx.dataset.label + ': ') : '';
+        return prefix + v.toFixed(2) + '%';
+    }
+    function tooltipLabelDoughnut(ctx) {
+        var v = ctx.raw;
+        if (typeof v !== 'number' || isNaN(v)) return ctx.formattedValue;
+        var name = ctx.label || '';
+        return (name ? name + ': ' : '') + v.toFixed(2) + '%';
+    }
+
     if (weeklyData && weeklyData.length) {
         new Chart(document.getElementById('chartWeekly'), {
             type: 'line',
@@ -176,7 +193,11 @@
             },
             options: {
                 responsive: true,
-                plugins: { legend: { display: false } },
+                maintainAspectRatio: true,
+                plugins: {
+                    legend: { display: false },
+                    tooltip: { callbacks: { label: tooltipLabelLineBar } }
+                },
                 scales: {
                     y: { min: 0, max: 100 }
                 }
@@ -195,7 +216,11 @@
             },
             options: {
                 responsive: true,
-                plugins: { legend: { position: 'right' } }
+                maintainAspectRatio: true,
+                plugins: {
+                    legend: { position: 'right' },
+                    tooltip: { callbacks: { label: tooltipLabelDoughnut } }
+                }
             }
         });
     }
@@ -214,7 +239,11 @@
             },
             options: {
                 responsive: true,
-                plugins: { legend: { display: false } },
+                maintainAspectRatio: true,
+                plugins: {
+                    legend: { display: false },
+                    tooltip: { callbacks: { label: tooltipLabelLineBar } }
+                },
                 scales: {
                     y: { min: 0, max: 100 }
                 }
