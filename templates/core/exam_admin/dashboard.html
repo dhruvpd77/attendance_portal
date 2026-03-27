@@ -1,0 +1,610 @@
+{% extends 'base.html' %}
+{% load static %}
+{% block title %}Exam Analytics Hub - Marks{% endblock %}
+{% block extra_head %}
+{{ block.super }}
+<style>
+    /* Exam Analytics Hub — scoped layout */
+    .eah-page {
+        --eah-surface: #ffffff;
+        --eah-border: rgba(15, 23, 42, 0.08);
+        --eah-heading: #0f172a;
+        --eah-muted: #64748b;
+        --eah-accent: #2563eb;
+        --eah-accent-soft: rgba(37, 99, 235, 0.1);
+        --eah-danger-soft: rgba(220, 38, 38, 0.08);
+        --eah-success-soft: rgba(22, 163, 74, 0.1);
+        --eah-radius: 16px;
+        --eah-radius-sm: 12px;
+        --eah-shadow: 0 1px 3px rgba(15, 23, 42, 0.06), 0 8px 24px rgba(15, 23, 42, 0.06);
+        --eah-shadow-hover: 0 4px 12px rgba(15, 23, 42, 0.08), 0 16px 40px rgba(37, 99, 235, 0.12);
+    }
+
+    .eah-hero {
+        position: relative;
+        overflow: hidden;
+        border-radius: var(--eah-radius);
+        padding: clamp(1.25rem, 3vw, 1.75rem) clamp(1.25rem, 3vw, 2rem);
+        margin-bottom: clamp(1.25rem, 3vw, 1.75rem);
+        background: linear-gradient(135deg, #0f172a 0%, #1e3a5f 42%, #312e81 100%);
+        color: #fff;
+        box-shadow: var(--eah-shadow);
+    }
+    .eah-hero::after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background: radial-gradient(ellipse 80% 60% at 100% 0%, rgba(96, 165, 250, 0.22), transparent 55%);
+        pointer-events: none;
+    }
+    .eah-hero-inner {
+        position: relative;
+        z-index: 1;
+        display: flex;
+        flex-direction: column;
+        gap: 1rem;
+    }
+    @media (min-width: 768px) {
+        .eah-hero-inner {
+            flex-direction: row;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 1.5rem;
+        }
+    }
+    .eah-hero-title {
+        font-size: clamp(1.35rem, 2.5vw, 1.75rem);
+        font-weight: 700;
+        letter-spacing: -0.02em;
+        margin: 0 0 0.35rem 0;
+        color: #fff !important;
+        display: flex;
+        align-items: center;
+        gap: 0.65rem;
+        flex-wrap: wrap;
+    }
+    .eah-hero-title i {
+        width: 2.5rem;
+        height: 2.5rem;
+        border-radius: 12px;
+        background: rgba(255, 255, 255, 0.12);
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 1.15rem;
+        flex-shrink: 0;
+    }
+    .eah-hero-sub {
+        margin: 0;
+        font-size: clamp(0.875rem, 1.5vw, 0.95rem);
+        line-height: 1.55;
+        color: #c7d2fe !important;
+        max-width: 52rem;
+    }
+    .eah-hero-cta {
+        flex-shrink: 0;
+        align-self: stretch;
+    }
+    @media (min-width: 768px) {
+        .eah-hero-cta { align-self: center; }
+    }
+    .eah-hero-cta .btn {
+        width: 100%;
+        border-radius: 12px;
+        font-weight: 600;
+        padding: 0.55rem 1.1rem;
+        border: 1px solid rgba(255, 255, 255, 0.35);
+        transition: background 0.2s ease, border-color 0.2s ease, transform 0.15s ease;
+    }
+    @media (min-width: 768px) {
+        .eah-hero-cta .btn { width: auto; }
+    }
+    .eah-hero-cta .btn:hover {
+        background: rgba(255, 255, 255, 0.12);
+        border-color: rgba(255, 255, 255, 0.55);
+        transform: translateY(-1px);
+    }
+
+    .eah-panel {
+        background: var(--eah-surface);
+        border-radius: var(--eah-radius);
+        border: 1px solid var(--eah-border);
+        box-shadow: var(--eah-shadow);
+        margin-bottom: clamp(1.25rem, 3vw, 1.5rem);
+        overflow: hidden;
+    }
+    .eah-panel__head {
+        display: flex;
+        align-items: center;
+        gap: 0.65rem;
+        padding: 0.95rem 1.25rem;
+        background: linear-gradient(90deg, #1e293b 0%, #334155 100%);
+        color: #fff !important;
+        font-weight: 600;
+        font-size: 0.95rem;
+        border: none;
+    }
+    .eah-panel__head i {
+        width: 2rem;
+        height: 2rem;
+        border-radius: 8px;
+        background: rgba(255, 255, 255, 0.12);
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 0.9rem;
+        flex-shrink: 0;
+    }
+    .eah-panel__body {
+        padding: clamp(1rem, 3vw, 1.5rem);
+    }
+
+    .eah-stat-grid {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: clamp(0.75rem, 2vw, 1rem);
+        margin-bottom: clamp(1.25rem, 3vw, 1.75rem);
+    }
+    @media (min-width: 576px) {
+        .eah-stat-grid { grid-template-columns: repeat(2, 1fr); }
+    }
+    @media (min-width: 992px) {
+        .eah-stat-grid { grid-template-columns: repeat(3, 1fr); }
+    }
+    .eah-stat {
+        background: var(--eah-surface);
+        border-radius: var(--eah-radius-sm);
+        border: 1px solid var(--eah-border);
+        padding: 1rem 1.15rem;
+        box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+        display: flex;
+        gap: 1rem;
+        align-items: flex-start;
+        min-height: 100%;
+        transition: box-shadow 0.2s ease, border-color 0.2s ease;
+    }
+    .eah-stat:hover {
+        box-shadow: var(--eah-shadow);
+        border-color: rgba(37, 99, 235, 0.18);
+    }
+    .eah-stat__icon {
+        width: 2.75rem;
+        height: 2.75rem;
+        border-radius: 12px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 1.1rem;
+        flex-shrink: 0;
+        background: var(--eah-accent-soft);
+        color: var(--eah-accent);
+    }
+    .eah-stat--risk .eah-stat__icon {
+        background: var(--eah-danger-soft);
+        color: #dc2626;
+    }
+    .eah-stat--phases .eah-stat__icon {
+        background: rgba(139, 92, 246, 0.12);
+        color: #7c3aed;
+    }
+    .eah-stat__label {
+        font-size: 0.8rem;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        color: var(--eah-muted);
+        font-weight: 600;
+        margin-bottom: 0.25rem;
+    }
+    .eah-stat__value {
+        font-size: clamp(1.35rem, 3vw, 1.65rem);
+        font-weight: 700;
+        color: var(--eah-heading);
+        line-height: 1.2;
+    }
+    .eah-stat--risk .eah-stat__value { color: #dc2626; }
+    .eah-stat__text {
+        font-size: 0.9rem;
+        font-weight: 600;
+        color: var(--eah-heading);
+        line-height: 1.45;
+        word-break: break-word;
+    }
+
+    .eah-dept-grid {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 0.5rem 0.75rem;
+    }
+    @media (min-width: 400px) {
+        .eah-dept-grid { grid-template-columns: repeat(2, 1fr); }
+    }
+    @media (min-width: 768px) {
+        .eah-dept-grid { grid-template-columns: repeat(3, 1fr); }
+    }
+    @media (min-width: 1200px) {
+        .eah-dept-grid { grid-template-columns: repeat(4, 1fr); }
+    }
+    .eah-check {
+        display: flex;
+        align-items: center;
+        gap: 0.6rem;
+        padding: 0.55rem 0.75rem;
+        border-radius: 10px;
+        border: 1px solid var(--eah-border);
+        background: #f8fafc;
+        margin: 0;
+        cursor: pointer;
+        transition: border-color 0.15s ease, background 0.15s ease;
+        font-size: 0.875rem;
+        font-weight: 500;
+        color: var(--eah-heading);
+        min-height: 44px;
+    }
+    .eah-check:hover { background: #f1f5f9; border-color: rgba(37, 99, 235, 0.25); }
+    .eah-check input { margin-top: 0; flex-shrink: 0; }
+
+    .eah-export-grid {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 0.85rem;
+    }
+    @media (min-width: 576px) {
+        .eah-export-grid { grid-template-columns: repeat(2, 1fr); }
+    }
+    @media (min-width: 1200px) {
+        .eah-export-grid { grid-template-columns: repeat(3, 1fr); }
+    }
+    .eah-export-card {
+        display: flex;
+        flex-direction: column;
+        align-items: flex-start;
+        text-align: left;
+        height: 100%;
+        padding: 1rem 1.1rem;
+        border-radius: var(--eah-radius-sm);
+        border: 1px solid var(--eah-border);
+        background: #fafbfc;
+        text-decoration: none !important;
+        color: var(--eah-heading) !important;
+        transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.15s ease, background 0.2s ease;
+        min-height: 44px;
+    }
+    .eah-export-card:hover {
+        border-color: rgba(37, 99, 235, 0.35);
+        box-shadow: var(--eah-shadow-hover);
+        transform: translateY(-2px);
+        background: #fff;
+    }
+    .eah-export-card__icon {
+        width: 2.25rem;
+        height: 2.25rem;
+        border-radius: 9px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        margin-bottom: 0.65rem;
+        font-size: 0.95rem;
+        background: var(--eah-accent-soft);
+        color: var(--eah-accent);
+    }
+    .eah-export-card--risk .eah-export-card__icon {
+        background: var(--eah-danger-soft);
+        color: #dc2626;
+    }
+    .eah-export-card--risk { border-color: rgba(220, 38, 38, 0.25); }
+    .eah-export-card--risk:hover { border-color: rgba(220, 38, 38, 0.45); }
+    .eah-export-card--success .eah-export-card__icon {
+        background: var(--eah-success-soft);
+        color: #16a34a;
+    }
+    .eah-export-card--neutral .eah-export-card__icon {
+        background: rgba(100, 116, 139, 0.15);
+        color: #475569;
+    }
+    .eah-export-card__title {
+        font-weight: 700;
+        font-size: 0.925rem;
+        margin-bottom: 0.35rem;
+        line-height: 1.35;
+    }
+    .eah-export-card__desc {
+        font-size: 0.8rem;
+        color: var(--eah-muted);
+        line-height: 1.45;
+        font-weight: 400;
+    }
+
+    .eah-table-wrap {
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+        margin: 0 calc(-1 * clamp(1rem, 3vw, 1.5rem));
+        padding: 0 clamp(1rem, 3vw, 1.5rem);
+    }
+    .eah-table-wrap .table {
+        font-size: 0.875rem;
+        margin-bottom: 0;
+    }
+    .eah-table-wrap .table thead th {
+        white-space: nowrap;
+        background: #f8fafc;
+        font-weight: 600;
+        font-size: 0.78rem;
+        text-transform: uppercase;
+        letter-spacing: 0.03em;
+        color: var(--eah-muted);
+        border-bottom-width: 1px;
+    }
+    .eah-table-wrap .table tbody tr:hover { background: rgba(37, 99, 235, 0.04); }
+
+    .eah-split-grid {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: clamp(1rem, 3vw, 1.5rem);
+        align-items: start;
+    }
+    @media (min-width: 992px) {
+        .eah-split-grid { grid-template-columns: repeat(2, 1fr); }
+    }
+
+    .eah-scroll-block {
+        max-height: min(420px, 55vh);
+        overflow-y: auto;
+        -webkit-overflow-scrolling: touch;
+        padding-right: 0.25rem;
+    }
+    .eah-dept-block {
+        padding-bottom: 1rem;
+        margin-bottom: 1rem;
+        border-bottom: 1px solid var(--eah-border);
+    }
+    .eah-dept-block:last-child {
+        border-bottom: none;
+        margin-bottom: 0;
+        padding-bottom: 0;
+    }
+    .eah-dept-block h4 {
+        font-size: 0.9rem;
+        font-weight: 700;
+        color: var(--eah-accent);
+        margin-bottom: 0.5rem;
+    }
+
+    .eah-phase-block {
+        margin-bottom: 1.25rem;
+    }
+    .eah-phase-block:last-child { margin-bottom: 0; }
+    .eah-phase-block h5 {
+        font-size: 0.95rem;
+        font-weight: 700;
+        color: var(--eah-heading);
+        margin: 0 0 0.65rem 0;
+        padding-bottom: 0.35rem;
+        border-bottom: 2px solid var(--eah-accent-soft);
+    }
+
+    .eah-empty {
+        color: var(--eah-muted);
+        font-size: 0.9rem;
+        margin: 0;
+        padding: 0.5rem 0;
+    }
+</style>
+{% endblock %}
+{% block content %}
+<div class="eah-page">
+    <header class="eah-hero">
+        <div class="eah-hero-inner">
+            <div>
+                <h1 class="eah-hero-title">
+                    <i class="fas fa-shield-halved" aria-hidden="true"></i>
+                    <span>Exam Analytics Hub</span>
+                </h1>
+                <p class="eah-hero-sub">Read-only access to marks uploaded per department (exam phases). Filter departments below; open Excel downloads — cells &lt; 9 are shaded red in exports.</p>
+            </div>
+            <div class="eah-hero-cta d-flex flex-wrap gap-2 justify-content-stretch justify-content-md-end">
+                <a href="{% url 'core:exam_admin_exam_phases_list' %}" class="btn btn-outline-light">
+                    <i class="fas fa-file-upload me-2"></i>Phases &amp; uploads
+                </a>
+                <a href="{% url 'core:exam_admin_mark_analytics' %}?{% if excel_query %}{{ excel_query }}&{% endif %}" class="btn btn-outline-light">
+                    <i class="fas fa-table me-2"></i>Full mark table
+                </a>
+            </div>
+        </div>
+    </header>
+
+    <section class="eah-panel" aria-labelledby="eah-scope-heading">
+        <div class="eah-panel__head" id="eah-scope-heading">
+            <i class="fas fa-building" aria-hidden="true"></i>
+            <span>Departments in scope</span>
+        </div>
+        <div class="eah-panel__body">
+            <form method="get" action="{% url 'core:exam_admin_dashboard' %}" class="mb-0">
+                <p class="small text-secondary mb-3 mb-md-4">Leave all checked (or submit with no selection) to include <strong>every</strong> department. Uncheck to narrow analytics and Excel exports.</p>
+                <div class="eah-dept-grid mb-3 mb-md-4">
+                    {% for d in all_departments %}
+                    <label class="eah-check">
+                        <input type="checkbox" name="dept_ids" value="{{ d.id }}" class="form-check-input flex-shrink-0" {% if d.id in selected_dept_ids %}checked{% endif %}>
+                        <span>{{ d.name }}</span>
+                    </label>
+                    {% empty %}
+                    <p class="eah-empty mb-0 col-12">No departments in database.</p>
+                    {% endfor %}
+                </div>
+                <button type="submit" class="btn btn-primary-app px-4 py-2 rounded-3">
+                    <i class="fas fa-check me-2"></i>Apply scope
+                </button>
+            </form>
+        </div>
+    </section>
+
+    <section class="eah-stat-grid" aria-label="Summary statistics">
+        <article class="eah-stat">
+            <div class="eah-stat__icon" aria-hidden="true"><i class="fas fa-user-graduate"></i></div>
+            <div>
+                <div class="eah-stat__label">Students in scope</div>
+                <div class="eah-stat__value">{{ student_rows_count }}</div>
+                <div class="small text-muted mt-1">With mark records</div>
+            </div>
+        </article>
+        <article class="eah-stat eah-stat--risk">
+            <div class="eah-stat__icon" aria-hidden="true"><i class="fas fa-triangle-exclamation"></i></div>
+            <div>
+                <div class="eah-stat__label">At-risk</div>
+                <div class="eah-stat__value">{{ risk_count }}</div>
+                <div class="small text-muted mt-1">Mark cells &lt; 9</div>
+            </div>
+        </article>
+        <article class="eah-stat eah-stat--phases">
+            <div class="eah-stat__icon" aria-hidden="true"><i class="fas fa-layer-group"></i></div>
+            <div>
+                <div class="eah-stat__label">Phase names</div>
+                <div class="eah-stat__text">{% for p in phase_names %}{{ p }}{% if not forloop.last %}, {% endif %}{% empty %}—{% endfor %}</div>
+                <div class="small text-muted mt-1">Union across scope</div>
+            </div>
+        </article>
+    </section>
+
+    <section class="eah-panel" aria-labelledby="eah-excel-heading">
+        <div class="eah-panel__head" id="eah-excel-heading">
+            <i class="fas fa-file-excel" aria-hidden="true"></i>
+            <span>Excel exports (current scope)</span>
+        </div>
+        <div class="eah-panel__body pt-3 pb-3">
+            {% if excel_query %}
+            <div class="eah-export-grid">
+                <a class="eah-export-card" href="{% url 'core:exam_admin_excel_compiled_dept' %}?{{ excel_query }}">
+                    <span class="eah-export-card__icon"><i class="fas fa-file-excel"></i></span>
+                    <span class="eah-export-card__title">SY streams + Combined</span>
+                    <span class="eah-export-card__desc"><strong>SY_1</strong> sheet = all SY_1 batches together; <strong>SY_2</strong>, SY_3, SY_4… same; last tab <strong>Combined</strong> = full college; red &lt;9</span>
+                </a>
+                <a class="eah-export-card" href="{% url 'core:exam_admin_excel_compiled_all' %}?{{ excel_query }}">
+                    <span class="eah-export-card__icon"><i class="fas fa-file-excel"></i></span>
+                    <span class="eah-export-card__title">All departments — long</span>
+                    <span class="eah-export-card__desc">Dept, phase, subject, marks (desc)</span>
+                </a>
+                <a class="eah-export-card" href="{% url 'core:exam_admin_excel_subject_by_dept' %}?{{ excel_query }}">
+                    <span class="eah-export-card__icon"><i class="fas fa-file-excel"></i></span>
+                    <span class="eah-export-card__title">Subject-wise per department</span>
+                    <span class="eah-export-card__desc">Sheet per dept+subject; ranks by marks</span>
+                </a>
+                <a class="eah-export-card" href="{% url 'core:exam_admin_excel_subject_all' %}?{{ excel_query }}">
+                    <span class="eah-export-card__icon"><i class="fas fa-file-excel"></i></span>
+                    <span class="eah-export-card__title">Subject-wise all departments</span>
+                    <span class="eah-export-card__desc">One sheet per subject name</span>
+                </a>
+                <a class="eah-export-card" href="{% url 'core:exam_admin_excel_phase_compile' %}?{{ excel_query }}">
+                    <span class="eah-export-card__icon"><i class="fas fa-file-excel"></i></span>
+                    <span class="eah-export-card__title">Phase-wise compile</span>
+                    <span class="eah-export-card__desc">One sheet per phase; marks descending</span>
+                </a>
+                <a class="eah-export-card eah-export-card--risk" href="{% url 'core:exam_admin_excel_risk' %}?{{ excel_query }}">
+                    <span class="eah-export-card__icon"><i class="fas fa-file-excel"></i></span>
+                    <span class="eah-export-card__title">At-risk only (&lt;9)</span>
+                    <span class="eah-export-card__desc">Students below threshold, all subjects in scope</span>
+                </a>
+                <a class="eah-export-card eah-export-card--success" href="{% url 'core:exam_admin_excel_top10' %}?{{ excel_query }}">
+                    <span class="eah-export-card__icon"><i class="fas fa-file-excel"></i></span>
+                    <span class="eah-export-card__title">Top 10 — all phases</span>
+                    <span class="eah-export-card__desc">Per department + overall</span>
+                </a>
+                {% for p in phase_names %}
+                <a class="eah-export-card eah-export-card--neutral" href="{% url 'core:exam_admin_excel_top10' %}?{{ excel_query }}&phase={{ p|urlencode }}">
+                    <span class="eah-export-card__icon"><i class="fas fa-trophy"></i></span>
+                    <span class="eah-export-card__title">Top 10 — phase {{ p }}</span>
+                    <span class="eah-export-card__desc">Leaderboard for this phase only</span>
+                </a>
+                {% endfor %}
+            </div>
+            {% else %}
+            <p class="eah-empty mb-0">Select at least one department.</p>
+            {% endif %}
+        </div>
+    </section>
+
+    <div class="eah-split-grid">
+        <section class="eah-panel mb-0" aria-labelledby="eah-top-all-heading">
+            <div class="eah-panel__head" id="eah-top-all-heading">
+                <i class="fas fa-ranking-star" aria-hidden="true"></i>
+                <span>Top 10 by average (all phases)</span>
+            </div>
+            <div class="eah-panel__body p-0">
+                <div class="eah-table-wrap pb-3 pt-1">
+                    <table class="table table-sm align-middle">
+                        <thead><tr><th>#</th><th>Dept</th><th>Roll No</th><th>Name</th><th>Enrollment</th><th>Avg</th></tr></thead>
+                        <tbody>
+                            {% for avg, item in top_all %}
+                            <tr>
+                                <td>{{ forloop.counter }}</td>
+                                <td>{{ item.department.name }}</td>
+                                <td>{{ item.student.roll_no }}</td>
+                                <td>{{ item.student.name }}</td>
+                                <td>{{ item.student.enrollment_no|default:"—" }}</td>
+                                <td class="fw-semibold">{{ avg|floatformat:2 }}</td>
+                            </tr>
+                            {% empty %}
+                            <tr><td colspan="6" class="text-muted p-3">No marks in scope.</td></tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </section>
+
+        <section class="eah-panel mb-0" aria-labelledby="eah-top-dept-heading">
+            <div class="eah-panel__head" id="eah-top-dept-heading">
+                <i class="fas fa-sitemap" aria-hidden="true"></i>
+                <span>Top 10 per department</span>
+            </div>
+            <div class="eah-panel__body">
+                <div class="eah-scroll-block">
+                    {% for dname, pairs in top_per_dept.items %}
+                    <div class="eah-dept-block">
+                        <h4>{{ dname }}</h4>
+                        <div class="table-responsive">
+                            <table class="table table-sm mb-0 align-middle">
+                                <thead><tr><th>#</th><th>Roll No</th><th>Avg</th></tr></thead>
+                                <tbody>
+                                    {% for avg, item in pairs %}
+                                    <tr><td>{{ forloop.counter }}</td><td>{{ item.student.roll_no }}</td><td>{{ avg|floatformat:2 }}</td></tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                    {% empty %}
+                    <p class="eah-empty mb-0">No data.</p>
+                    {% endfor %}
+                </div>
+            </div>
+        </section>
+    </div>
+
+    {% if top_by_phase %}
+    <section class="eah-panel mt-4" aria-labelledby="eah-phase-top-heading">
+        <div class="eah-panel__head" id="eah-phase-top-heading">
+            <i class="fas fa-chart-line" aria-hidden="true"></i>
+            <span>Phase-wise top 10 (overall)</span>
+        </div>
+        <div class="eah-panel__body">
+            {% for pn, tdata in top_by_phase.items %}
+            <div class="eah-phase-block">
+                <h5>{{ pn }}</h5>
+                <div class="eah-table-wrap pb-2">
+                    <table class="table table-sm table-bordered mb-0 align-middle">
+                        <thead><tr><th>Rank</th><th>Dept</th><th>Roll No</th><th>Name</th><th>Enrollment</th><th>Avg ({{ pn }} only)</th></tr></thead>
+                        <tbody>
+                            {% for avg, item in tdata.all %}
+                            <tr><td>{{ forloop.counter }}</td><td>{{ item.department.name }}</td><td>{{ item.student.roll_no }}</td><td>{{ item.student.name }}</td><td>{{ item.student.enrollment_no|default:"—" }}</td><td>{{ avg|floatformat:2 }}</td></tr>
+                            {% empty %}
+                            <tr><td colspan="6" class="text-muted">No marks.</td></tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    </section>
+    {% endif %}
+</div>
+{% endblock %}

@@ -224,19 +224,28 @@ class AttendanceNotificationLog(models.Model):
 
 
 class AttendanceLockSetting(models.Model):
-    """Global setting: after this time (IST) each day, faculty cannot edit attendance. Admin manual attendance is never locked."""
+    """Per department: after this time (IST) each day, faculty of this department cannot edit attendance. Manual attendance is not time-locked."""
+    department = models.OneToOneField(
+        Department,
+        on_delete=models.CASCADE,
+        related_name='attendance_lock_setting',
+    )
     lock_hour = models.PositiveSmallIntegerField(default=17)  # 0-23, default 5 PM
     lock_minute = models.PositiveSmallIntegerField(default=0)  # 0-59
     enabled = models.BooleanField(default=False)
 
     class Meta:
         verbose_name = 'Attendance lock time'
-        verbose_name_plural = 'Attendance lock time'
+        verbose_name_plural = 'Attendance lock times'
 
     def __str__(self):
+        try:
+            tag = self.department.name
+        except Exception:
+            tag = '—'
         if not self.enabled:
-            return 'Lock disabled'
-        return f'{self.lock_hour:02d}:{self.lock_minute:02d} IST (locked after this time each day)'
+            return f'{tag}: lock disabled'
+        return f'{tag}: {self.lock_hour:02d}:{self.lock_minute:02d} IST'
 
 
 class HODWeekLock(models.Model):
@@ -425,6 +434,7 @@ class ExamPhase(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
+        # Logical display order (T1… then SEE) is applied in views/exports via core.exam_phase_order.
         ordering = ['department', 'name']
         unique_together = ('department', 'name')
         verbose_name = 'Exam phase'

@@ -1,21 +1,44 @@
-{% extends 'core/admin/base_admin.html' %}
+{% extends 'base.html' %}
 {% load static %}
-{% block title %}{{ phase.name }} — Result - LJIET_Attendance{% endblock %}
+{% block title %}{{ phase.name }} — {{ department.name }} — Exam Admin{% endblock %}
+{% block extra_head %}
+{{ block.super }}
+<style>
+.ea-hero {
+    background: linear-gradient(135deg, #0f172a 0%, #1e3a5f 50%, #312e81 100%);
+    border-radius: 16px;
+    padding: 1.25rem 1.5rem;
+    margin-bottom: 1.25rem;
+    color: #fff;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+}
+.ea-hero .page-title { color: #fff !important; font-size: 1.35rem; margin-bottom: 0.25rem !important; }
+.ea-hero .page-subtitle { color: #c7d2fe !important; font-size: 0.875rem; margin: 0; max-width: 40rem; }
+.ea-badge-dept { background: rgba(255,255,255,0.15); border-radius: 8px; padding: 0.2rem 0.55rem; font-size: 0.8rem; font-weight: 600; }
+.ea-card { border: none; border-radius: 14px; box-shadow: 0 4px 20px rgba(0,0,0,0.08); margin-bottom: 1.25rem; overflow: hidden; border-left: 5px solid #6366f1; }
+.ea-card .card-header { background: linear-gradient(90deg, #1e293b 0%, #3730a3 100%); color: #fff !important; font-weight: 600; padding: 0.85rem 1.15rem; border: none; }
+</style>
+{% endblock %}
 {% block content %}
-<div class="admin-hero">
-    <div class="d-flex align-items-center gap-3">
-        <img src="{% static 'images/ljiet-logo.png' %}" alt="LJIET" class="admin-logo">
-        <div>
-            <h1 class="page-title mb-1">{{ phase.name }} — Subjects & marksheets</h1>
-            <p class="page-subtitle">Add subjects from your department. Upload Excel marksheet per subject. Format: ROLL NO, DIV, BRANCH, Enrollment No, NAME, Mentor, Marks. Maps by enrollment.</p>
-        </div>
+<div class="ea-hero">
+    <div>
+        <p class="mb-2"><span class="ea-badge-dept">{{ department.name }}</span></p>
+        <h1 class="page-title mb-1">{{ phase.name }} — Subjects &amp; marksheets</h1>
+        <p class="page-subtitle mb-0">Add subjects from this department. Upload Excel per subject. Enrollment column maps students. Same workflow as admin Result.</p>
     </div>
-    <a href="{% url 'core:exam_phases_list' %}" class="btn btn-outline-light btn-sm"><i class="fas fa-arrow-left me-1"></i> Back</a>
+    <div class="d-flex flex-wrap gap-2">
+        <a href="{% url 'core:exam_admin_exam_phases_list' %}" class="btn btn-outline-light btn-sm"><i class="fas fa-arrow-left me-1"></i> Phases</a>
+        <a href="{% url 'core:exam_admin_dashboard' %}" class="btn btn-outline-light btn-sm"><i class="fas fa-chart-line me-1"></i> Hub</a>
+    </div>
 </div>
 
-<div class="card admin-card mb-4">
+<div class="card ea-card mb-4">
     <div class="card-header"><i class="fas fa-book me-2"></i>Add subject to phase</div>
-    <div class="card-body">
+    <div class="card-body p-4">
         {% if available_to_add %}
         <form method="post" class="d-inline me-2 mb-2">
             {% csrf_token %}
@@ -39,12 +62,12 @@
         {% elif dept_subjects %}
         <p class="text-secondary mb-0">All department subjects are already in this phase.</p>
         {% else %}
-        <p class="text-secondary mb-0">No subjects in department. Add subjects in Subjects section first.</p>
+        <p class="text-secondary mb-0">No subjects in this department.</p>
         {% endif %}
     </div>
 </div>
 
-<div class="card admin-card">
+<div class="card ea-card">
     <div class="card-header"><i class="fas fa-table me-2"></i>Subjects in {{ phase.name }}</div>
     <div class="card-body p-0">
         {% if phase_subjects %}
@@ -67,8 +90,9 @@
                                 <span class="badge rounded-pill bg-success px-3 py-2"><i class="fas fa-check-circle me-1"></i>Uploaded</span>
                                 <details class="text-start">
                                     <summary class="btn btn-sm btn-outline-secondary mb-0" style="cursor: pointer; list-style: none;">Replace marksheet…</summary>
-                                    <form method="post" action="{% url 'core:exam_phase_upload_marks' %}" enctype="multipart/form-data" class="mt-2 pt-2 border-top">
+                                    <form method="post" action="{% url 'core:exam_admin_exam_phase_upload_marks' %}" enctype="multipart/form-data" class="mt-2 pt-2 border-top">
                                         {% csrf_token %}
+                                        <input type="hidden" name="dept_id" value="{{ department.id }}">
                                         <input type="hidden" name="phase_id" value="{{ phase.id }}">
                                         <input type="hidden" name="subject_id" value="{{ s.id }}">
                                         <input type="file" name="marksheet_file" accept=".xlsx,.xls" class="form-control form-control-sm d-inline-block" style="max-width: 220px;" required>
@@ -77,8 +101,9 @@
                                 </details>
                             </div>
                             {% else %}
-                            <form method="post" action="{% url 'core:exam_phase_upload_marks' %}" enctype="multipart/form-data" class="d-inline">
+                            <form method="post" action="{% url 'core:exam_admin_exam_phase_upload_marks' %}" enctype="multipart/form-data" class="d-inline">
                                 {% csrf_token %}
+                                <input type="hidden" name="dept_id" value="{{ department.id }}">
                                 <input type="hidden" name="phase_id" value="{{ phase.id }}">
                                 <input type="hidden" name="subject_id" value="{{ s.id }}">
                                 <input type="file" name="marksheet_file" accept=".xlsx,.xls" class="form-control form-control-sm d-inline-block" style="max-width: 200px;" required>
@@ -105,13 +130,13 @@
     </div>
 </div>
 
-<div class="card admin-card mt-4">
-    <div class="card-header"><i class="fas fa-list-alt me-2"></i>View uploaded marks — filter by subject & batch</div>
-    <div class="card-body">
+<div class="card ea-card mt-4">
+    <div class="card-header"><i class="fas fa-list-alt me-2"></i>View uploaded marks — filter by subject &amp; batch</div>
+    <div class="card-body p-4">
         {% if phase_subjects %}
-        <form method="get" class="row g-3 mb-4">
-            <div class="col-auto">
-                <label class="form-label mb-0">Subject</label>
+        <form method="get" action="{% url 'core:exam_admin_exam_phase_detail' phase.id %}" class="row g-3 mb-4">
+            <div class="col-12 col-sm-auto">
+                <label class="form-label mb-0 small">Subject</label>
                 <select name="subject_id" class="form-select form-select-app form-select-sm" onchange="this.form.submit()" style="min-width: 140px;">
                     <option value="">-- Select subject --</option>
                     {% for s in phase_subjects %}
@@ -119,8 +144,8 @@
                     {% endfor %}
                 </select>
             </div>
-            <div class="col-auto">
-                <label class="form-label mb-0">Batch</label>
+            <div class="col-12 col-sm-auto">
+                <label class="form-label mb-0 small">Batch</label>
                 <select name="batch_id" class="form-select form-select-app form-select-sm" onchange="this.form.submit()" style="min-width: 120px;">
                     <option value="">All batches</option>
                     {% for b in batches %}
@@ -128,7 +153,7 @@
                     {% endfor %}
                 </select>
             </div>
-            <div class="col-auto align-self-end">
+            <div class="col-12 col-sm-auto align-self-end">
                 <button type="submit" class="btn btn-primary-app btn-sm"><i class="fas fa-filter me-1"></i> Show</button>
             </div>
         </form>
@@ -172,10 +197,10 @@
     </div>
 </div>
 
-<div class="card admin-card mt-4">
-    <div class="card-body">
-        <h6 class="fw-bold mb-2"><i class="fas fa-info-circle me-1"></i>Excel format (like pas mark.xlsx)</h6>
-        <p class="small text-secondary mb-0">Header row: <strong>ROLL NO., DIV, BRANCH, Enrolllment No:, NAME OF STUDENT, Mentor, Marks(25)</strong>. Data from row below. Enrollment column maps to department students. Marks column (e.g. G) stores the score.</p>
+<div class="card ea-card mt-4 mb-4">
+    <div class="card-body p-4">
+        <h6 class="fw-bold mb-2"><i class="fas fa-info-circle me-1"></i>Excel format</h6>
+        <p class="small text-secondary mb-0">Header row: <strong>ROLL NO., DIV, BRANCH, Enrolllment No:, NAME OF STUDENT, Mentor, Marks(25)</strong>. Data below. Enrollment maps to students in <strong>{{ department.name }}</strong>.</p>
     </div>
 </div>
 {% endblock %}

@@ -29,7 +29,7 @@ def sidebar_links(request):
     links = []
     empty = {'sidebar_links': links, 'is_super_admin': False, 'faculty_portal_flags': None}
     if not request.user.is_authenticated:
-        return empty
+        return {'sidebar_links': [], 'is_super_admin': False, 'faculty_portal_flags': None, 'is_exam_admin': False}
     is_super_admin = False
     try:
         from accounts.models import UserRole
@@ -115,7 +115,36 @@ def sidebar_links(request):
                 pi + 1,
                 _make_link(request, 'Management', 'core:admin_faculty_portal_management', 'fa-sliders-h', 'admin_faculty_portal_management'),
             )
-        return {'sidebar_links': links, 'is_super_admin': is_super_admin, 'faculty_portal_flags': None}
+        return {'sidebar_links': links, 'is_super_admin': is_super_admin, 'faculty_portal_flags': None, 'is_exam_admin': False}
+    if role == 'exam_admin':
+        links = [
+            _make_link(
+                request,
+                'Exam Analytics Hub',
+                'core:exam_admin_dashboard',
+                'fa-chart-line',
+                'exam_admin_dashboard',
+                active_name_extra=(
+                    'exam_admin_excel_compiled_dept',
+                    'exam_admin_excel_compiled_all',
+                    'exam_admin_excel_subject_by_dept',
+                    'exam_admin_excel_subject_all',
+                    'exam_admin_excel_phase_compile',
+                    'exam_admin_excel_risk',
+                    'exam_admin_excel_top10',
+                ),
+            ),
+            _make_link(
+                request,
+                'Exam phases & uploads',
+                'core:exam_admin_exam_phases_list',
+                'fa-file-upload',
+                'exam_admin_exam_phases_list',
+                active_name_extra=('exam_admin_exam_phase_detail',),
+            ),
+            _make_link(request, 'Mark analytics (table)', 'core:exam_admin_mark_analytics', 'fa-table', 'exam_admin_mark_analytics'),
+        ]
+        return {'sidebar_links': links, 'is_super_admin': False, 'faculty_portal_flags': None, 'is_exam_admin': True}
     if role == 'faculty':
         from core.views import get_faculty_user
         faculty = get_faculty_user(request)
@@ -143,11 +172,11 @@ def sidebar_links(request):
             links.append(_make_link(request, 'Marks Report', 'core:faculty_marks_report', 'fa-file-alt', 'faculty_marks_report'))
         if flags['show_student_marksheet']:
             links.append(_make_link(request, 'Student Marksheet', 'core:faculty_student_marksheet', 'fa-award', 'faculty_student_marksheet'))
-        return {'sidebar_links': links, 'is_super_admin': False, 'faculty_portal_flags': flags}
+        return {'sidebar_links': links, 'is_super_admin': False, 'faculty_portal_flags': flags, 'is_exam_admin': False}
     if role == 'student':
         links = [
             _make_link(request, 'Dashboard', 'core:student_dashboard', 'fa-tachometer-alt', 'student_dashboard'),
             _make_link(request, 'Attendance Analytics', 'core:student_attendance_analytics', 'fa-chart-line', 'student_attendance_analytics'),
         ]
-        return {'sidebar_links': links, 'is_super_admin': False, 'faculty_portal_flags': None}
-    return {'sidebar_links': links, 'is_super_admin': is_super_admin, 'faculty_portal_flags': None}
+        return {'sidebar_links': links, 'is_super_admin': False, 'faculty_portal_flags': None, 'is_exam_admin': False}
+    return {'sidebar_links': links, 'is_super_admin': is_super_admin, 'faculty_portal_flags': None, 'is_exam_admin': False}

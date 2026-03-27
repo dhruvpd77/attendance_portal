@@ -9,6 +9,7 @@ class UserRole(models.Model):
     ROLE_CHOICES = [
         ('admin', 'Admin'),
         ('hod', 'HOD'),
+        ('exam_admin', 'Exam Admin'),
         ('faculty', 'Faculty'),
         ('student', 'Student'),
     ]

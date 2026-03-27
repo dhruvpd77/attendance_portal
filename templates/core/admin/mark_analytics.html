@@ -365,7 +365,7 @@
                                                 {% for s in phase.subjects %}
                                                 <tr>
                                                     <td class="fw-medium">{{ s.name }}</td>
-                                                    <td class="text-end {% if s.is_low %}sa-marks-low{% endif %}">{{ s.marks|default:"—" }}</td>
+                                                    <td class="text-end {% if s.is_low %}sa-marks-low{% endif %}">{% if s.marks is not None %}{{ s.marks }}{% else %}—{% endif %}</td>
                                                 </tr>
                                                 {% empty %}
                                                 <tr><td colspan="2" class="text-muted">No marks uploaded</td></tr>
@@ -438,7 +438,7 @@
                                                 {% for s in phase.subjects %}
                                                 <tr>
                                                     <td class="fw-medium">{{ s.name }}</td>
-                                                    <td class="text-end {% if s.is_low %}sa-marks-low{% endif %}">{{ s.marks|default:"—" }}</td>
+                                                    <td class="text-end {% if s.is_low %}sa-marks-low{% endif %}">{% if s.marks is not None %}{{ s.marks }}{% else %}—{% endif %}</td>
                                                 </tr>
                                                 {% empty %}
                                                 <tr><td colspan="2" class="text-muted">No marks uploaded</td></tr>

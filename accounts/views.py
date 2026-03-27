@@ -41,6 +41,8 @@ def role_redirect(request):
         return redirect('accounts:login')
     if role_profile.role in ('admin', 'hod'):
         return redirect('core:admin_dashboard')
+    if role_profile.role == 'exam_admin':
+        return redirect('core:exam_admin_dashboard')
     if role_profile.role == 'faculty':
         return redirect('core:faculty_dashboard')
     if role_profile.role == 'student':

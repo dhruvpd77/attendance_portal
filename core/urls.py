@@ -98,6 +98,20 @@ urlpatterns = [
     path('admin/result/phase/<int:phase_id>/', views.exam_phase_detail, name='exam_phase_detail'),
     path('admin/result/upload-marks/', views.exam_phase_upload_marks, name='exam_phase_upload_marks'),
 
+    # Exam Admin (marks analytics only)
+    path('exam-admin/', views.exam_admin_dashboard, name='exam_admin_dashboard'),
+    path('exam-admin/result/', views.exam_admin_exam_phases_list, name='exam_admin_exam_phases_list'),
+    path('exam-admin/result/phase/<int:phase_id>/', views.exam_admin_exam_phase_detail, name='exam_admin_exam_phase_detail'),
+    path('exam-admin/result/upload-marks/', views.exam_admin_exam_phase_upload_marks, name='exam_admin_exam_phase_upload_marks'),
+    path('exam-admin/mark-analytics/', views.exam_admin_mark_analytics, name='exam_admin_mark_analytics'),
+    path('exam-admin/excel/compiled-dept/', views.exam_admin_excel_compiled_dept, name='exam_admin_excel_compiled_dept'),
+    path('exam-admin/excel/compiled-all/', views.exam_admin_excel_compiled_all, name='exam_admin_excel_compiled_all'),
+    path('exam-admin/excel/subject-by-dept/', views.exam_admin_excel_subject_by_dept, name='exam_admin_excel_subject_by_dept'),
+    path('exam-admin/excel/subject-all/', views.exam_admin_excel_subject_all, name='exam_admin_excel_subject_all'),
+    path('exam-admin/excel/phase-compile/', views.exam_admin_excel_phase_compile, name='exam_admin_excel_phase_compile'),
+    path('exam-admin/excel/risk/', views.exam_admin_excel_risk, name='exam_admin_excel_risk'),
+    path('exam-admin/excel/top10/', views.exam_admin_excel_top10, name='exam_admin_excel_top10'),
+
     # Faculty
     path('faculty-dashboard/', views.faculty_dashboard, name='faculty_dashboard'),
     path('faculty/attendance/', views.faculty_attendance_entry, name='faculty_attendance_entry'),

@@ -6,13 +6,38 @@
     <div class="d-flex align-items-center gap-3">
         <img src="{% static 'images/ljiet-logo.png' %}" alt="LJIET" class="admin-logo">
         <div>
-            <h1 class="page-title mb-1">Lock Attendance Time</h1>
-            <p class="page-subtitle">After this time each day (Indian Standard Time), faculty cannot edit or change attendance. Admin can still mark attendance via Manual Attendance.</p>
+            <h1 class="page-title mb-1">Lock Attendance Time{% if department %} <span class="badge bg-light text-dark ms-1">{{ department.name }}</span>{% endif %}</h1>
+            <p class="page-subtitle mb-0">{% if department %}Applies only to <strong>{{ department.name }}</strong>—other departments keep their own lock settings.{% else %}Super admin: select which department’s lock time you are editing (one department at a time).{% endif %} After the lock time each day (IST), faculty in that department cannot edit portal attendance; Manual Attendance still works.</p>
         </div>
     </div>
     <a href="{% url 'core:admin_dashboard' %}" class="btn btn-outline-light btn-sm"><i class="fas fa-arrow-left me-1"></i> Dashboard</a>
 </div>
 
+{% if is_super_admin %}
+<div class="card admin-card mb-4">
+    <div class="card-header">Department (super admin)</div>
+    <div class="card-body p-4">
+        <p class="small text-secondary mb-3">Lock times are stored per department. Saving the form below updates <strong>only</strong> the department shown in the badge.</p>
+        <form method="post" class="d-flex flex-wrap align-items-end gap-3">
+            {% csrf_token %}
+            <input type="hidden" name="set_lock_department" value="1">
+            <div>
+                <label class="form-label mb-1">Edit lock for</label>
+                <select name="department_id" class="form-select form-select-app" style="min-width: 260px;">
+                    {% for d in all_departments %}
+                    <option value="{{ d.id }}" {% if department and department.id == d.id %}selected{% endif %}>{{ d.name }}</option>
+                    {% empty %}
+                    <option value="">No departments</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <button type="submit" class="btn btn-primary-app"><i class="fas fa-check me-1"></i> Use this department</button>
+        </form>
+    </div>
+</div>
+{% endif %}
+
+{% if department %}
 <form method="post" class="card admin-card">
     <div class="card-body p-4">
         {% csrf_token %}
@@ -22,7 +47,7 @@
                     <input class="form-check-input" type="checkbox" name="enabled" id="id_enabled" {% if lock_setting.enabled %}checked{% endif %}>
                     <label class="form-check-label fw-semibold" for="id_enabled">Enable lock</label>
                 </div>
-                <p class="small text-secondary mb-3">When enabled, faculty cannot edit attendance after the lock time each day. All times are in Indian Standard Time (IST).</p>
+                <p class="small text-secondary mb-3">When enabled, faculty in this department cannot edit attendance after the lock time each day. All times are in Indian Standard Time (IST).</p>
                 <div class="row g-2">
                     <div class="col-6">
                         <label class="form-label">Lock time (IST)</label>
@@ -70,4 +95,5 @@
         </div>
     </div>
 </form>
+{% endif %}
 {% endblock %}

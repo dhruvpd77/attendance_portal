@@ -41,6 +41,9 @@ from .models import (
 )
 from accounts.models import UserRole
 
+from . import exam_admin_analytics
+from .exam_phase_order import exam_phase_name_sort_key, sort_exam_phases
+
 
 # ---------- Error handlers ----------
 
@@ -108,10 +111,12 @@ def _is_admin_manual_locked_by_hod(dept, target_date):
     return False
 
 
-def _is_attendance_locked_for_date(target_date):
-    """Return True if faculty cannot edit attendance for this date. Uses IST. Admin manual attendance never calls this."""
+def _is_attendance_locked_for_date(target_date, dept=None):
+    """Return True if faculty cannot edit attendance for this date. Uses IST per department. Admin manual attendance never calls this."""
+    if not dept:
+        return False
     try:
-        lock = AttendanceLockSetting.objects.filter(pk=1).first()
+        lock = AttendanceLockSetting.objects.filter(department=dept).first()
     except OperationalError:
         return False  # Table may not exist if migrations not run yet
     if not lock or not lock.enabled:
@@ -216,8 +221,13 @@ def _add_batch_schedule_pairs_for_attendance(dept, batch, dates_iter, target_set
 
 # ----------
 
-def get_admin_department(request):
-    """Department for admin/HOD: departmental admin or HOD has fixed dept; super admin uses session or first."""
+def get_admin_department(request, *, super_admin_session_only=False):
+    """Department for admin/HOD: departmental admin or HOD has fixed dept; super admin uses session or first.
+
+    If super_admin_session_only is True, multi-department users (is_super_admin) must have
+    admin_department_id in session—we do not fall back to the first department (avoids
+    editing the wrong dept on e.g. attendance lock).
+    """
     try:
         if request.user.is_authenticated and hasattr(request.user, 'role_profile'):
             rp = request.user.role_profile
@@ -228,6 +238,8 @@ def get_admin_department(request):
     dept_id = request.session.get('admin_department_id')
     if dept_id:
         return Department.objects.filter(pk=dept_id).first()
+    if super_admin_session_only and is_super_admin(request):
+        return None
     return Department.objects.first()
 
 
@@ -285,6 +297,13 @@ def user_can_faculty(request):
 def user_can_student(request):
     try:
         return request.user.role_profile.role == 'student'
+    except (UserRole.DoesNotExist, AttributeError):
+        return False
+
+
+def user_can_exam_admin(request):
+    try:
+        return request.user.role_profile.role == 'exam_admin'
     except (UserRole.DoesNotExist, AttributeError):
         return False
 
@@ -353,12 +372,36 @@ def admin_dashboard(request):
 
 @login_required
 def attendance_lock_setting(request):
-    """Admin: set lock time after which faculty cannot edit attendance. Uses IST."""
+    """Admin: set lock time after which faculty in this department cannot edit attendance. Uses IST."""
     if not user_can_admin(request):
         return redirect('accounts:role_redirect')
+    if request.method == 'POST' and request.POST.get('set_lock_department'):
+        if not is_super_admin(request):
+            return redirect('core:attendance_lock_setting')
+        did = request.POST.get('department_id')
+        if did:
+            request.session['admin_department_id'] = did
+            messages.success(request, 'Department selected. Settings below apply only to that department.')
+        else:
+            messages.error(request, 'Choose a department.')
+        return redirect('core:attendance_lock_setting')
+    dept = get_admin_department(request, super_admin_session_only=True)
+    if not dept:
+        if is_super_admin(request):
+            minute_options = list(range(0, 60, 5))
+            return render(request, 'core/admin/attendance_lock_setting.html', {
+                'department': None,
+                'lock_setting': None,
+                'minute_options': minute_options,
+                'is_super_admin': True,
+                'all_departments': Department.objects.all().order_by('name'),
+            })
+        messages.error(request, 'No department in context. Open the Dashboard and select a department first.')
+        return redirect('core:admin_dashboard')
     try:
         lock_setting, _ = AttendanceLockSetting.objects.get_or_create(
-            pk=1, defaults={'lock_hour': 17, 'lock_minute': 0, 'enabled': False}
+            department=dept,
+            defaults={'lock_hour': 17, 'lock_minute': 0, 'enabled': False},
         )
     except OperationalError:
         messages.error(request, 'Run migrations first: python manage.py migrate')
@@ -376,7 +419,13 @@ def attendance_lock_setting(request):
         messages.success(request, 'Lock time saved.')
         return redirect('core:attendance_lock_setting')
     minute_options = list(range(0, 60, 5))  # 0, 5, 10, ..., 55
-    ctx = {'lock_setting': lock_setting, 'minute_options': minute_options}
+    ctx = {
+        'lock_setting': lock_setting,
+        'minute_options': minute_options,
+        'department': dept,
+        'is_super_admin': is_super_admin(request),
+        'all_departments': Department.objects.all().order_by('name') if is_super_admin(request) else [],
+    }
     return render(request, 'core/admin/attendance_lock_setting.html', ctx)
 
 
@@ -629,7 +678,7 @@ def exam_phases_list(request):
             messages.success(request, f'Exam phase "{obj.name}" deleted.')
         return redirect('core:exam_phases_list')
 
-    phases = list(ExamPhase.objects.filter(department=dept).order_by('name'))
+    phases = sort_exam_phases(ExamPhase.objects.filter(department=dept))
     ctx = {'department': dept, 'phases': phases}
     return render(request, 'core/admin/exam_phases_list.html', ctx)
 
@@ -731,6 +780,10 @@ def exam_phase_detail(request, phase_id):
             marks_list = list(qs)
             marks_list.sort(key=lambda m: (m.student.batch.name if m.student.batch else '', _roll_sort_key(m.student)))
 
+    subject_ids_with_marks = set(
+        StudentMark.objects.filter(exam_phase=phase).values_list('subject_id', flat=True).distinct()
+    )
+
     ctx = {
         'department': dept,
         'phase': phase,
@@ -741,6 +794,7 @@ def exam_phase_detail(request, phase_id):
         'selected_batch_id': selected_batch_id,
         'marks_list': marks_list,
         'selected_subject': selected_subject,
+        'subject_ids_with_marks': subject_ids_with_marks,
     }
     return render(request, 'core/admin/exam_phase_detail.html', ctx)
 
@@ -849,7 +903,7 @@ def faculty_student_marksheet(request):
     if not faculty:
         return redirect('accounts:logout')
     dept = faculty.department
-    phases = list(ExamPhase.objects.filter(department=dept).order_by('name'))
+    phases = sort_exam_phases(ExamPhase.objects.filter(department=dept))
     phase_subjects_map = {}
     for p in phases:
         subs = list(ExamPhaseSubject.objects.filter(exam_phase=p).select_related('subject').order_by('subject__name'))
@@ -5551,7 +5605,7 @@ def _mark_analytics_build_data_from_students(students, dept):
     """Build phase_wise marks data for a given student list. Returns list of {student, phase_wise}."""
     if not students:
         return []
-    exam_phases = list(ExamPhase.objects.filter(department=dept).order_by('name'))
+    exam_phases = sort_exam_phases(ExamPhase.objects.filter(department=dept))
     phase_subjects = {}
     for ep in exam_phases:
         phase_subjects[ep.id] = list(ExamPhaseSubject.objects.filter(exam_phase=ep).select_related('subject').order_by('subject__name'))
@@ -5675,7 +5729,7 @@ def mark_analytics(request):
             if filtered_at_risk:
                 _risk_filtered.append({'subject_name': r['subject_name'], 'at_risk': filtered_at_risk})
         risk_data = _risk_filtered
-    exam_phases = list(ExamPhase.objects.filter(department=dept).order_by('name'))
+    exam_phases = sort_exam_phases(ExamPhase.objects.filter(department=dept))
     ctx = {
         'department': dept,
         'batches': batches,
@@ -5743,7 +5797,7 @@ def faculty_mark_analytics(request):
             )
             if has_low:
                 risk_student_data.append(item)
-    exam_phases = list(ExamPhase.objects.filter(department=dept).order_by('name'))
+    exam_phases = sort_exam_phases(ExamPhase.objects.filter(department=dept))
     ctx = {
         'faculty': faculty,
         'department': dept,
@@ -5786,7 +5840,7 @@ def _build_detailed_mark_analytics(dept, phase_id=None, subject_id=None, batch_i
                 'batch_name': m.student.batch.name if m.student.batch else '',
             })
     result = []
-    for phase_name in sorted(phase_subject_data.keys()):
+    for phase_name in sorted(phase_subject_data.keys(), key=exam_phase_name_sort_key):
         for subj_name in sorted(phase_subject_data[phase_name].keys()):
             entries = phase_subject_data[phase_name][subj_name]
             entries_sorted = sorted(entries, key=lambda x: (-x['marks'], x['batch_name'], _roll_sort_key(x['student'])))
@@ -5834,7 +5888,7 @@ def detailed_mark_analytics(request):
         except ValueError:
             subject_id = None
     analytics = _build_detailed_mark_analytics(dept, phase_id, subject_id, batch_id)
-    exam_phases = list(ExamPhase.objects.filter(department=dept).order_by('name'))
+    exam_phases = sort_exam_phases(ExamPhase.objects.filter(department=dept))
     all_subjects = list(Subject.objects.filter(department=dept).order_by('name'))
     batches = list(Batch.objects.filter(department=dept).select_related('department').order_by('name'))
     ctx = {
@@ -5890,7 +5944,7 @@ def detailed_mark_analytics_excel(request):
             ws.cell(row, 2, str(v) if v is not None else '-')
             row += 1
         row += 1
-        headers = ['Rank', 'Roll No', 'Name', 'Batch', 'Marks']
+        headers = ['Rank', 'Roll No', 'Name', 'Enrollment', 'Batch', 'Marks']
         for c, h in enumerate(headers, 1):
             cell = ws.cell(row, c, h)
             cell.font = header_font
@@ -5899,7 +5953,8 @@ def detailed_mark_analytics_excel(request):
         row += 1
         for i, e in enumerate(block['top_10'], 1):
             s = e['student']
-            for c, v in enumerate([i, s.roll_no, s.name, e['batch_name'], e['marks']], 1):
+            enroll = getattr(s, 'enrollment_no', '') or ''
+            for c, v in enumerate([i, s.roll_no, s.name, enroll, e['batch_name'], e['marks']], 1):
                 cell = ws.cell(row, c, str(v) if v is not None else '')
                 cell.border = thin_border
             row += 1
@@ -5934,7 +5989,7 @@ def marks_report(request):
     if not dept:
         messages.error(request, 'Select a department first.')
         return redirect('core:admin_dashboard')
-    exam_phases = list(ExamPhase.objects.filter(department=dept).order_by('name'))
+    exam_phases = sort_exam_phases(ExamPhase.objects.filter(department=dept))
     all_subjects = list(Subject.objects.filter(department=dept).order_by('name'))
     batches = list(Batch.objects.filter(department=dept).select_related('department').order_by('name'))
     ctx = {'department': dept, 'exam_phases': exam_phases, 'all_subjects': all_subjects, 'batches': batches, 'is_admin': True}
@@ -5953,7 +6008,7 @@ def faculty_marks_report(request):
     if not faculty:
         return redirect('accounts:logout')
     dept = faculty.department
-    exam_phases = list(ExamPhase.objects.filter(department=dept).order_by('name'))
+    exam_phases = sort_exam_phases(ExamPhase.objects.filter(department=dept))
     all_subjects = list(Subject.objects.filter(department=dept).order_by('name'))
     batches = list(Batch.objects.filter(
         id__in=Student.objects.filter(mentor=faculty, department=dept).values_list('batch_id', flat=True).distinct()
@@ -6027,7 +6082,7 @@ def mark_analytics_risk_all_excel(request):
     students.sort(key=lambda s: (s.batch.name if s.batch else '', _roll_sort_key(s)))
     student_data = _mark_analytics_build_data_from_students(students, dept)
     risk_data = _mark_analytics_build_risk_data(student_data)
-    exam_phases = list(ExamPhase.objects.filter(department=dept).order_by('name'))
+    exam_phases = sort_exam_phases(ExamPhase.objects.filter(department=dept))
     phase_subjects = {ep.name: [eps.subject.name for eps in ExamPhaseSubject.objects.filter(exam_phase=ep).select_related('subject').order_by('subject__name')] for ep in exam_phases}
     selected_phases = [p for p in exam_phases if p.name == phase_param] if phase_param and phase_param != 'all' else exam_phases
     marks_by_student_phase_subj = defaultdict(lambda: defaultdict(dict))
@@ -6178,7 +6233,7 @@ def faculty_mark_analytics_risk_all_excel(request):
     students.sort(key=lambda s: (s.batch.name if s.batch else '', _roll_sort_key(s)))
     student_data = _mark_analytics_build_data_from_students(students, dept)
     risk_data = _mark_analytics_build_risk_data(student_data)
-    exam_phases = list(ExamPhase.objects.filter(department=dept).order_by('name'))
+    exam_phases = sort_exam_phases(ExamPhase.objects.filter(department=dept))
     phase_subjects = {ep.name: [eps.subject.name for eps in ExamPhaseSubject.objects.filter(exam_phase=ep).select_related('subject').order_by('subject__name')] for ep in exam_phases}
     selected_phases = [p for p in exam_phases if p.name == phase_param] if phase_param and phase_param != 'all' else exam_phases
     marks_by_student_phase_subj = defaultdict(lambda: defaultdict(dict))
@@ -6286,7 +6341,7 @@ def _mark_analytics_report_excel_impl(request, is_admin):
         return redirect('core:admin_marks_report' if is_admin else 'core:faculty_marks_report')
     students = list(students)
     students.sort(key=lambda s: (s.batch.name if s.batch else '', _roll_sort_key(s)))
-    exam_phases = list(ExamPhase.objects.filter(department=dept).order_by('name'))
+    exam_phases = sort_exam_phases(ExamPhase.objects.filter(department=dept))
     phase_names = [ep.name for ep in exam_phases]
     if phase_combo == 'all':
         selected_phases = phase_names
@@ -6298,7 +6353,7 @@ def _mark_analytics_report_excel_impl(request, is_admin):
     if not selected_phases:
         selected_phases = [phase_combo]
     phase_subjects = {}
-    for ep in ExamPhase.objects.filter(department=dept, name__in=selected_phases).order_by('name'):
+    for ep in sort_exam_phases(ExamPhase.objects.filter(department=dept, name__in=selected_phases)):
         subs = list(ExamPhaseSubject.objects.filter(exam_phase=ep).select_related('subject').order_by('subject__name'))
         if subject_ids:
             try:
@@ -6972,11 +7027,11 @@ def faculty_attendance_entry(request):
                 slot.display_subject_name = subj.name if subj else (slot.subject.name if slot.subject else 'N/A')
                 slot.display_faculty_name = fac.short_name if fac else (slot.faculty.short_name if slot.faculty else '—')
 
-    attendance_locked = selected_date and _is_attendance_locked_for_date(selected_date)
+    attendance_locked = selected_date and _is_attendance_locked_for_date(selected_date, faculty.department)
     lock_time_warning = None
     if selected_date and not attendance_locked:
         try:
-            lock = AttendanceLockSetting.objects.filter(pk=1).first()
+            lock = AttendanceLockSetting.objects.filter(department=faculty.department).first()
             if lock and lock.enabled:
                 lock_time_warning = f'{lock.lock_hour:02d}:{lock.lock_minute:02d} IST'
         except OperationalError:
@@ -7009,7 +7064,7 @@ def faculty_attendance_save(request):
     except Exception:
         messages.error(request, 'Invalid date.')
         return redirect('core:faculty_attendance_entry')
-    if _is_attendance_locked_for_date(selected_date):
+    if _is_attendance_locked_for_date(selected_date, faculty.department):
         messages.error(request, 'Attendance is locked for this date. Contact admin to update via Manual Attendance.')
         url = reverse('core:faculty_attendance_entry') + f'?date={date_str}'
         return redirect(url)
@@ -9224,3 +9279,430 @@ def student_attendance_analytics(request):
         'overall_pct': overall_pct,
     }
     return render(request, 'core/student/attendance_analytics.html', ctx)
+
+
+# ---------- Exam Admin (marks analytics only, all departments) ----------
+
+
+def _exam_admin_require(request):
+    if not user_can_exam_admin(request):
+        return None
+    depts = exam_admin_analytics.selected_departments(request)
+    return depts
+
+
+def _exam_admin_manage_department(request):
+    """Department for exam-admin marks / phases UI; stored in session when chosen."""
+    if not user_can_exam_admin(request):
+        return None
+    raw = request.GET.get('dept_id') or request.POST.get('dept_id')
+    if raw:
+        try:
+            d = Department.objects.filter(pk=int(raw)).first()
+            if d:
+                request.session['exam_admin_manage_dept_id'] = d.id
+                return d
+        except (TypeError, ValueError):
+            pass
+    sid = request.session.get('exam_admin_manage_dept_id')
+    if sid:
+        return Department.objects.filter(pk=sid).first()
+    return None
+
+
+@login_required
+def exam_admin_exam_phases_list(request):
+    """Exam admin: list/add/delete exam phases for one selected department (dept-wise)."""
+    if not user_can_exam_admin(request):
+        return redirect('accounts:role_redirect')
+    all_departments = list(Department.objects.all().order_by('name'))
+    dept = _exam_admin_manage_department(request)
+
+    if request.method == 'POST' and request.POST.get('action') == 'add_phase':
+        if not dept:
+            messages.error(request, 'Select a department first.')
+            return redirect('core:exam_admin_exam_phases_list')
+        name = (request.POST.get('name', '') or '').strip().upper()
+        if name:
+            obj, created = ExamPhase.objects.get_or_create(department=dept, name=name)
+            if created:
+                messages.success(request, f'Exam phase "{name}" created.')
+            else:
+                messages.info(request, f'Exam phase "{name}" already exists.')
+        else:
+            messages.error(request, 'Enter a phase name.')
+        return redirect('core:exam_admin_exam_phases_list')
+
+    if request.method == 'POST' and request.POST.get('action') == 'delete_phase':
+        if not dept:
+            messages.error(request, 'Select a department first.')
+            return redirect('core:exam_admin_exam_phases_list')
+        pk = request.POST.get('phase_id')
+        obj = ExamPhase.objects.filter(pk=pk, department=dept).first()
+        if obj:
+            obj.delete()
+            messages.success(request, f'Exam phase "{obj.name}" deleted.')
+        return redirect('core:exam_admin_exam_phases_list')
+
+    phases = sort_exam_phases(ExamPhase.objects.filter(department=dept)) if dept else []
+    ctx = {
+        'department': dept,
+        'all_departments': all_departments,
+        'phases': phases,
+        'is_exam_admin': True,
+    }
+    return render(request, 'core/exam_admin/exam_phases_list.html', ctx)
+
+
+@login_required
+def exam_admin_exam_phase_detail(request, phase_id):
+    """Exam admin: subjects & marksheet upload for a phase (scoped to selected department)."""
+    if not user_can_exam_admin(request):
+        return redirect('accounts:role_redirect')
+    dept = _exam_admin_manage_department(request)
+    if not dept:
+        messages.error(request, 'Select a department from Exam phases & uploads.')
+        return redirect('core:exam_admin_exam_phases_list')
+    phase = ExamPhase.objects.filter(pk=phase_id, department=dept).first()
+    if not phase:
+        messages.error(request, 'Exam phase not found.')
+        return redirect('core:exam_admin_exam_phases_list')
+
+    dept_subjects = list(Subject.objects.filter(department=dept).order_by('name'))
+    phase_subject_ids = set(ExamPhaseSubject.objects.filter(exam_phase=phase).values_list('subject_id', flat=True))
+    phase_subjects = [s for s in dept_subjects if s.id in phase_subject_ids]
+    available_to_add = [s for s in dept_subjects if s.id not in phase_subject_ids]
+
+    if request.method == 'POST' and request.POST.get('action') == 'add_subject':
+        sub_id = request.POST.get('subject_id')
+        sub = Subject.objects.filter(pk=sub_id, department=dept).first()
+        if sub:
+            ExamPhaseSubject.objects.get_or_create(exam_phase=phase, subject=sub)
+            messages.success(request, f'Added subject "{sub.name}" to phase.')
+        return redirect('core:exam_admin_exam_phase_detail', phase_id=phase.id)
+
+    if request.method == 'POST' and request.POST.get('action') == 'remove_subject':
+        sub_id = request.POST.get('subject_id')
+        ExamPhaseSubject.objects.filter(exam_phase=phase, subject_id=sub_id).delete()
+        StudentMark.objects.filter(exam_phase=phase, subject_id=sub_id).delete()
+        messages.success(request, 'Subject removed from phase.')
+        return redirect('core:exam_admin_exam_phase_detail', phase_id=phase.id)
+
+    if request.method == 'POST' and request.POST.get('action') == 'add_all_subjects':
+        added = 0
+        for s in dept_subjects:
+            _, c = ExamPhaseSubject.objects.get_or_create(exam_phase=phase, subject=s)
+            if c:
+                added += 1
+        messages.success(request, f'Added {added} subject(s) to phase.')
+        return redirect('core:exam_admin_exam_phase_detail', phase_id=phase.id)
+
+    batches = list(Batch.objects.filter(department=dept).order_by('name'))
+    selected_subject_id = request.GET.get('subject_id')
+    selected_batch_id = request.GET.get('batch_id')
+    marks_list = []
+    selected_subject = None
+    if selected_subject_id and phase_subjects:
+        sub = next((s for s in phase_subjects if str(s.id) == str(selected_subject_id)), None)
+        if sub:
+            selected_subject = sub
+            qs = StudentMark.objects.filter(exam_phase=phase, subject=sub).select_related('student', 'student__batch')
+            if selected_batch_id:
+                qs = qs.filter(student__batch_id=selected_batch_id)
+            marks_list = list(qs)
+            marks_list.sort(key=lambda m: (m.student.batch.name if m.student.batch else '', _roll_sort_key(m.student)))
+
+    subject_ids_with_marks = set(
+        StudentMark.objects.filter(exam_phase=phase).values_list('subject_id', flat=True).distinct()
+    )
+
+    ctx = {
+        'department': dept,
+        'phase': phase,
+        'phase_subjects': phase_subjects,
+        'available_to_add': available_to_add,
+        'dept_subjects': dept_subjects,
+        'batches': batches,
+        'selected_subject_id': selected_subject_id,
+        'selected_batch_id': selected_batch_id,
+        'marks_list': marks_list,
+        'selected_subject': selected_subject,
+        'subject_ids_with_marks': subject_ids_with_marks,
+        'is_exam_admin': True,
+    }
+    return render(request, 'core/exam_admin/exam_phase_detail.html', ctx)
+
+
+@login_required
+def exam_admin_exam_phase_upload_marks(request):
+    """Exam admin: same Excel upload as departmental admin; dept from POST."""
+    if request.method != 'POST' or not user_can_exam_admin(request):
+        return redirect('core:exam_admin_exam_phases_list')
+    dept_id = request.POST.get('dept_id')
+    try:
+        dept = Department.objects.filter(pk=int(dept_id)).first() if dept_id else None
+    except (TypeError, ValueError):
+        dept = None
+    if not dept:
+        messages.error(request, 'Invalid department.')
+        return redirect('core:exam_admin_exam_phases_list')
+    request.session['exam_admin_manage_dept_id'] = dept.id
+
+    phase_id = request.POST.get('phase_id')
+    subject_id = request.POST.get('subject_id')
+    phase = ExamPhase.objects.filter(pk=phase_id, department=dept).first()
+    subject = Subject.objects.filter(pk=subject_id, department=dept).first()
+    if not phase or not subject:
+        messages.error(request, 'Invalid phase or subject.')
+        return redirect('core:exam_admin_exam_phases_list')
+    if not ExamPhaseSubject.objects.filter(exam_phase=phase, subject=subject).exists():
+        messages.error(request, 'Subject not in this phase.')
+        return redirect('core:exam_admin_exam_phase_detail', phase_id=phase.id)
+
+    excel_file = request.FILES.get('marksheet_file')
+    if not excel_file:
+        messages.error(request, 'Select an Excel file.')
+        return redirect('core:exam_admin_exam_phase_detail', phase_id=phase.id)
+
+    try:
+        wb = openpyxl.load_workbook(excel_file, read_only=True, data_only=True)
+        ws = wb.active
+    except Exception as e:
+        messages.error(request, f'Invalid Excel file: {e}')
+        return redirect('core:exam_admin_exam_phase_detail', phase_id=phase.id)
+
+    enroll_col = marks_col = None
+    data_start_row = 0
+    for row_idx, row in enumerate(ws.iter_rows(values_only=True), 1):
+        if row_idx > 30:
+            break
+        row_str = [str(c).lower() if c is not None else '' for c in (row or [])]
+        if 'enroll' in ' '.join(row_str) or 'enrolllment' in ' '.join(row_str):
+            for c_idx, cell in enumerate(row_str):
+                if 'enroll' in cell or 'enrolllment' in cell:
+                    enroll_col = c_idx
+                if 'mark' in cell:
+                    marks_col = c_idx
+            if enroll_col is not None:
+                data_start_row = row_idx
+                break
+    if enroll_col is None:
+        enroll_col = 3
+    if marks_col is None:
+        marks_col = 6
+
+    students_by_enrollment = {
+        str(s.enrollment_no).strip(): s
+        for s in Student.objects.filter(department=dept).exclude(enrollment_no='')
+        if s.enrollment_no
+    }
+
+    created = updated = skipped = 0
+    for row_idx, row in enumerate(ws.iter_rows(values_only=True), 1):
+        if row_idx <= data_start_row or not row:
+            continue
+        enroll_val = row[enroll_col] if enroll_col < len(row) else None
+        if enroll_val is None:
+            continue
+        enroll_str = str(enroll_val).strip()
+        if not enroll_str or not enroll_str.isdigit():
+            continue
+        marks_val = row[marks_col] if marks_col < len(row) else None
+        try:
+            marks_decimal = float(marks_val) if marks_val is not None else None
+        except (TypeError, ValueError):
+            marks_decimal = None
+
+        student = students_by_enrollment.get(enroll_str)
+        if not student:
+            skipped += 1
+            continue
+        obj, created_flag = StudentMark.objects.update_or_create(
+            student=student, exam_phase=phase, subject=subject,
+            defaults={'marks_obtained': marks_decimal}
+        )
+        if created_flag:
+            created += 1
+        else:
+            updated += 1
+
+    wb.close()
+    messages.success(request, f'Marks uploaded: {created} new, {updated} updated. {skipped} rows skipped (enrollment not found).')
+    return redirect('core:exam_admin_exam_phase_detail', phase_id=phase.id)
+
+
+@login_required
+def exam_admin_dashboard(request):
+    if not user_can_exam_admin(request):
+        messages.error(request, 'Access denied.')
+        return redirect('accounts:role_redirect')
+    all_departments = list(Department.objects.all().order_by('name'))
+    depts = exam_admin_analytics.selected_departments(request)
+    ids_param = exam_admin_analytics.parse_department_ids(request)
+    if ids_param is None:
+        selected_id_set = {d.id for d in all_departments}
+    else:
+        selected_id_set = set(ids_param)
+    excel_q = exam_admin_analytics.dept_ids_query_param(depts) if depts else ''
+
+    student_data = exam_admin_analytics.collect_students(depts, 'all', '') if depts else []
+    risk_rows = exam_admin_analytics.build_risk_from_student_data(student_data)
+    phase_names = exam_admin_analytics.all_phase_names(depts)
+    top_per_dept = exam_admin_analytics.top_students_per_department(student_data, phase_name=None, n=10)
+    top_all = exam_admin_analytics.top_students_all_departments(student_data, phase_name=None, n=10)
+    top_by_phase = {}
+    for pn in phase_names:
+        top_by_phase[pn] = {
+            'per_dept': exam_admin_analytics.top_students_per_department(student_data, phase_name=pn, n=10),
+            'all': exam_admin_analytics.top_students_all_departments(student_data, phase_name=pn, n=10),
+        }
+
+    dept_batches = exam_admin_analytics.batches_for_departments(depts) if depts else []
+
+    ctx = {
+        'all_departments': all_departments,
+        'selected_dept_ids': sorted(selected_id_set),
+        'departments_scope': depts,
+        'excel_query': excel_q,
+        'risk_count': len(risk_rows),
+        'student_rows_count': len(student_data),
+        'phase_names': phase_names,
+        'top_per_dept': top_per_dept,
+        'top_all': top_all,
+        'top_by_phase': top_by_phase,
+        'dept_batches': dept_batches,
+    }
+    return render(request, 'core/exam_admin/dashboard.html', ctx)
+
+
+@login_required
+def exam_admin_mark_analytics(request):
+    if not user_can_exam_admin(request):
+        return redirect('accounts:role_redirect')
+    depts = exam_admin_analytics.selected_departments(request)
+    if not depts:
+        messages.warning(request, 'No departments match your selection.')
+        return redirect('core:exam_admin_dashboard')
+    batch_id = request.GET.get('batch_id') or 'all'
+    roll_search = request.GET.get('roll_search', '').strip()
+    selected_phase = request.GET.get('phase', '').strip()
+    student_data = exam_admin_analytics.collect_students(depts, batch_id, roll_search)
+    if selected_phase:
+        student_data = exam_admin_analytics.filter_phase(student_data, selected_phase)
+    risk_rows = exam_admin_analytics.build_risk_from_student_data(student_data)
+    risk_data = exam_admin_analytics.risk_rows_to_subject_groups(risk_rows)
+    batches = exam_admin_analytics.batches_for_departments(depts)
+    phase_names = exam_admin_analytics.all_phase_names(depts)
+    excel_q = exam_admin_analytics.dept_ids_query_param(depts)
+    all_departments = list(Department.objects.all().order_by('name'))
+    ids_param = exam_admin_analytics.parse_department_ids(request)
+    if ids_param is None:
+        selected_id_set = {d.id for d in all_departments}
+    else:
+        selected_id_set = set(ids_param)
+    ctx = {
+        'student_data': student_data,
+        'risk_data': risk_data,
+        'batches': batches,
+        'exam_phases': [{'name': n} for n in phase_names],
+        'selected_batch_id': batch_id,
+        'selected_phase': selected_phase,
+        'roll_search': roll_search,
+        'excel_query': excel_q,
+        'is_exam_admin': True,
+        'all_departments': all_departments,
+        'selected_dept_ids': sorted(selected_id_set),
+    }
+    return render(request, 'core/exam_admin/mark_analytics.html', ctx)
+
+
+def _exam_admin_excel_response(bio, filename):
+    # openpyxl leaves stream position at end after save; read() must start at 0 or file is empty/corrupt in Excel
+    bio.seek(0)
+    resp = HttpResponse(
+        bio.read(),
+        content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    )
+    resp['Content-Disposition'] = f'attachment; filename="{filename}"'
+    return resp
+
+
+@login_required
+def exam_admin_excel_compiled_dept(request):
+    depts = _exam_admin_require(request)
+    if not depts:
+        return redirect('core:exam_admin_dashboard')
+    bio = exam_admin_analytics.excel_compiled_per_department(depts)
+    return _exam_admin_excel_response(bio, 'marks_compiled_per_department.xlsx')
+
+
+@login_required
+def exam_admin_excel_compiled_all(request):
+    depts = _exam_admin_require(request)
+    if not depts:
+        return redirect('core:exam_admin_dashboard')
+    bio = exam_admin_analytics.excel_compiled_all_departments(depts)
+    return _exam_admin_excel_response(bio, 'marks_compiled_all_departments.xlsx')
+
+
+@login_required
+def exam_admin_excel_subject_by_dept(request):
+    depts = _exam_admin_require(request)
+    if not depts:
+        return redirect('core:exam_admin_dashboard')
+    bio = exam_admin_analytics.excel_subject_wise_per_department(depts)
+    return _exam_admin_excel_response(bio, 'marks_subject_wise_per_department.xlsx')
+
+
+@login_required
+def exam_admin_excel_subject_all(request):
+    depts = _exam_admin_require(request)
+    if not depts:
+        return redirect('core:exam_admin_dashboard')
+    bio = exam_admin_analytics.excel_subject_wise_all_departments(depts)
+    return _exam_admin_excel_response(bio, 'marks_subject_wise_all_departments.xlsx')
+
+
+@login_required
+def exam_admin_excel_phase_compile(request):
+    depts = _exam_admin_require(request)
+    if not depts:
+        return redirect('core:exam_admin_dashboard')
+    bio = exam_admin_analytics.excel_phase_compile(depts)
+    return _exam_admin_excel_response(bio, 'marks_phase_wise_compile.xlsx')
+
+
+@login_required
+def exam_admin_excel_risk(request):
+    depts = _exam_admin_require(request)
+    if not depts:
+        return redirect('core:exam_admin_dashboard')
+    batch_id = request.GET.get('batch_id') or 'all'
+    roll_search = request.GET.get('roll_search', '').strip()
+    phase = request.GET.get('phase', '').strip()
+    student_data = exam_admin_analytics.collect_students(depts, batch_id, roll_search)
+    if phase:
+        student_data = exam_admin_analytics.filter_phase(student_data, phase)
+    subject = request.GET.get('subject', '').strip()
+    bio = exam_admin_analytics.excel_risk_students(
+        depts,
+        student_data=student_data,
+        subject_name=subject or None,
+    )
+    if subject:
+        safe = re.sub(r'[^\w\-.]+', '_', subject)[:50].strip('_') or 'subject'
+        fn = f'at_risk_{safe}.xlsx'
+    else:
+        fn = 'marks_at_risk_below_9.xlsx'
+    return _exam_admin_excel_response(bio, fn)
+
+
+@login_required
+def exam_admin_excel_top10(request):
+    depts = _exam_admin_require(request)
+    if not depts:
+        return redirect('core:exam_admin_dashboard')
+    phase = request.GET.get('phase', '').strip() or None
+    bio = exam_admin_analytics.excel_top10_report(depts, phase_name=phase)
+    fn = 'marks_top10_per_department.xlsx' if not phase else f'marks_top10_phase_{phase}.xlsx'
+    return _exam_admin_excel_response(bio, fn)

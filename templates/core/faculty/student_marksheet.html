@@ -25,8 +25,7 @@
 .ms-table tbody tr:nth-child(even) { background: #f8fafc; }
 .ms-table tbody tr:hover { background: #eff6ff !important; }
 .ms-marks-cell { font-weight: 600; min-width: 50px; }
-.ms-marks-good { color: #047857; }
-.ms-marks-warn { color: #b45309; }
+/* Only at-risk: strictly below 9 (9.00 and above use default body color) */
 .ms-marks-low { color: #dc2626; }
 @media (max-width: 575.98px) {
     .ms-hero { padding: 1rem 1.1rem; flex-wrap: wrap; }
@@ -82,7 +81,7 @@
                         {% for subj in phase_data.subjects %}
                         <td class="text-center ms-marks-cell">
                             {% if subj.marks is not None %}
-                            <span class="{% if subj.marks >= 18 %}ms-marks-good{% elif subj.marks >= 12 %}ms-marks-warn{% else %}ms-marks-low{% endif %}">{{ subj.marks|floatformat:2 }}</span>
+                            <span class="{% if subj.marks < 9 %}ms-marks-low{% endif %}">{{ subj.marks|floatformat:2 }}</span>
                             {% else %}
                             <span class="text-secondary">—</span>
                             {% endif %}

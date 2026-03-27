@@ -1,0 +1,255 @@
+{% extends 'base.html' %}
+{% load static %}
+{% block title %}Exam Admin — Mark Analytics{% endblock %}
+{% block extra_head %}
+{{ block.super }}
+<style>
+.sa-hero {
+    background: linear-gradient(135deg, #0f172a 0%, #1e3a5f 50%, #312e81 100%);
+    border-radius: 16px;
+    padding: 1.25rem 1.5rem;
+    margin-bottom: 1.5rem;
+    color: #fff;
+    box-shadow: 0 10px 40px rgba(15, 23, 42, 0.25);
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+}
+.sa-hero .page-title { color: #fff !important; font-size: 1.5rem; margin-bottom: 0.35rem !important; }
+.sa-hero .page-subtitle { color: #c7d2fe !important; font-size: 0.9rem; margin: 0; }
+.sa-filter-card { border: none; border-radius: 14px; box-shadow: 0 4px 20px rgba(0,0,0,0.08); margin-bottom: 1.5rem; overflow: hidden; border-left: 5px solid #6366f1; }
+.sa-filter-card .card-header { background: linear-gradient(90deg, #1e293b 0%, #3730a3 100%); color: #fff !important; font-weight: 600; padding: 0.9rem 1.25rem; border: none; }
+.sa-table thead th {
+    background: linear-gradient(180deg, #334155 0%, #475569 100%);
+    color: #fff !important; font-weight: 600; font-size: 0.75rem; text-transform: uppercase;
+    padding: 0.85rem 1rem; border: none;
+}
+.sa-table tbody td { padding: 0.85rem 1rem; vertical-align: middle; }
+.sa-table tbody tr:nth-child(even) { background: #f8fafc; }
+.sa-expand-row { background: linear-gradient(135deg, #eef2ff 0%, #f0f9ff 50%, #ecfdf5 100%) !important; border-left: 4px solid #6366f1; }
+.sa-phase-card { background: linear-gradient(145deg, #fff 0%, #f8fafc 100%); border-radius: 12px; padding: 1rem; border: 1px solid #e0e7ff; margin-bottom: 1rem; }
+.sa-phase-card .sa-section-title {
+    background: linear-gradient(135deg, #6366f1 0%, #4f46e5 100%);
+    color: #fff !important; padding: 0.5rem 0.9rem; border-radius: 10px; font-weight: 600; font-size: 0.85rem; display: inline-flex; align-items: center; gap: 0.4rem; margin-bottom: 0.75rem;
+}
+.sa-toggle { cursor: pointer; color: #6366f1; width: 28px; height: 28px; display: inline-flex; align-items: center; justify-content: center; border-radius: 8px; background: linear-gradient(135deg, #eef2ff 0%, #e0e7ff 100%); }
+.sa-expand-row .sub-table thead th { background: linear-gradient(180deg, #818cf8 0%, #6366f1 100%); color: #fff !important; }
+.sa-expand-row .sub-table .sa-marks-low { color: #dc2626; font-weight: 700; }
+.sa-risk-card {
+    background: linear-gradient(145deg, #fef2f2 0%, #fff5f5 100%);
+    border-radius: 12px;
+    padding: 1rem;
+    border: 1px solid #fecaca;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    max-height: min(70vh, 560px);
+}
+.sa-risk-card .sa-section-title { background: linear-gradient(135deg, #dc2626 0%, #b91c1c 100%); color: #fff !important; padding: 0.5rem 0.9rem; border-radius: 10px; font-weight: 600; font-size: 0.85rem; display: inline-flex; align-items: center; gap: 0.4rem; margin-bottom: 0; flex-shrink: 0; }
+.sa-risk-card .sub-table thead th { background: linear-gradient(180deg, #f87171 0%, #dc2626 100%); color: #fff !important; }
+.sa-risk-card .sa-risk-table-wrap {
+    margin-top: 0.75rem;
+    overflow-x: auto;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    flex: 1 1 auto;
+    min-height: 0;
+    border-radius: 8px;
+    border: 1px solid rgba(220, 38, 38, 0.15);
+}
+.sa-risk-card .sub-table { margin-bottom: 0; font-size: 0.875rem; }
+.sa-risk-card .sub-table th,
+.sa-risk-card .sub-table td { white-space: nowrap; }
+.sa-risk-grid {
+    display: grid;
+    gap: 1.25rem;
+    grid-template-columns: 1fr;
+}
+@media (min-width: 768px) {
+    .sa-risk-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (min-width: 1200px) {
+    .sa-risk-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+.sa-mark-analytics-page { padding-bottom: 2rem; }
+.marks-low { color: #dc2626; font-weight: 700; }
+</style>
+{% endblock %}
+{% block content %}
+<div class="sa-mark-analytics-page">
+<div class="sa-hero">
+    <div class="d-flex align-items-center gap-3">
+        <img src="{% static 'images/ljiet-logo.png' %}" alt="LJIET" class="admin-logo" style="height:44px;">
+        <div>
+            <h1 class="page-title mb-1">Mark analytics (multi-department)</h1>
+            <p class="page-subtitle mb-0">Data comes from marksheets uploaded under each department’s exam phases. Red in tables: marks &lt; 9.</p>
+        </div>
+    </div>
+    <div class="d-flex flex-wrap gap-2">
+        <a href="{% url 'core:exam_admin_exam_phases_list' %}" class="btn btn-outline-light btn-sm"><i class="fas fa-file-upload me-1"></i> Phases</a>
+        <a href="{% url 'core:exam_admin_dashboard' %}?{% if excel_query %}{{ excel_query }}{% endif %}" class="btn btn-outline-light btn-sm"><i class="fas fa-arrow-left me-1"></i> Hub</a>
+    </div>
+</div>
+
+<div class="card sa-filter-card mb-4">
+    <div class="card-header"><i class="fas fa-filter me-2"></i>Departments, batch &amp; search</div>
+    <div class="card-body p-4">
+        <form method="get" action="{% url 'core:exam_admin_mark_analytics' %}" class="row g-3">
+            <div class="col-12">
+                <label class="form-label small fw-semibold">Departments</label>
+                <div class="d-flex flex-wrap gap-3">
+                    {% for d in all_departments %}
+                    <label class="small mb-0 d-flex align-items-center gap-1">
+                        <input type="checkbox" name="dept_ids" value="{{ d.id }}" class="form-check-input" {% if d.id in selected_dept_ids %}checked{% endif %}>
+                        {{ d.name }}
+                    </label>
+                    {% endfor %}
+                </div>
+            </div>
+            <div class="col-md-4">
+                <label class="form-label small">Batch</label>
+                <select name="batch_id" class="form-select form-select-app" onchange="this.form.submit()">
+                    <option value="all" {% if selected_batch_id == "all" or not selected_batch_id %}selected{% endif %}>All batches</option>
+                    {% for b in batches %}
+                    <option value="{{ b.id }}" {% if selected_batch_id == b.id|stringformat:"d" %}selected{% endif %}>{{ b.name }} — {{ b.department.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-3">
+                <label class="form-label small">Phase</label>
+                <select name="phase" class="form-select form-select-app" onchange="this.form.submit()">
+                    <option value="">All phases</option>
+                    {% for ep in exam_phases %}
+                    <option value="{{ ep.name }}" {% if selected_phase == ep.name %}selected{% endif %}>{{ ep.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-3">
+                <label class="form-label small">Search roll / name / enrollment</label>
+                <input type="text" name="roll_search" class="form-control" value="{{ roll_search }}" placeholder="Optional">
+            </div>
+            <div class="col-md-2 d-flex align-items-end">
+                <button type="submit" class="btn btn-primary-app w-100"><i class="fas fa-search me-1"></i> Show</button>
+            </div>
+        </form>
+        <p class="small text-muted mt-2 mb-0">
+            <a href="{% url 'core:exam_admin_excel_risk' %}?{{ excel_query }}{% if selected_batch_id %}&batch_id={{ selected_batch_id }}{% endif %}{% if roll_search %}&roll_search={{ roll_search|urlencode }}{% endif %}"><i class="fas fa-file-excel me-1"></i>Download at-risk Excel (current filters)</a>
+        </p>
+    </div>
+</div>
+
+{% if risk_data %}
+<div class="card sa-filter-card mb-4">
+    <div class="card-header"><i class="fas fa-exclamation-triangle me-2"></i>At risk — marks &lt; 9 (subject-wise)</div>
+    <div class="card-body p-3 p-md-4">
+        <div class="sa-risk-grid">
+            {% for subject in risk_data %}
+                <div class="sa-risk-card h-100">
+                    <div class="d-flex align-items-start justify-content-between flex-wrap gap-2">
+                        <div class="sa-section-title"><i class="fas fa-book"></i> {{ subject.subject_name }}</div>
+                        <a href="{% url 'core:exam_admin_excel_risk' %}?{{ excel_query }}{% if selected_batch_id and selected_batch_id != 'all' %}&batch_id={{ selected_batch_id }}{% endif %}{% if roll_search %}&roll_search={{ roll_search|urlencode }}{% endif %}{% if selected_phase %}&phase={{ selected_phase|urlencode }}{% endif %}&subject={{ subject.subject_name|urlencode }}" class="btn btn-sm btn-light text-nowrap flex-shrink-0"><i class="fas fa-file-excel text-danger me-1"></i>Excel</a>
+                    </div>
+                    <div class="sa-risk-table-wrap">
+                    <table class="table sub-table table-sm mb-0">
+                        <thead><tr><th>Dept</th><th>Roll No</th><th>Name</th><th>Enrollment</th><th>Batch</th><th>Phase</th><th class="text-end">Marks</th></tr></thead>
+                        <tbody>
+                            {% for entry in subject.at_risk %}
+                            <tr>
+                                <td>{{ entry.department }}</td>
+                                <td class="fw-semibold">{{ entry.student.roll_no }}</td>
+                                <td>{{ entry.student.name }}</td>
+                                <td>{{ entry.student.enrollment_no|default:"—" }}</td>
+                                <td>{{ entry.student.batch.name }}</td>
+                                <td>{{ entry.phase_name }}</td>
+                                <td class="text-end marks-low">{{ entry.marks }}</td>
+                            </tr>
+                            {% empty %}
+                            <tr><td colspan="7" class="text-muted">None</td></tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                    </div>
+                </div>
+            {% endfor %}
+        </div>
+    </div>
+</div>
+{% endif %}
+
+{% if student_data %}
+<div class="card sa-filter-card">
+    <div class="card-header"><i class="fas fa-users me-2"></i>Students — phase-wise marks</div>
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table sa-table table-hover mb-0">
+                <thead>
+                    <tr>
+                        <th style="width:40px;"></th>
+                        <th>Dept</th>
+                        <th>Roll No</th>
+                        <th>Name</th>
+                        <th>Enrollment</th>
+                        <th>Batch</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for item in student_data %}
+                    <tr data-row-id="{{ forloop.counter }}">
+                        <td><span class="sa-toggle" onclick="toggleRow({{ forloop.counter }})"><i class="fas fa-chevron-down" id="icon-{{ forloop.counter }}"></i></span></td>
+                        <td>{{ item.department.name }}</td>
+                        <td class="fw-semibold">{{ item.student.roll_no }}</td>
+                        <td>{{ item.student.name }}</td>
+                        <td>{{ item.student.enrollment_no|default:"—" }}</td>
+                        <td>{{ item.student.batch.name }}</td>
+                    </tr>
+                    <tr class="sa-expand-row" id="expand-{{ forloop.counter }}" style="display:none;">
+                        <td colspan="6">
+                            <div class="row g-3">
+                                {% for phase in item.phase_wise %}
+                                <div class="col-12 col-md-6 col-lg-4">
+                                    <div class="sa-phase-card">
+                                        <div class="sa-section-title"><i class="fas fa-award"></i> {{ phase.phase_name }}</div>
+                                        <table class="table sub-table table-sm mb-0">
+                                            <thead><tr><th>Subject</th><th class="text-end">Marks</th></tr></thead>
+                                            <tbody>
+                                                {% for s in phase.subjects %}
+                                                <tr>
+                                                    <td>{{ s.name }}</td>
+                                                    <td class="text-end {% if s.is_low %}sa-marks-low{% endif %}">{% if s.marks is not None %}{{ s.marks }}{% else %}—{% endif %}</td>
+                                                </tr>
+                                                {% empty %}
+                                                <tr><td colspan="2" class="text-muted">No marks</td></tr>
+                                                {% endfor %}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+                                {% endfor %}
+                            </div>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% else %}
+<div class="card sa-filter-card">
+    <div class="card-body p-5 text-center text-muted">No students for this filter.</div>
+</div>
+{% endif %}
+
+<script>
+function toggleRow(id) {
+    var row = document.getElementById('expand-' + id);
+    var icon = document.getElementById('icon-' + id);
+    if (!row) return;
+    if (row.style.display === 'none') { row.style.display = 'table-row'; icon.className = 'fas fa-chevron-up'; }
+    else { row.style.display = 'none'; icon.className = 'fas fa-chevron-down'; }
+}
+</script>
+</div>
+{% endblock %}

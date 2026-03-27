@@ -1,0 +1,110 @@
+{% extends 'base.html' %}
+{% load static %}
+{% block title %}Exam phases & uploads — Exam Admin{% endblock %}
+{% block extra_head %}
+{{ block.super }}
+<style>
+.ea-hero {
+    background: linear-gradient(135deg, #0f172a 0%, #1e3a5f 50%, #312e81 100%);
+    border-radius: 16px;
+    padding: 1.25rem 1.5rem;
+    margin-bottom: 1.25rem;
+    color: #fff;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+}
+.ea-hero .page-title { color: #fff !important; font-size: 1.45rem; margin-bottom: 0.25rem !important; }
+.ea-hero .page-subtitle { color: #c7d2fe !important; font-size: 0.9rem; margin: 0; max-width: 36rem; }
+.ea-card { border: none; border-radius: 14px; box-shadow: 0 4px 20px rgba(0,0,0,0.08); margin-bottom: 1.25rem; overflow: hidden; border-left: 5px solid #6366f1; }
+.ea-card .card-header { background: linear-gradient(90deg, #1e293b 0%, #3730a3 100%); color: #fff !important; font-weight: 600; padding: 0.85rem 1.15rem; border: none; }
+</style>
+{% endblock %}
+{% block content %}
+<div class="ea-hero">
+    <div>
+        <h1 class="page-title mb-1"><i class="fas fa-file-upload me-2"></i>Exam phases &amp; uploads</h1>
+        <p class="page-subtitle mb-0">Choose a department, then add phases (T1, SEE, …), attach subjects, and upload marksheets. Maps by enrollment number — same as admin Result.</p>
+    </div>
+    <div class="d-flex flex-wrap gap-2">
+        <a href="{% url 'core:exam_admin_dashboard' %}" class="btn btn-outline-light btn-sm"><i class="fas fa-chart-line me-1"></i> Hub</a>
+    </div>
+</div>
+
+<div class="card ea-card">
+    <div class="card-header"><i class="fas fa-building me-2"></i>Department</div>
+    <div class="card-body p-4">
+        <form method="get" class="row g-3 align-items-end">
+            <div class="col-12 col-md-8 col-lg-6">
+                <label class="form-label small fw-semibold mb-1">Manage phases and marksheets for</label>
+                <select name="dept_id" class="form-select form-select-app" onchange="this.form.submit()">
+                    <option value="">— Select department —</option>
+                    {% for d in all_departments %}
+                    <option value="{{ d.id }}" {% if department and department.id == d.id %}selected{% endif %}>{{ d.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+        </form>
+        {% if not department %}
+        <p class="text-secondary small mt-3 mb-0">Select a department to add phases and upload marks dept-wise.</p>
+        {% endif %}
+    </div>
+</div>
+
+{% if department %}
+<div class="card ea-card">
+    <div class="card-header"><i class="fas fa-plus-circle me-2"></i>Add exam phase — <span class="fw-normal opacity-90">{{ department.name }}</span></div>
+    <div class="card-body p-4">
+        <form method="post" class="d-flex flex-wrap align-items-end gap-3">
+            {% csrf_token %}
+            <input type="hidden" name="action" value="add_phase">
+            <div>
+                <label class="form-label mb-1 small">Phase name</label>
+                <input type="text" name="name" class="form-control form-control-app" placeholder="e.g. T1, T2, SEE" maxlength="50" style="min-width: 160px;">
+            </div>
+            <button type="submit" class="btn btn-primary-app"><i class="fas fa-plus me-1"></i> Add</button>
+        </form>
+    </div>
+</div>
+
+<div class="card ea-card mb-4">
+    <div class="card-header"><i class="fas fa-list me-2"></i>Exam phases — {{ department.name }}</div>
+    <div class="card-body p-0">
+        {% if phases %}
+        <div class="table-responsive">
+            <table class="table table-hover mb-0">
+                <thead>
+                    <tr>
+                        <th>Phase</th>
+                        <th class="text-end">Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for p in phases %}
+                    <tr>
+                        <td class="fw-medium">
+                            <a href="{% url 'core:exam_admin_exam_phase_detail' p.id %}" class="text-decoration-none">{{ p.name }}</a>
+                        </td>
+                        <td class="text-end">
+                            <a href="{% url 'core:exam_admin_exam_phase_detail' p.id %}" class="btn btn-sm btn-primary me-1 mb-1"><i class="fas fa-cog me-1"></i> Manage subjects</a>
+                            <form method="post" class="d-inline" onsubmit="return confirm('Delete phase &quot;{{ p.name }}&quot;? All marks for this phase will be removed.');">
+                                {% csrf_token %}
+                                <input type="hidden" name="action" value="delete_phase">
+                                <input type="hidden" name="phase_id" value="{{ p.id }}">
+                                <button type="submit" class="btn btn-sm btn-outline-danger mb-1"><i class="fas fa-trash me-1"></i>Delete</button>
+                            </form>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <p class="text-secondary text-center py-5 mb-0">No exam phases yet for this department. Add one above.</p>
+        {% endif %}
+    </div>
+</div>
+{% endif %}
+{% endblock %}
