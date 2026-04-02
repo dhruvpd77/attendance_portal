@@ -1,0 +1,47 @@
+{% extends 'core/exam_portal_base.html' %}
+{% block title %}Edit sub-unit — {{ child.subunit_code }}{% endblock %}
+{% block content %}
+<div class="exam-portal-hero mb-4 align-items-start">
+    <div>
+        <h1 class="page-title">Edit sub-unit</h1>
+        <p class="page-subtitle mb-0"><code class="text-light">{{ child.subunit_code }}</code> — credentials and department link</p>
+    </div>
+    <a href="{% url 'core:dept_exam_dashboard' %}" class="btn btn-outline-light btn-sm border-secondary">Back to hub</a>
+</div>
+<div class="row justify-content-center">
+    <div class="col-lg-6">
+        <div class="card exam-section-card mb-4">
+            <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+                <h5 class="mb-0 fw-semibold">Sub-unit login</h5>
+            </div>
+            <div class="card-body">
+                <form method="post">
+                    {% csrf_token %}
+                    <div class="mb-3">
+                        <label class="form-label">Username</label>
+                        <input type="text" name="username" class="form-control form-control-app" value="{{ child.user.username }}" required autocomplete="username">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">New password <span class="text-muted small">(leave blank to keep)</span></label>
+                        <input type="password" name="password" class="form-control form-control-app" autocomplete="new-password">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Sub-unit code</label>
+                        <input type="text" name="subunit_code" class="form-control form-control-app" value="{{ child.subunit_code }}" required maxlength="40">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Department</label>
+                        <select name="department_id" class="form-select form-select-app" required>
+                            {% for d in all_departments %}
+                            <option value="{{ d.pk }}" {% if d.pk == parent_profile.department_id %}selected{% endif %}>{{ d.name }}</option>
+                            {% endfor %}
+                        </select>
+                        <div class="form-text">Must stay your coordinator department ({{ parent_profile.department.name }}).</div>
+                    </div>
+                    <button type="submit" class="btn btn-primary-app">Save changes</button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

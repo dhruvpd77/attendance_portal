@@ -1,0 +1,365 @@
+{% extends 'core/exam_portal_base.html' %}
+{% block title %}Exam credits & analytics{% endblock %}
+{% block extra_head %}
+{{ block.super }}
+<style>
+    .fac-credits-wrap { max-width: 1320px; margin: 0 auto; }
+    .fac-credits-total-card {
+        border-radius: 18px;
+        border: none;
+        box-shadow: 0 8px 32px rgba(15, 23, 42, 0.1);
+        overflow: hidden;
+        background: linear-gradient(145deg, #ffffff 0%, #f8fafc 50%, #f1f5f9 100%);
+    }
+    .fac-credits-total-card .total-main {
+        background: linear-gradient(135deg, #312e81 0%, #4338ca 40%, #6366f1 100%);
+        color: #fff;
+        padding: 1.5rem 1.75rem;
+        min-height: 100%;
+    }
+    @media (min-width: 992px) {
+        .fac-credits-total-card .total-main { border-radius: 0; }
+    }
+    .fac-credits-total-card .total-main .label {
+        font-size: 0.72rem;
+        text-transform: uppercase;
+        letter-spacing: 0.12em;
+        font-weight: 600;
+        color: rgba(255,255,255,0.75);
+        margin-bottom: 0.35rem;
+    }
+    .fac-credits-total-card .total-main .value {
+        font-size: clamp(2rem, 5vw, 2.75rem);
+        font-weight: 800;
+        line-height: 1.1;
+        letter-spacing: -0.02em;
+    }
+    .fac-credits-total-card .total-main .suffix {
+        font-size: 1rem;
+        font-weight: 500;
+        opacity: 0.85;
+    }
+    .fac-credits-breakdown {
+        padding: 1.25rem 1.25rem 1.25rem 1.25rem;
+    }
+    @media (min-width: 992px) {
+        .fac-credits-breakdown { padding: 1.5rem 1.5rem; }
+    }
+    .fac-credit-tile {
+        border-radius: 12px;
+        padding: 0.85rem 1rem;
+        height: 100%;
+        border: 1px solid #e2e8f0;
+        background: #fff;
+        box-shadow: 0 2px 8px rgba(15, 23, 42, 0.04);
+    }
+    .fac-credit-tile .tile-label {
+        font-size: 0.7rem;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        color: #64748b;
+        font-weight: 600;
+        margin-bottom: 0.25rem;
+    }
+    .fac-credit-tile .tile-value { font-size: 1.35rem; font-weight: 700; line-height: 1.2; }
+    .fac-credit-tile.tile-paper .tile-value { color: #059669; }
+    .fac-credit-tile.tile-sup .tile-value { color: #2563eb; }
+    .fac-credit-tile.tile-setting .tile-value { color: #d97706; }
+    .fac-credit-tile .tile-hint { font-size: 0.72rem; color: #94a3b8; margin-top: 0.2rem; }
+    .fac-credits-section {
+        border-radius: 18px;
+        border: none;
+        box-shadow: 0 6px 24px rgba(15, 23, 42, 0.08);
+        overflow: hidden;
+        height: 100%;
+        display: flex;
+        flex-direction: column;
+    }
+    .fac-credits-section .card-body { flex: 1 1 auto; display: flex; flex-direction: column; }
+    .fac-credits-section .section-total {
+        font-size: clamp(1.65rem, 4vw, 2.15rem);
+        font-weight: 800;
+        line-height: 1.15;
+        letter-spacing: -0.02em;
+        margin-bottom: 1rem;
+    }
+    .fac-credits-section .table-wrap { flex: 1 1 auto; min-height: 0; }
+    .fac-credits-stat-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.35rem;
+        padding: 0.35rem 0.65rem;
+        border-radius: 999px;
+        font-size: 0.8rem;
+        font-weight: 600;
+        background: #f1f5f9;
+        color: #334155;
+    }
+    .fac-credits-stat-pill.open { background: #fffbeb; color: #b45309; }
+    .fac-credits-note {
+        font-size: 0.8rem;
+        color: #64748b;
+        line-height: 1.45;
+        margin-top: auto;
+        padding-top: 0.75rem;
+    }
+</style>
+{% endblock %}
+{% block content %}
+<div class="fac-credits-wrap px-2 px-md-0">
+    <div class="fac-exam-hero mb-4">
+        <div>
+            {% if faculty_exam_credits_history_page %}
+            <h1>Credits &amp; analytics — History</h1>
+            <p class="mb-0">Totals and phase detail for academic semesters where <strong>Faculty portal</strong> was <strong>off</strong> (read-only). Current open-semester totals are on <a href="{% url 'core:faculty_exam_credits_analytics' %}" class="text-white text-decoration-underline fw-semibold">Exam credits &amp; analytics</a>.</p>
+            {% else %}
+            <h1>Exam workload & credits</h1>
+            <p class="mb-0">The <strong>summary</strong> below counts only semesters where <strong>Faculty portal</strong> is <strong>open</strong>. Closed-semester credits are on <a href="{% url 'core:faculty_exam_history_credits_analytics' %}" class="text-white text-decoration-underline fw-semibold">History — credits &amp; analytics</a>{% if history_grand_total %} ({{ history_grand_total|floatformat:2 }} cr recorded there){% endif %}.</p>
+            {% endif %}
+        </div>
+    </div>
+
+    <div class="card fac-credits-total-card mb-4">
+        <div class="row g-0 align-items-stretch flex-column flex-lg-row">
+            <div class="col-lg-5 col-xl-4">
+                <div class="total-main h-100">
+                    <p class="label mb-0">{% if faculty_exam_credits_history_page %}Total credits (portal-off semesters){% else %}Total credits (open semesters){% endif %}</p>
+                    <p class="value mb-0">{{ summary_grand_total|floatformat:2 }}<span class="suffix"> cr</span></p>
+                    <p class="small mb-0 mt-1 opacity-90">Remuneration <strong>{{ summary_grand_rem|floatformat:2 }} ₹</strong> <span class="opacity-75">(from credit settings)</span></p>
+                    <p class="small mb-0 mt-2 opacity-80">Paper checking: <strong>{{ summary_paper_papers }}</strong> papers evaluated</p>
+                    <p class="small mb-0 mt-2 opacity-75">{% if faculty_exam_credits_history_page %}Historical — portal closed for these semesters{% else %}Open semesters only — use History link for closed semesters{% endif %}</p>
+                </div>
+            </div>
+            <div class="col-lg-7 col-xl-8">
+                <div class="fac-credits-breakdown">
+                    <p class="small text-muted mb-3 fw-semibold text-uppercase" style="letter-spacing:0.06em;">{% if faculty_exam_credits_history_page %}Breakdown (portal-off semesters){% else %}Breakdown (open semesters){% endif %}</p>
+                    <div class="row g-3">
+                        <div class="col-md-4">
+                            <div class="fac-credit-tile tile-paper">
+                                <div class="tile-label">Paper checking</div>
+                                <div class="tile-value">{{ summary_paper_credits|floatformat:2 }}</div>
+                                <div class="tile-hint"><strong>{{ summary_paper_papers }}</strong> papers · {{ summary_paper_rem|floatformat:2 }} ₹</div>
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="fac-credit-tile tile-sup">
+                                <div class="tile-label">Supervision</div>
+                                <div class="tile-value">{{ summary_sup_credits|floatformat:2 }}</div>
+                                <div class="tile-hint">{{ summary_sup_rem|floatformat:2 }} ₹</div>
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="fac-credit-tile tile-setting">
+                                <div class="tile-label">Paper setting</div>
+                                <div class="tile-value">{{ summary_setting_credits|floatformat:2 }}</div>
+                                <div class="tile-hint">{{ summary_setting_rem|floatformat:2 }} ₹</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="row g-4 align-items-stretch">
+        <div class="col-12 col-lg-4 d-flex">
+            <div class="card fac-credits-section exam-paper-accent checking w-100">
+                <div class="card-header card-header-slate py-3">
+                    <h2 class="h6 mb-0"><i class="fas fa-check-double me-2 text-success"></i>Paper checking</h2>
+                    <span class="small opacity-75 fw-normal">Approved credits &amp; ₹</span>
+                </div>
+                <div class="card-body pt-3">
+                    <form method="get" class="mb-3">
+                        <label class="form-label small text-muted mb-1">Evaluation phase</label>
+                        <select name="paper_phase_id" class="form-select form-select-app" onchange="this.form.submit()">
+                            <option value="">— Choose phase —</option>
+                            {% for ph in paper_phases %}
+                            <option value="{{ ph.pk }}" {% if selected_paper_phase_id == ph.pk %}selected{% endif %}>{{ ph.name }}</option>
+                            {% endfor %}
+                        </select>
+                        {% if selected_sup_phase_id %}
+                        <input type="hidden" name="sup_phase_id" value="{{ selected_sup_phase_id }}">
+                        {% endif %}
+                        {% if selected_setting_phase_id %}
+                        <input type="hidden" name="setting_phase_id" value="{{ selected_setting_phase_id }}">
+                        {% endif %}
+                    </form>
+                    {% if selected_paper_phase_id %}
+                    <p class="section-total text-success mb-0">{{ paper_total_credits|floatformat:2 }} <span class="fs-6 fw-semibold text-muted">cr</span></p>
+                    <p class="small text-muted mb-1">{{ paper_total_rem|floatformat:2 }} ₹</p>
+                    <p class="small fw-semibold text-success mb-2">Total papers (this phase): {{ paper_phase_papers }}</p>
+                    {% if paper_approved_rows %}
+                    <div class="table-responsive table-wrap mt-2">
+                        <table class="table table-sm exam-table-theme mb-0">
+                            <thead><tr><th>Subject</th><th>Exam</th><th>Papers</th><th class="text-end">Credit</th><th class="text-end">₹</th></tr></thead>
+                            <tbody>
+                                {% for row in paper_approved_rows %}
+                                <tr>
+                                    <td class="fw-medium">{{ row.req.duty.subject_name }}</td>
+                                    <td class="small text-muted">{{ row.req.duty.exam_date|date:"M j, Y" }}</td>
+                                    <td>{{ row.papers }}</td>
+                                    <td class="text-end fw-semibold text-nowrap">{{ row.credit|floatformat:2 }}</td>
+                                    <td class="text-end text-nowrap">{{ row.rem|floatformat:2 }}</td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                            <tfoot class="table-group-divider">
+                                <tr class="fw-semibold">
+                                    <td colspan="2" class="text-end small">Phase total</td>
+                                    <td>{{ paper_phase_papers }}</td>
+                                    <td class="text-end">{{ paper_total_credits|floatformat:2 }}</td>
+                                    <td class="text-end">{{ paper_total_rem|floatformat:2 }}</td>
+                                </tr>
+                            </tfoot>
+                        </table>
+                    </div>
+                    {% else %}
+                    <p class="text-muted small mb-0 py-2">{% if faculty_exam_credits_history_page %}No approved completions in this phase for portal-off semesters.{% else %}No approved completions in this phase for semesters with Faculty portal open.{% endif %}</p>
+                    {% endif %}
+                    {% else %}
+                    <p class="text-muted small mb-0 py-2">Select a phase from your paper-checking duties.</p>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+
+        <div class="col-12 col-lg-4 d-flex">
+            <div class="card fac-credits-section exam-paper-accent supervision-ref w-100">
+                <div class="card-header card-header-slate py-3">
+                    <h2 class="h6 mb-0"><i class="fas fa-user-shield me-2 text-primary"></i>Supervision</h2>
+                    <span class="small opacity-75 fw-normal">Completed duties &amp; ₹</span>
+                </div>
+                <div class="card-body pt-3">
+                    <form method="get" class="mb-3">
+                        <label class="form-label small text-muted mb-1">Supervision phase</label>
+                        <select name="sup_phase_id" class="form-select form-select-app" onchange="this.form.submit()">
+                            <option value="">— Choose phase —</option>
+                            {% for ph in sup_phases %}
+                            <option value="{{ ph.pk }}" {% if selected_sup_phase_id == ph.pk %}selected{% endif %}>{{ ph.name }}</option>
+                            {% endfor %}
+                        </select>
+                        {% if selected_paper_phase_id %}
+                        <input type="hidden" name="paper_phase_id" value="{{ selected_paper_phase_id }}">
+                        {% endif %}
+                        {% if selected_setting_phase_id %}
+                        <input type="hidden" name="setting_phase_id" value="{{ selected_setting_phase_id }}">
+                        {% endif %}
+                    </form>
+                    {% if selected_sup_phase_id %}
+                    <p class="section-total text-primary mb-0">{{ sup_credit_total|floatformat:2 }} <span class="fs-6 fw-semibold text-muted">cr</span></p>
+                    <p class="small text-muted mb-2">{{ sup_total_rem|floatformat:2 }} ₹</p>
+                    <div class="d-flex flex-wrap gap-2 mb-3">
+                        <span class="fac-credits-stat-pill">Done: {{ sup_completed_count }}</span>
+                        <span class="fac-credits-stat-pill open">Open: {{ sup_open_count }}</span>
+                    </div>
+                    {% if sup_completed_rows %}
+                    <div class="table-responsive table-wrap">
+                        <table class="table table-sm exam-table-theme mb-0">
+                            <thead>
+                                <tr>
+                                    <th>Date</th>
+                                    <th>Subject</th>
+                                    <th>Slot</th>
+                                    <th class="text-end">Credit</th>
+                                    <th class="text-end">₹</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for row in sup_completed_rows %}
+                                {% with d=row.duty %}
+                                <tr>
+                                    <td class="small text-muted text-nowrap">{{ d.supervision_date|date:"M j, Y" }}</td>
+                                    <td class="fw-medium">{{ d.subject_name|default:"—" }}</td>
+                                    <td class="small">{{ d.time_slot|default:"—" }}</td>
+                                    <td class="text-end fw-semibold text-nowrap">{{ row.credit|floatformat:2 }}</td>
+                                    <td class="text-end text-nowrap">{{ row.rem|floatformat:2 }}</td>
+                                </tr>
+                                {% endwith %}
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                    {% else %}
+                    <p class="text-muted small mb-0 py-2">{% if faculty_exam_credits_history_page %}No completed duties in this phase in portal-off semesters.{% else %}No completed duties in this phase for semesters with Faculty portal open.{% endif %}</p>
+                    {% endif %}
+                    <p class="fac-credits-note mb-0">Open slots: complete room/block in <strong>My exam duties</strong>. Credit uses department rules for this phase bucket.</p>
+                    {% else %}
+                    <p class="text-muted small mb-0 py-2">Select a supervision phase you are assigned to.</p>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+
+        <div class="col-12 col-lg-4 d-flex">
+            <div class="card fac-credits-section exam-paper-accent setting w-100">
+                <div class="card-header card-header-slate py-3">
+                    <h2 class="h6 mb-0"><i class="fas fa-pen-fancy me-2 text-warning"></i>Paper setting</h2>
+                    <span class="small opacity-75 fw-normal">Approved credits &amp; ₹</span>
+                </div>
+                <div class="card-body pt-3">
+                    <form method="get" class="mb-3">
+                        <label class="form-label small text-muted mb-1">Paper setting phase</label>
+                        <select name="setting_phase_id" class="form-select form-select-app" onchange="this.form.submit()">
+                            <option value="">— Choose phase —</option>
+                            {% for ph in setting_phases %}
+                            <option value="{{ ph.pk }}" {% if selected_setting_phase_id == ph.pk %}selected{% endif %}>{{ ph.name }}</option>
+                            {% endfor %}
+                        </select>
+                        {% if selected_paper_phase_id %}
+                        <input type="hidden" name="paper_phase_id" value="{{ selected_paper_phase_id }}">
+                        {% endif %}
+                        {% if selected_sup_phase_id %}
+                        <input type="hidden" name="sup_phase_id" value="{{ selected_sup_phase_id }}">
+                        {% endif %}
+                    </form>
+                    {% if selected_setting_phase_id %}
+                    <p class="section-total mb-0" style="color:#d97706;">{{ setting_total_credits|floatformat:2 }} <span class="fs-6 fw-semibold text-muted">cr</span></p>
+                    <p class="small text-muted mb-2">{{ setting_total_rem|floatformat:2 }} ₹</p>
+                    {% if setting_approved_rows %}
+                    <div class="table-responsive table-wrap">
+                        <table class="table table-sm exam-table-theme mb-0">
+                            <thead>
+                                <tr>
+                                    <th>Subject</th>
+                                    <th>Phase</th>
+                                    <th>Approved</th>
+                                    <th class="text-end">Credit</th>
+                                    <th class="text-end">₹</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for row in setting_approved_rows %}
+                                {% with r=row.req %}
+                                <tr>
+                                    <td class="fw-medium">{{ r.duty.subject_name|default:"—" }}</td>
+                                    <td class="small text-muted">{{ r.duty.phase.name|default:"—" }}</td>
+                                    <td class="small text-muted text-nowrap">{% if r.decided_at %}{{ r.decided_at|date:"M j, Y" }}{% else %}—{% endif %}</td>
+                                    <td class="text-end fw-semibold text-nowrap">{{ row.credit|floatformat:2 }}</td>
+                                    <td class="text-end text-nowrap">{{ row.rem|floatformat:2 }}</td>
+                                </tr>
+                                {% endwith %}
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                    {% else %}
+                    <p class="text-muted small mb-0 py-2">{% if faculty_exam_credits_history_page %}No approved paper-setting rows in this phase for portal-off semesters.{% else %}No approved paper-setting rows in this phase for semesters with Faculty portal open.{% endif %}</p>
+                    {% endif %}
+                    {% else %}
+                    {% if setting_phases %}
+                    <p class="text-muted small mb-0 py-2">Select a phase where you have paper-setting duties.</p>
+                    {% else %}
+                    <p class="text-muted small mb-0 py-2">No paper-setting assignments yet.</p>
+                    {% endif %}
+                    {% endif %}
+                    <p class="fac-credits-note mb-0">Credits follow subject and phase-bucket rules after coordinator approval.</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <p class="small text-muted mt-4 mb-0 text-center text-md-start">
+        Institute daily DR uses <strong>approval dates</strong> for paper checking and paper setting. Supervision uses <strong>completed</strong> slots and department credit rules.
+    </p>
+</div>
+{% endblock %}

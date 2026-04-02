@@ -32,6 +32,9 @@ MIDDLEWARE = [
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
+    'core.middleware.CoordinatorExamContextMiddleware',
+    'core.middleware.FacultyWorkingDepartmentMiddleware',
+    'core.middleware.InstituteSemesterMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 ]
@@ -114,6 +117,23 @@ LOGGING = {
 
 # Site URL for email links (Sign In button, etc.). Used when sending credentials emails.
 SITE_URL = (os.environ.get('SITE_URL', 'https://ljiet.pythonanywhere.com') or '').rstrip('/')
+
+# Daily exam DR (exam.xlsx): Question Paper Setting block — column index per phase bucket.
+# Adjust if your template places this block elsewhere (open row 8 header in Excel to confirm).
+EXAM_DR_PAPER_SETTING_COLUMNS = {
+    't1_t3': 17,
+    'see': 18,
+    'remedial': 19,
+    'fast_track': 20,
+}
+
+# Sub-unit "Complete & approve all exam duties" bulk action (supervision + paper check + paper setting).
+# Enable only for temporary data setup: set EXAM_PORTAL_BULK_COMPLETE=1 in the environment.
+EXAM_PORTAL_BULK_COMPLETE = os.environ.get('EXAM_PORTAL_BULK_COMPLETE', '').lower() in (
+    '1',
+    'true',
+    'yes',
+)
 
 # Email (for attendance notifications and mentor reports)
 # Development: emails printed to console. Production: set EMAIL_BACKEND to smtp.

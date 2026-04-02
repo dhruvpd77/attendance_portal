@@ -1,0 +1,32 @@
+{% extends 'core/exam_portal_base.html' %}
+{% block title %}Choose sub-unit context{% endblock %}
+{% block content %}
+<div class="exam-portal-hero mb-4">
+    <h1 class="page-title">Working academic semester</h1>
+    <p class="page-subtitle mb-0">
+        This sub-unit login is linked to more than one period. Pick the semester you are working in now; duties and exports use that context only.
+    </p>
+</div>
+<div class="card exam-section-card">
+    <div class="card-body">
+        <ul class="list-group list-group-flush">
+            {% for p in profiles %}
+            <li class="list-group-item d-flex flex-wrap justify-content-between align-items-center gap-2 px-0">
+                <div>
+                    <strong>{{ p.institute_semester.label }}</strong>
+                    <span class="badge text-bg-dark text-uppercase ms-1">{{ p.subunit_code }}</span>
+                    {% if p.department %}
+                    <span class="text-muted small ms-1">{{ p.department.name }}</span>
+                    {% endif %}
+                </div>
+                <form method="post" action="{% url 'core:dept_exam_child_select_context' %}" class="m-0">
+                    {% csrf_token %}
+                    <input type="hidden" name="profile_id" value="{{ p.pk }}">
+                    <button type="submit" class="btn btn-primary-app btn-sm">Continue</button>
+                </form>
+            </li>
+            {% endfor %}
+        </ul>
+    </div>
+</div>
+{% endblock %}

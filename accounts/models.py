@@ -10,6 +10,9 @@ class UserRole(models.Model):
         ('admin', 'Admin'),
         ('hod', 'HOD'),
         ('exam_admin', 'Exam Admin'),
+        ('exam_section', 'Exam Section'),
+        ('dept_exam_parent', 'Department exam coordinator (parent)'),
+        ('dept_exam_child', 'Department exam sub-unit (e.g. SY_1)'),
         ('faculty', 'Faculty'),
         ('student', 'Student'),
     ]

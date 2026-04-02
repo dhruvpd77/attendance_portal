@@ -41,8 +41,17 @@
         <p class="page-subtitle mb-2">Your lectures for today — {{ today|date:"l, d M Y" }}</p>
         <div class="faculty-badges d-flex flex-wrap gap-2">
         <span class="badge bg-primary bg-opacity-25 text-white">{{ faculty.short_name|default:"Faculty" }}</span>
-        {% if faculty.department %}<span class="badge bg-info bg-opacity-25 text-white">{{ faculty.department.name }}</span>{% endif %}
+        {% if faculty_working_department %}<span class="badge bg-info bg-opacity-25 text-white">{{ faculty_working_department.name }}</span>{% elif faculty_exam_context_department %}<span class="badge bg-info bg-opacity-25 text-white">{{ faculty_exam_context_department.name }}{% if faculty_exam_context_department.institute_semester and not faculty_exam_context_department.institute_semester.faculty_portal_active %} <span class="text-warning">· attendance closed</span>{% endif %}</span>{% elif faculty.department %}<span class="badge bg-info bg-opacity-25 text-white">{{ faculty.department.name }}</span>{% endif %}
         </div>
+    {% if not faculty_working_department and faculty_exam_context_department %}
+    <div class="alert alert-info border-0 mt-3 mb-0 py-2 small" style="background: rgba(56,189,248,0.15); color: #e0f2fe;">
+        Faculty portal is <strong>closed</strong> for attendance for this division. You can still use <strong>My exam duties</strong> and <strong>Exam credits &amp; analytics</strong>; past terms are under <strong>History</strong> in the sidebar.
+    </div>
+    {% elif not faculty_working_department %}
+    <div class="alert alert-warning border-0 mt-3 mb-0 py-2 small" style="background: rgba(251,191,36,0.2); color: #fef3c7;">
+        No active division for the faculty portal (no open semester or access was turned off). Contact your HOD or super admin.
+    </div>
+    {% endif %}
     </div>
 </div>
 

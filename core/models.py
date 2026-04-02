@@ -6,12 +6,45 @@ from django.db import models
 from django.contrib.auth.models import User
 
 
+class InstituteSemester(models.Model):
+    """Academic period for the whole institute (e.g. SY EVEN 2026). All departments, attendance, and exam data belong to one row."""
+
+    code = models.SlugField(
+        max_length=64,
+        unique=True,
+        help_text='Stable id shown in URLs/exports, e.g. SY_EVEN_2026',
+    )
+    label = models.CharField(max_length=200)
+    sort_order = models.PositiveSmallIntegerField(
+        default=0,
+        help_text='Higher sorts first in pickers.',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    faculty_portal_active = models.BooleanField(
+        default=False,
+        help_text='When off, faculty users cannot see attendance, mentorship, or other portal data for departments in this period. Super admin and departmental admin views are unchanged. Turn on when the period is ready for faculty. Exam duties and credits for this semester still appear under History (read-only) when exam menu is enabled for the department.',
+    )
+
+    class Meta:
+        ordering = ['-sort_order', '-pk']
+        verbose_name = 'Academic semester'
+        verbose_name_plural = 'Academic semesters'
+
+    def __str__(self):
+        return self.label
+
+
 class Department(models.Model):
     name = models.CharField(max_length=200)
-    semester = models.CharField(
+    institute_semester = models.ForeignKey(
+        InstituteSemester,
+        on_delete=models.CASCADE,
+        related_name='departments',
+    )
+    dr_export_semester_label = models.CharField(
         max_length=20,
         blank=True,
-        help_text='Semester label (e.g. Roman IV). Used on Daily Report exports.',
+        help_text='Short label for Daily Report exports (e.g. Roman IV) — not the institute semester record.',
     )
     include_extra_lectures_in_attendance = models.BooleanField(
         default=False,
@@ -36,6 +69,22 @@ class Department(models.Model):
     faculty_show_student_marksheet = models.BooleanField(
         default=True,
         help_text='If off, faculty sidebar hides Student marksheet.',
+    )
+    faculty_show_exam_duties = models.BooleanField(
+        default=False,
+        help_text='If off, faculty sidebar hides My exam duties and related actions.',
+    )
+    faculty_show_exam_credits_analytics = models.BooleanField(
+        default=False,
+        help_text='If off, faculty sidebar hides Exam credits & analytics.',
+    )
+    faculty_show_student_analytics = models.BooleanField(
+        default=False,
+        help_text='If off, faculty sidebar hides Student Analytics.',
+    )
+    faculty_portal_enabled = models.BooleanField(
+        default=False,
+        help_text='Master switch: when off, this department is hidden from faculty portal (attendance, mentorship, etc.). HOD / super admin dashboards are unchanged. Enable in Management when this division should use the faculty portal.',
     )
 
     class Meta:
@@ -78,6 +127,14 @@ class Faculty(models.Model):
     user = models.OneToOneField(
         User, on_delete=models.SET_NULL, null=True, blank=True, related_name='faculty_profile'
     )
+    portal_canonical = models.ForeignKey(
+        'self',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='portal_duplicate_rows',
+        help_text='If set, this row is a duplicate person; timetable/attendance for this row is shown when the linked faculty (with login) uses the portal. Set on the non-login row only.',
+    )
 
     class Meta:
         ordering = ['full_name']
@@ -85,6 +142,31 @@ class Faculty(models.Model):
 
     def __str__(self):
         return f"{self.full_name} ({self.short_name})"
+
+
+class FacultyDepartmentMembership(models.Model):
+    """Links one faculty account to additional departments (same person, e.g. SY_3 + SY_4). Primary row remains Faculty.department."""
+
+    faculty = models.ForeignKey(
+        Faculty,
+        on_delete=models.CASCADE,
+        related_name='department_memberships',
+    )
+    department = models.ForeignKey(
+        Department,
+        on_delete=models.CASCADE,
+        related_name='faculty_memberships',
+    )
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=['faculty', 'department'], name='uniq_faculty_department_membership'),
+        ]
+        verbose_name = 'Faculty department membership'
+        verbose_name_plural = 'Faculty department memberships'
+
+    def __str__(self):
+        return f'{self.faculty.short_name} → {self.department.name}'
 
 
 class Student(models.Model):
@@ -476,3 +558,686 @@ class StudentMark(models.Model):
 
     def __str__(self):
         return f"{self.student.roll_no} {self.exam_phase.name} {self.subject.name}: {self.marks_obtained}"
+
+
+class DepartmentExamProfile(models.Model):
+    """Links exam coordinators to an attendance Department. Parent = SY/FY/TY lead; children = SY_1, SY_2, …"""
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='department_exam_profiles')
+    department = models.ForeignKey(
+        Department,
+        on_delete=models.CASCADE,
+        related_name='exam_coordinator_profiles',
+        null=True,
+        blank=True,
+        help_text='Set by the coordinator on first login (not by exam section). Required before phases or sub-units.',
+    )
+    parent = models.ForeignKey(
+        'self',
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name='children',
+        help_text='Null for parent coordinator; set to the SY (parent) profile for SY_1-style accounts.',
+    )
+    subunit_code = models.CharField(
+        max_length=40,
+        blank=True,
+        help_text='For child accounts only, e.g. SY_1 (must match values in uploaded supervision sheets).',
+    )
+    invited_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='exam_profiles_invited',
+        help_text='If set, this coordinator login was created by a hub account (examsy-style).',
+    )
+    is_hub_coordinator = models.BooleanField(
+        default=False,
+        help_text='If true, no single linked department: manage delegates, sub-units, and institute-wide supervision phases.',
+    )
+    institute_semester = models.ForeignKey(
+        InstituteSemester,
+        on_delete=models.CASCADE,
+        related_name='exam_profiles',
+        help_text='Academic period for this login; hub accounts set explicitly, others usually match linked department.',
+    )
+
+    class Meta:
+        verbose_name = 'Department exam profile'
+        verbose_name_plural = 'Department exam profiles'
+        constraints = [
+            models.UniqueConstraint(
+                fields=['user', 'institute_semester'],
+                name='uniq_dept_exam_parent_user_semester',
+                condition=models.Q(parent__isnull=True),
+            ),
+            models.UniqueConstraint(
+                fields=['parent', 'subunit_code', 'institute_semester'],
+                name='uniq_exam_subunit_per_parent',
+                condition=models.Q(parent__isnull=False),
+            ),
+        ]
+
+    def __str__(self):
+        dept_label = self.department.name if self.department_id else '—'
+        if self.parent_id:
+            return f"{self.user.username} → {dept_label} ({self.subunit_code})"
+        return f"{self.user.username} → {dept_label} (parent)"
+
+
+class SupervisionExamPhase(models.Model):
+    """Supervision phase: either per-department or hub-wide (hub_coordinator set, department null)."""
+    institute_semester = models.ForeignKey(
+        InstituteSemester,
+        on_delete=models.CASCADE,
+        related_name='supervision_phases',
+    )
+    department = models.ForeignKey(
+        Department,
+        on_delete=models.CASCADE,
+        related_name='supervision_phases',
+        null=True,
+        blank=True,
+    )
+    hub_coordinator = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name='hub_supervision_phases',
+        help_text='If set, phase is institute-wide; faculty rows match across all departments.',
+    )
+    name = models.CharField(max_length=50)
+    created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='supervision_phases_created')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['name']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['department', 'name'],
+                condition=models.Q(department__isnull=False),
+                name='uniq_supervision_phase_per_dept_name',
+            ),
+            models.UniqueConstraint(
+                fields=['hub_coordinator', 'name', 'institute_semester'],
+                condition=models.Q(hub_coordinator__isnull=False, department__isnull=True),
+                name='uniq_supervision_phase_per_hub_name',
+            ),
+        ]
+        verbose_name = 'Supervision exam phase'
+        verbose_name_plural = 'Supervision exam phases'
+
+    def __str__(self):
+        if self.department_id:
+            return f'{self.name} ({self.department.name})'
+        if self.hub_coordinator_id:
+            return f'{self.name} (hub: {self.hub_coordinator.username})'
+        return self.name
+
+
+class SupervisionDuty(models.Model):
+    """One supervision slot for a faculty member (from uploaded combined sheet)."""
+    OPEN = 'open'
+    COMPLETED = 'completed'
+    COMPLETION_CHOICES = [
+        (OPEN, 'Open'),
+        (COMPLETED, 'Completed'),
+    ]
+
+    phase = models.ForeignKey(SupervisionExamPhase, on_delete=models.CASCADE, related_name='duties')
+    faculty = models.ForeignKey(
+        Faculty,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name='supervision_duties',
+    )
+    original_faculty = models.ForeignKey(
+        Faculty,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='supervision_duties_as_original',
+        help_text='Sheet assignee; unchanged when duty is marked proxy to someone else.',
+    )
+    is_proxy = models.BooleanField(
+        default=False,
+        help_text='True if a sub-unit coordinator reassigned this duty to another faculty.',
+    )
+    completion_status = models.CharField(
+        max_length=20,
+        choices=COMPLETION_CHOICES,
+        default=OPEN,
+    )
+    block_no = models.CharField(max_length=40, blank=True)
+    room_no = models.CharField(max_length=40, blank=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    faculty_name_raw = models.CharField(max_length=250, blank=True)
+    faculty_short_raw = models.CharField(max_length=40, blank=True)
+    supervision_date = models.DateField()
+    time_slot = models.CharField(max_length=120, blank=True)
+    subject_name = models.CharField(max_length=200, blank=True)
+    division_code = models.CharField(
+        max_length=40,
+        blank=True,
+        help_text='Stream/classroom assignment from sheet (e.g. SY_1).',
+    )
+
+    class Meta:
+        ordering = ['supervision_date', 'time_slot', 'faculty__full_name']
+        verbose_name = 'Supervision duty'
+        verbose_name_plural = 'Supervision duties'
+
+    def __str__(self):
+        who = self.faculty.full_name if self.faculty_id else (self.faculty_name_raw or '?')
+        return f"{who} {self.supervision_date} {self.phase.name}"
+
+
+class PaperCheckingPhase(models.Model):
+    """Evaluation / paper checking round: institute (exam section), hub, or single department."""
+    institute_semester = models.ForeignKey(
+        InstituteSemester,
+        on_delete=models.CASCADE,
+        related_name='paper_checking_phases',
+        null=True,
+        blank=True,
+        help_text='Empty for exam-section (institute) phases — shared across all academic semesters. '
+        'Required for department / hub phases.',
+    )
+    institute_scope = models.BooleanField(
+        default=False,
+        help_text='If true, managed by exam section; faculty matched across all departments.',
+    )
+    department = models.ForeignKey(
+        Department,
+        on_delete=models.CASCADE,
+        related_name='paper_checking_phases',
+        null=True,
+        blank=True,
+    )
+    hub_coordinator = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name='hub_paper_checking_phases',
+    )
+    name = models.CharField(max_length=80)
+    created_by = models.ForeignKey(
+        User, on_delete=models.SET_NULL, null=True, blank=True, related_name='paper_checking_phases_created'
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['name']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['department', 'name'],
+                condition=models.Q(department__isnull=False, institute_scope=False),
+                name='uniq_paper_check_phase_dept_name',
+            ),
+            models.UniqueConstraint(
+                fields=['hub_coordinator', 'name', 'institute_semester'],
+                condition=models.Q(hub_coordinator__isnull=False, institute_scope=False),
+                name='uniq_paper_check_phase_hub_name',
+            ),
+            models.UniqueConstraint(
+                fields=['name'],
+                condition=models.Q(institute_scope=True),
+                name='uniq_paper_check_phase_institute_name',
+            ),
+            models.CheckConstraint(
+                check=models.Q(institute_scope=True)
+                | models.Q(institute_semester__isnull=False),
+                name='paper_check_phase_semester_if_dept_or_hub',
+            ),
+        ]
+        verbose_name = 'Paper checking phase'
+        verbose_name_plural = 'Paper checking phases'
+
+    def __str__(self):
+        if self.institute_scope:
+            return f'{self.name} (institute)'
+        if self.department_id:
+            return f'{self.name} ({self.department.name})'
+        if self.hub_coordinator_id:
+            return f'{self.name} (hub)'
+        return self.name
+
+
+class PaperCheckingDuty(models.Model):
+    """One evaluator row from the evaluation-duty Excel (subject + date + blocks + paper count)."""
+    PRACTICAL_ONLINE = 'online'
+    PRACTICAL_OFFLINE = 'offline'
+    PRACTICAL_MODE_CHOICES = [
+        ('', '—'),
+        (PRACTICAL_ONLINE, 'Online'),
+        (PRACTICAL_OFFLINE, 'Offline'),
+    ]
+    phase = models.ForeignKey(PaperCheckingPhase, on_delete=models.CASCADE, related_name='duties')
+    faculty = models.ForeignKey(
+        Faculty,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name='paper_checking_duties',
+    )
+    faculty_name_raw = models.CharField(max_length=250, blank=True)
+    evaluator_short_raw = models.CharField(max_length=40, blank=True)
+    exam_date = models.DateField()
+    subject_name = models.CharField(max_length=200, blank=True)
+    total_students = models.PositiveIntegerField(default=0)
+    deadline_date = models.DateField(
+        help_text='Marks / evaluation target date (default: day after exam date).',
+    )
+    practical_evaluation_mode = models.CharField(
+        max_length=16,
+        blank=True,
+        choices=PRACTICAL_MODE_CHOICES,
+        help_text='Legacy field; practical credits now use online+offline rates × papers in one submission.',
+    )
+
+    class Meta:
+        ordering = ['exam_date', 'subject_name', 'evaluator_short_raw']
+        verbose_name = 'Paper checking duty'
+        verbose_name_plural = 'Paper checking duties'
+
+    def __str__(self):
+        who = self.faculty.short_name if self.faculty_id else (self.evaluator_short_raw or '?')
+        return f'{who} {self.exam_date} {self.subject_name}'
+
+
+class PaperCheckingSubjectCredit(models.Model):
+    """Per-phase subject: credit per evaluated paper (theory or practical online/offline)."""
+    phase = models.ForeignKey(
+        PaperCheckingPhase,
+        on_delete=models.CASCADE,
+        related_name='subject_credits',
+    )
+    subject_name = models.CharField(max_length=200)
+    is_practical = models.BooleanField(
+        default=False,
+        help_text='If true, use online/offline credit rates instead of theory credit.',
+    )
+    credit_per_paper_theory = models.DecimalField(
+        max_digits=10,
+        decimal_places=4,
+        default=0,
+        help_text='Credit per paper for theory subjects (or default when not practical).',
+    )
+    credit_online_per_paper = models.DecimalField(
+        max_digits=10,
+        decimal_places=4,
+        null=True,
+        blank=True,
+    )
+    credit_offline_per_paper = models.DecimalField(
+        max_digits=10,
+        decimal_places=4,
+        null=True,
+        blank=True,
+    )
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['subject_name']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['phase', 'subject_name'],
+                name='uniq_paper_check_subject_credit_phase_subject',
+            ),
+        ]
+        verbose_name = 'Paper checking subject credit'
+        verbose_name_plural = 'Paper checking subject credits'
+
+    def __str__(self):
+        return f'{self.phase.name}: {self.subject_name}'
+
+
+class PaperCheckingAllocation(models.Model):
+    """Department + block range from the SY1–SY4 columns for one duty row."""
+    duty = models.ForeignKey(PaperCheckingDuty, on_delete=models.CASCADE, related_name='allocations')
+    department = models.ForeignKey(
+        Department,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='paper_checking_allocations',
+    )
+    department_code_raw = models.CharField(max_length=40)
+    block_range = models.CharField(max_length=160, blank=True)
+
+    class Meta:
+        verbose_name = 'Paper checking allocation'
+        verbose_name_plural = 'Paper checking allocations'
+
+    def __str__(self):
+        return f'{self.department_code_raw} {self.block_range}'
+
+
+class PaperCheckingAdjustedShare(models.Model):
+    """Sub-unit coordinator splits one imported duty row among faculty (sheet row + total unchanged)."""
+    duty = models.ForeignKey(
+        PaperCheckingDuty,
+        on_delete=models.CASCADE,
+        related_name='adjusted_shares',
+    )
+    faculty = models.ForeignKey(
+        Faculty,
+        on_delete=models.CASCADE,
+        related_name='paper_checking_adjusted_shares',
+    )
+    paper_count = models.PositiveIntegerField()
+    created_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='paper_check_adjusted_shares_created',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=['duty', 'faculty'],
+                name='uniq_paper_check_adjusted_share_duty_faculty',
+            ),
+        ]
+        ordering = ['duty_id', 'faculty__full_name']
+        verbose_name = 'Paper checking adjusted share'
+        verbose_name_plural = 'Paper checking adjusted shares'
+
+    def __str__(self):
+        return f'{self.duty_id} → {self.faculty.short_name}: {self.paper_count}'
+
+
+class PaperCheckingCompletionRequest(models.Model):
+    """Faculty marks paper checking done; sub-unit coordinator approves or dismisses."""
+    PENDING = 'pending'
+    APPROVED = 'approved'
+    REJECTED = 'rejected'
+    STATUS_CHOICES = [
+        (PENDING, 'Pending'),
+        (APPROVED, 'Approved'),
+        (REJECTED, 'Dismissed'),
+    ]
+
+    duty = models.ForeignKey(
+        PaperCheckingDuty,
+        on_delete=models.CASCADE,
+        related_name='completion_requests',
+    )
+    faculty = models.ForeignKey(
+        Faculty,
+        on_delete=models.CASCADE,
+        related_name='paper_checking_completion_requests',
+    )
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default=PENDING)
+    submitted_at = models.DateTimeField(auto_now_add=True)
+    decided_at = models.DateTimeField(null=True, blank=True)
+    decided_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='paper_checking_completion_decisions',
+    )
+
+    class Meta:
+        ordering = ['-submitted_at']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['duty', 'faculty'],
+                condition=models.Q(status='pending'),
+                name='uniq_pending_paper_check_completion_per_duty_faculty',
+            ),
+        ]
+        verbose_name = 'Paper checking completion request'
+        verbose_name_plural = 'Paper checking completion requests'
+
+    def __str__(self):
+        return f'{self.faculty_id} → duty {self.duty_id} ({self.status})'
+
+    def papers_for_faculty_display(self) -> int:
+        """Paper count this faculty is responsible for (adjusted share or full duty)."""
+        cache = getattr(self, '_papers_for_faculty_display_cache', None)
+        if cache is not None:
+            return cache
+        duty = self.duty
+        if (
+            getattr(duty, '_prefetched_objects_cache', None)
+            and 'adjusted_shares' in duty._prefetched_objects_cache
+        ):
+            for sh in duty.adjusted_shares.all():
+                if sh.faculty_id == self.faculty_id:
+                    self._papers_for_faculty_display_cache = sh.paper_count
+                    return sh.paper_count
+            self._papers_for_faculty_display_cache = duty.total_students
+            return self._papers_for_faculty_display_cache
+        sh = PaperCheckingAdjustedShare.objects.filter(
+            duty_id=self.duty_id, faculty_id=self.faculty_id
+        ).first()
+        v = sh.paper_count if sh else duty.total_students
+        self._papers_for_faculty_display_cache = v
+        return v
+
+
+class PaperSettingPhase(models.Model):
+    """Paper setting duty round (separate uploads from checking)."""
+    institute_semester = models.ForeignKey(
+        InstituteSemester,
+        on_delete=models.CASCADE,
+        related_name='paper_setting_phases',
+        null=True,
+        blank=True,
+        help_text='Empty for exam-section (institute) phases — shared across all academic semesters. '
+        'Required for department / hub phases.',
+    )
+    institute_scope = models.BooleanField(default=False)
+    department = models.ForeignKey(
+        Department,
+        on_delete=models.CASCADE,
+        related_name='paper_setting_phases',
+        null=True,
+        blank=True,
+    )
+    hub_coordinator = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name='hub_paper_setting_phases',
+    )
+    name = models.CharField(max_length=80)
+    created_by = models.ForeignKey(
+        User, on_delete=models.SET_NULL, null=True, blank=True, related_name='paper_setting_phases_created'
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['name']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['department', 'name'],
+                condition=models.Q(department__isnull=False, institute_scope=False),
+                name='uniq_paper_set_phase_dept_name',
+            ),
+            models.UniqueConstraint(
+                fields=['hub_coordinator', 'name', 'institute_semester'],
+                condition=models.Q(hub_coordinator__isnull=False, institute_scope=False),
+                name='uniq_paper_set_phase_hub_name',
+            ),
+            models.UniqueConstraint(
+                fields=['name'],
+                condition=models.Q(institute_scope=True),
+                name='uniq_paper_set_phase_institute_name',
+            ),
+            models.CheckConstraint(
+                check=models.Q(institute_scope=True)
+                | models.Q(institute_semester__isnull=False),
+                name='paper_set_phase_semester_if_dept_or_hub',
+            ),
+        ]
+        verbose_name = 'Paper setting phase'
+        verbose_name_plural = 'Paper setting phases'
+
+    def __str__(self):
+        if self.institute_scope:
+            return f'{self.name} (institute)'
+        if self.department_id:
+            return f'{self.name} ({self.department.name})'
+        if self.hub_coordinator_id:
+            return f'{self.name} (hub)'
+        return self.name
+
+
+class PaperSettingDuty(models.Model):
+    phase = models.ForeignKey(PaperSettingPhase, on_delete=models.CASCADE, related_name='duties')
+    faculty = models.ForeignKey(
+        Faculty,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name='paper_setting_duties',
+    )
+    faculty_name_raw = models.CharField(max_length=250, blank=True)
+    faculty_short_raw = models.CharField(max_length=40, blank=True)
+    duty_date = models.DateField(null=True, blank=True)
+    deadline_date = models.DateField(
+        null=True,
+        blank=True,
+        help_text='Target completion date (from upload or duty date).',
+    )
+    subject_name = models.CharField(max_length=200, blank=True)
+    notes = models.TextField(blank=True)
+
+    class Meta:
+        ordering = ['duty_date', 'subject_name', 'faculty_short_raw']
+        verbose_name = 'Paper setting duty'
+        verbose_name_plural = 'Paper setting duties'
+
+    def __str__(self):
+        who = self.faculty.short_name if self.faculty_id else (self.faculty_short_raw or '?')
+        return f'{who} {self.subject_name}'
+
+
+class PaperSettingCompletionRequest(models.Model):
+    """Faculty marks paper setting done; department / sub-unit coordinator approves."""
+
+    PENDING = 'pending'
+    APPROVED = 'approved'
+    REJECTED = 'rejected'
+    STATUS_CHOICES = [
+        (PENDING, 'Pending'),
+        (APPROVED, 'Approved'),
+        (REJECTED, 'Dismissed'),
+    ]
+
+    duty = models.ForeignKey(
+        PaperSettingDuty,
+        on_delete=models.CASCADE,
+        related_name='completion_requests',
+    )
+    faculty = models.ForeignKey(
+        Faculty,
+        on_delete=models.CASCADE,
+        related_name='paper_setting_completion_requests',
+    )
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default=PENDING)
+    submitted_at = models.DateTimeField(auto_now_add=True)
+    decided_at = models.DateTimeField(null=True, blank=True)
+    decided_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='paper_setting_completion_decisions',
+    )
+
+    class Meta:
+        ordering = ['-submitted_at']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['duty', 'faculty'],
+                condition=models.Q(status='pending'),
+                name='uniq_pending_paper_set_completion_per_duty_faculty',
+            ),
+        ]
+        verbose_name = 'Paper setting completion request'
+        verbose_name_plural = 'Paper setting completion requests'
+
+    def __str__(self):
+        return f'{self.faculty_id} → paper setting duty {self.duty_id} ({self.status})'
+
+
+class DepartmentExamCreditRule(models.Model):
+    """Phase-wise credits. department NULL = institute default (all departments). Blank subject = bucket default."""
+
+    TASK_PAPER_SETTING = 'paper_setting'
+    TASK_SUPERVISION = 'supervision'
+    TASK_PAPER_CHECKING = 'paper_checking'
+    TASK_CHOICES = [
+        (TASK_PAPER_SETTING, 'Paper setting (per approved duty)'),
+        (TASK_SUPERVISION, 'Supervision (per completed duty)'),
+        (TASK_PAPER_CHECKING, 'Paper checking (theory fallback: credit per paper if no subject rule)'),
+    ]
+
+    BUCKET_T1_T3 = 't1_t3'
+    BUCKET_SEE = 'see'
+    BUCKET_REMEDIAL = 'remedial'
+    BUCKET_FAST_TRACK = 'fast_track'
+    BUCKET_CHOICES = [
+        (BUCKET_T1_T3, 'T1–T3 / internal'),
+        (BUCKET_SEE, 'T4 / SEE'),
+        (BUCKET_REMEDIAL, 'Remedial'),
+        (BUCKET_FAST_TRACK, 'Fast track'),
+    ]
+
+    department = models.ForeignKey(
+        Department,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name='exam_credit_rules',
+        help_text='Empty = institute default applied to all departments (unless a department has its own rule).',
+    )
+    task = models.CharField(max_length=24, choices=TASK_CHOICES)
+    phase_bucket = models.CharField(max_length=20, choices=BUCKET_CHOICES)
+    subject_name = models.CharField(
+        max_length=200,
+        blank=True,
+        help_text='Leave empty for department default; otherwise overrides for that subject only.',
+    )
+    credit = models.DecimalField(max_digits=8, decimal_places=2, default=0)
+    remuneration = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=0,
+        help_text='₹ per same unit as credit (per duty for setting/supervision; per paper for checking fallback).',
+    )
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['department_id', 'task', 'phase_bucket', 'subject_name']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['department', 'task', 'phase_bucket', 'subject_name'],
+                condition=models.Q(department__isnull=False),
+                name='uniq_dept_exam_credit_rule',
+            ),
+            models.UniqueConstraint(
+                fields=['task', 'phase_bucket', 'subject_name'],
+                condition=models.Q(department__isnull=True),
+                name='uniq_institute_exam_credit_rule',
+            ),
+        ]
+        verbose_name = 'Department exam credit rule'
+        verbose_name_plural = 'Department exam credit rules'
+
+    def __str__(self):
+        subj = (self.subject_name or '').strip() or '(default)'
+        who = self.department.name if self.department_id else 'All departments'
+        return f'{who} {self.task} {self.phase_bucket} {subj} → {self.credit}'

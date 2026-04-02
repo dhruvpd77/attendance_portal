@@ -1,0 +1,195 @@
+{% extends 'core/exam_portal_base.html' %}
+{% block title %}Paper checking — {{ phase.name }}{% endblock %}
+{% block content %}
+
+<div class="exam-portal-hero mb-4">
+    <div class="flex-grow-1">
+        <h1 class="page-title mb-2">Phase {{ phase.name }}</h1>
+        <p class="page-subtitle mb-0">Import evaluation duties, set <strong>credit per paper</strong> by subject. <strong>Practical</strong> rows use <em>both</em> online and offline rates with the <em>same</em> paper count. Faculty see totals after coordinator approval; credits flow into the <strong>Daily Report</strong>.</p>
+    </div>
+    <a href="{% url 'core:paper_checking_dashboard' %}" class="btn btn-outline-light btn-sm rounded-pill border-secondary flex-shrink-0">All phases</a>
+</div>
+
+{% include 'core/exam_paper/_excel_upload_format_reference.html' with format_kind='checking' %}
+
+<div class="exam-section-card mb-4 accent-success exam-paper-accent checking">
+    <div class="card-header py-3 d-flex align-items-center gap-2">
+        <span class="duty-format-icon duty-format-icon--checking"><i class="fas fa-cloud-upload-alt"></i></span>
+        <div>
+            <h6 class="mb-0 fw-semibold">Upload evaluation workbook</h6>
+            <p class="small mb-0 mt-1 text-white-50">Accepted: .xlsx, .xls — layout must match the sample above (Date of Exam / Subject …).</p>
+        </div>
+    </div>
+    <div class="card-body py-4">
+        <form method="post" action="{% url 'core:paper_checking_phase_upload' phase.id %}" enctype="multipart/form-data">
+            {% csrf_token %}
+            <div class="row g-3 align-items-end">
+                <div class="col-lg-8">
+                    <label class="form-label small fw-semibold text-body-secondary"><i class="fas fa-file-upload me-1"></i>Select file</label>
+                    <div class="duty-upload-zone duty-upload-zone--checking">
+                        <input type="file" name="paper_file" class="form-control form-control-app border-0 bg-transparent" accept=".xlsx,.xls" required>
+                    </div>
+                    <p class="small text-muted mb-0 mt-2">Loads a <strong>preview</strong> first; use <strong>Save to database</strong> after reviewing. Deadlines default to the day after each exam date.</p>
+                </div>
+                <div class="col-lg-4">
+                    <button type="submit" class="btn btn-primary-app w-100 rounded-3 fw-semibold py-2 shadow-sm"><i class="fas fa-file-import me-2"></i>Load preview</button>
+                </div>
+            </div>
+        </form>
+        <hr class="my-3 border-secondary border-opacity-25">
+        <div class="d-flex flex-wrap gap-2">
+            <form method="post" action="{% url 'core:paper_checking_phase_clear' phase.id %}" class="m-0" onsubmit="return confirm('Clear all imported rows for this phase?');">
+                {% csrf_token %}
+                <button type="submit" class="btn btn-outline-danger btn-sm rounded-pill">Clear all duties</button>
+            </form>
+            <a href="{% url 'core:paper_checking_dashboard' %}" class="btn btn-outline-secondary btn-sm rounded-pill">Back to dashboard</a>
+        </div>
+    </div>
+</div>
+
+{% if credit_rows %}
+<div class="exam-section-card mb-4 accent-success">
+    <div class="card-header py-3"><h6 class="mb-0 fw-semibold"><i class="fas fa-coins me-2"></i>Subject credits (per evaluated paper)</h6></div>
+    <div class="card-body p-0">
+        <form method="post" action="{% url 'core:paper_checking_phase_subject_credits_save' phase.id %}">
+            {% csrf_token %}
+            <div class="table-responsive">
+                <table class="table table-sm mb-0 align-middle exam-table-theme">
+                    <thead>
+                        <tr>
+                            <th>Subject <span class="text-muted small fw-normal">(from import)</span></th>
+                            <th class="text-center">Practical</th>
+                            <th>Theory credit / paper</th>
+                            <th>Online / paper</th>
+                            <th>Offline / paper</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for row in credit_rows %}
+                        <tr>
+                            <td class="fw-semibold">{{ row.name }}<input type="hidden" name="credit_subject" value="{{ row.name }}"></td>
+                            <td class="text-center">
+                                <input class="form-check-input" type="checkbox" name="credit_is_practical" value="{{ row.name }}" {% if row.is_practical %}checked{% endif %} title="Uses online/offline columns">
+                            </td>
+                            <td style="max-width:8rem"><input type="text" name="credit_theory" class="form-control form-control-app form-control-sm" value="{{ row.theory }}" placeholder="0"></td>
+                            <td style="max-width:8rem"><input type="text" name="credit_online" class="form-control form-control-app form-control-sm" value="{{ row.online }}" placeholder="0"></td>
+                            <td style="max-width:8rem"><input type="text" name="credit_offline" class="form-control form-control-app form-control-sm" value="{{ row.offline }}" placeholder="0"></td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            <div class="p-3 bg-light border-top d-flex flex-wrap gap-2 justify-content-between align-items-center">
+                <p class="small text-muted mb-0"><strong>Practical:</strong> one <strong>Completed</strong> submission per duty. Credits = <code>papers × (online credit + offline credit)</code> — same paper count for both components.</p>
+                <button type="submit" class="btn btn-primary-app rounded-3 fw-semibold px-4"><i class="fas fa-save me-1"></i>Save credits</button>
+            </div>
+        </form>
+    </div>
+</div>
+{% elif duties %}
+<div class="alert alert-secondary border-0 rounded-3 mb-4 shadow-sm small"><i class="fas fa-info-circle me-2"></i>Upload evaluation rows first — subject names will appear here for credit configuration.</div>
+{% endif %}
+
+{% if staging_preview %}
+<div class="duty-draft-banner p-3 mb-4 d-flex flex-wrap align-items-center justify-content-between gap-3">
+    <div class="small">
+        <strong class="text-dark">Draft import</strong> — <span class="text-primary fw-semibold">{{ staging_preview|length }}</span> row(s) in session (not saved).
+        {% if staging_unmatched %}<span class="ms-1 text-warning fw-semibold">{{ staging_unmatched }} could not be linked to a faculty.</span>{% endif %}
+    </div>
+    <div class="d-flex flex-wrap gap-2">
+        <form method="post" action="{% url 'core:paper_checking_phase_commit' phase.id %}" class="m-0">
+            {% csrf_token %}
+            <button type="submit" class="btn btn-success btn-sm rounded-pill fw-semibold px-3" onclick="return confirm('Replace all saved duties for this phase with this draft?');">Save to database</button>
+        </form>
+        <form method="post" action="{% url 'core:paper_checking_phase_discard_staging' phase.id %}" class="m-0">
+            {% csrf_token %}
+            <button type="submit" class="btn btn-outline-secondary btn-sm rounded-pill">Discard draft</button>
+        </form>
+    </div>
+</div>
+<div class="exam-section-card mb-4 accent-success">
+    <div class="card-header py-3">
+        <h6 class="mb-0 fw-semibold"><i class="fas fa-eye me-2"></i>Preview (draft)</h6>
+    </div>
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table table-sm mb-0 exam-table-theme">
+                <thead>
+                    <tr>
+                        <th>Exam date</th>
+                        <th>Subject</th>
+                        <th>Faculty</th>
+                        <th>Papers</th>
+                        <th>Dept / blocks</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for d in staging_preview %}
+                    <tr>
+                        <td>{% if d.exam_date %}{{ d.exam_date|date:"M j, Y" }}{% else %}—{% endif %}</td>
+                        <td>{{ d.subject_name }}</td>
+                        <td>
+                            {% if d.faculty %}{{ d.faculty.full_name }} ({{ d.faculty.short_name }})
+                            {% else %}<span class="text-warning">{{ d.evaluator_initial }} — not linked</span>{% endif %}
+                        </td>
+                        <td>{{ d.total_students }}</td>
+                        <td class="small">
+                            {% for a in d.allocations %}
+                            <div><strong>{{ a.dept_code }}</strong>: {{ a.block_range }}</div>
+                            {% empty %}—{% endfor %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+<div class="exam-section-card mb-4">
+    <div class="card-header py-3 d-flex justify-content-between align-items-center flex-wrap gap-2">
+        <h6 class="mb-0 fw-semibold"><i class="fas fa-database me-2 text-secondary"></i>Saved duties (database)</h6>
+        {% if duties %}<span class="badge rounded-pill bg-secondary bg-opacity-25 text-dark border">{{ duties|length }} row(s)</span>{% endif %}
+    </div>
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table table-sm mb-0 exam-table-theme">
+                <thead>
+                    <tr>
+                        <th>Exam date</th>
+                        <th>Subject</th>
+                        <th>Faculty</th>
+                        <th>Papers</th>
+                        <th>Deadline</th>
+                        <th>Dept / blocks</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for d in duties %}
+                    <tr>
+                        <td>{{ d.exam_date|date:"M j, Y" }}</td>
+                        <td>{{ d.subject_name }}</td>
+                        <td>
+                            {% if d.faculty %}{{ d.faculty.full_name }} ({{ d.faculty.short_name }})
+                            {% else %}<span class="text-warning">{{ d.evaluator_short_raw }} — not linked</span>{% endif %}
+                        </td>
+                        <td>{{ d.total_students }}</td>
+                        <td><span class="badge text-bg-info">{{ d.deadline_date|date:"M j, Y" }}</span></td>
+                        <td class="small">
+                            {% for a in d.allocations.all %}
+                            <div><strong>{{ a.department_code_raw }}</strong>
+                                {% if a.department %}→ {{ a.department.name }}{% endif %}
+                                : {{ a.block_range }}</div>
+                            {% empty %}—{% endfor %}
+                        </td>
+                    </tr>
+                    {% empty %}
+                    <tr><td colspan="6" class="text-center text-muted py-4">No rows yet — upload an Excel file.</td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endblock %}

@@ -1,0 +1,34 @@
+{% extends 'core/exam_portal_base.html' %}
+{% block title %}Edit operator — {{ role_obj.user.username }}{% endblock %}
+{% block content %}
+<div class="exam-portal-hero mb-4 align-items-start">
+    <div>
+        <h1 class="page-title">Edit exam section operator</h1>
+        <p class="page-subtitle mb-0"><code class="text-light">{{ role_obj.user.username }}</code></p>
+    </div>
+    <a href="{% url 'core:exam_section_dashboard' %}" class="btn btn-outline-light btn-sm border-secondary">Back to Exam section</a>
+</div>
+<div class="row justify-content-center">
+    <div class="col-lg-6">
+        <div class="card exam-section-card mb-4">
+            <div class="card-header">
+                <h5 class="mb-0 fw-semibold">Credentials</h5>
+            </div>
+            <div class="card-body">
+                <form method="post">
+                    {% csrf_token %}
+                    <div class="mb-3">
+                        <label class="form-label">New username <span class="text-muted small">(optional)</span></label>
+                        <input type="text" name="username" class="form-control form-control-app" value="{{ role_obj.user.username }}" autocomplete="username">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">New password <span class="text-muted small">(leave blank to keep current)</span></label>
+                        <input type="password" name="password" class="form-control form-control-app" autocomplete="new-password">
+                    </div>
+                    <button type="submit" class="btn btn-primary-app">Save changes</button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

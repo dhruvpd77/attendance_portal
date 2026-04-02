@@ -1,0 +1,71 @@
+{% extends 'core/admin/base_admin.html' %}
+{% load static %}
+{% block title %}Upload Faculties (Excel) - LJIET_Attendance{% endblock %}
+{% block content %}
+<div class="admin-hero">
+    <div class="d-flex align-items-center gap-3">
+        <img src="{% static 'images/ljiet-logo.png' %}" alt="LJIET" class="admin-logo">
+        <div>
+            <h1 class="page-title mb-1">Upload faculties</h1>
+            <p class="page-subtitle mb-0">{% if department %}{{ department.name }}{% endif %} — bulk add or update from Excel</p>
+        </div>
+    </div>
+    <div class="d-flex align-items-center gap-2 flex-wrap">
+        <button type="button" class="btn btn-outline-light btn-sm" data-bs-toggle="modal" data-bs-target="#excelFormatModal">
+            <i class="fas fa-info-circle me-1"></i> Format
+        </button>
+        <a href="{% url 'core:faculty_upload_excel_template' %}" class="btn btn-outline-light btn-sm">
+            <i class="fas fa-download me-1"></i> Download template
+        </a>
+        <a href="{% url 'core:faculty_list' %}" class="btn btn-outline-light btn-sm"><i class="fas fa-arrow-left me-1"></i> Back</a>
+    </div>
+</div>
+
+<div class="modal fade" id="excelFormatModal" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title"><i class="fas fa-file-excel me-2"></i>Excel format</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <p class="mb-3">First row must be column headers (names are case-insensitive; spaces or underscores both work).</p>
+                <table class="table table-sm table-bordered mb-0">
+                    <thead><tr><th>Column</th><th>Required</th><th>Recognized headers</th></tr></thead>
+                    <tbody>
+                        <tr>
+                            <td><code>full_name</code></td>
+                            <td>Yes</td>
+                            <td><code>full_name</code>, <code>name</code>, <code>faculty_name</code>, …</td>
+                        </tr>
+                        <tr>
+                            <td><code>short_name</code></td>
+                            <td>Yes</td>
+                            <td><code>short_name</code>, <code>initials</code>, <code>code</code>, …</td>
+                        </tr>
+                        <tr>
+                            <td><code>email</code></td>
+                            <td>No</td>
+                            <td><code>email</code>, <code>email_id</code></td>
+                        </tr>
+                    </tbody>
+                </table>
+                <p class="mt-3 mb-0 small text-muted">If a short name already exists in this department, the row updates full name and email when provided. New logins are not created here — use Generate credentials after import.</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="card admin-card" style="max-width: 560px;">
+    <div class="card-body p-4">
+        <form method="post" enctype="multipart/form-data" action="{% url 'core:faculty_upload_excel' %}">
+            {% csrf_token %}
+            <div class="mb-4">
+                <label class="form-label">Excel file (.xlsx)</label>
+                <input type="file" name="excel_file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" required class="form-control form-control-app">
+            </div>
+            <button type="submit" class="btn btn-primary-app"><i class="fas fa-upload me-1"></i> Upload</button>
+        </form>
+    </div>
+</div>
+{% endblock %}

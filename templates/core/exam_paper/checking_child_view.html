@@ -1,0 +1,339 @@
+{% extends 'core/exam_portal_base.html' %}
+{% block title %}Paper checking — {{ subunit }}{% endblock %}
+{% block content %}
+<style>
+.pc-filter-card { border-radius: 16px; border: 1px solid #e2e8f0; box-shadow: 0 4px 20px rgba(15,23,42,0.06); }
+.pc-pending-card { border-radius: 16px; border: 2px solid rgba(16, 185, 129, 0.35); overflow: hidden; }
+.pc-pending-head { background: linear-gradient(90deg, #047857 0%, #10b981 100%); color: #fff; padding: 0.85rem 1.15rem; font-weight: 700; }
+.pc-history-card { border-radius: 16px; border: 1px solid #cbd5e1; overflow: hidden; box-shadow: 0 4px 18px rgba(15,23,42,0.05); }
+.pc-history-head { background: linear-gradient(90deg, #334155 0%, #475569 100%); color: #fff; padding: 0.85rem 1.15rem; font-weight: 700; }
+.alloc-badge { font-size: 0.8rem; background: #ecfdf5; color: #065f46; border-radius: 8px; padding: 0.2rem 0.5rem; margin: 0.15rem 0.25rem 0 0; display: inline-block; }
+.pc-adjust-summary { font-size: 0.78rem; color: #475569; line-height: 1.35; }
+</style>
+
+<div class="exam-portal-hero">
+    <h1 class="page-title">Paper checking — {{ department_name|default:subunit }}</h1>
+    <p class="page-subtitle mb-0">
+        Evaluators assigned to <strong>your department’s blocks</strong> only (sub-unit <strong>{{ subunit }}</strong>).
+        Choose a phase, then optionally a subject, to see duties.         Approve faculty “completion” requests below. <strong>History</strong> lists every Accept or Dismiss you have already processed.
+    </p>
+</div>
+
+{% if pending_completions_enriched %}
+<div class="pc-pending-card mb-4">
+    <div class="pc-pending-head"><i class="fas fa-inbox me-2"></i>Pending completion requests ({{ pending_completions_enriched|length }})</div>
+    <div class="table-responsive mb-0">
+        <table class="table table-app mb-0">
+            <thead>
+                <tr>
+                    <th>Faculty</th><th>Phase</th><th>Exam</th><th>Subject</th><th>Papers</th><th class="text-end">Credit*</th><th>Submitted</th><th class="text-end">Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for item in pending_completions_enriched %}
+                {% with r=item.r %}
+                <tr>
+                    <td>{{ r.faculty.full_name }} <span class="text-muted small">({{ r.faculty.short_name }})</span></td>
+                    <td><span class="badge text-bg-success">{{ r.duty.phase.name }}</span></td>
+                    <td>{{ r.duty.exam_date|date:"M j, Y" }}</td>
+                    <td class="fw-semibold">{{ r.duty.subject_name }}</td>
+                    <td>{{ r.papers_for_faculty_display }}</td>
+                    <td class="text-end fw-semibold text-success">{{ item.credit|floatformat:2 }}</td>
+                    <td class="small">{{ r.submitted_at|date:"M j, Y H:i" }}</td>
+                    <td class="text-end text-nowrap">
+                        <form method="post" action="{% url 'core:paper_checking_child_approve_completion' r.pk %}" class="d-inline">
+                            {% csrf_token %}
+                            <button type="submit" class="btn btn-sm btn-success rounded-pill px-3">Accept</button>
+                        </form>
+                        <form method="post" action="{% url 'core:paper_checking_child_dismiss_completion' r.pk %}" class="d-inline" onsubmit="return confirm('Dismiss this request? Faculty can submit again.');">
+                            {% csrf_token %}
+                            <button type="submit" class="btn btn-sm btn-outline-secondary rounded-pill">Dismiss</button>
+                        </form>
+                    </td>
+                </tr>
+                {% endwith %}
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    <p class="small text-muted mb-0 py-2 px-3 border-top bg-light">*Credit is calculated from subject rules if the request is accepted as-is.</p>
+</div>
+{% endif %}
+
+<div class="card card-app pc-filter-card mb-4">
+    <div class="card-body">
+        <h6 class="fw-bold mb-3"><i class="fas fa-filter text-success me-2"></i>Filter assignments</h6>
+        <form method="get" class="row g-3 align-items-end">
+            <div class="col-md-4">
+                <label class="form-label">Phase</label>
+                <select name="phase_id" class="form-select form-select-app" id="pcPhase" onchange="this.form.querySelector('[name=subject]').value=''; this.form.submit();">
+                    <option value="">— Select phase —</option>
+                    {% for p in phases %}
+                    <option value="{{ p.pk }}" {% if selected_phase_id == p.pk %}selected{% endif %}>{{ p.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-4">
+                <label class="form-label">Subject <span class="text-muted small">(optional)</span></label>
+                <select name="subject" class="form-select form-select-app" {% if not selected_phase_id %}disabled{% endif %}>
+                    <option value="">All subjects in phase</option>
+                    {% for s in subject_choices %}
+                    <option value="{{ s }}" {% if selected_subject == s %}selected{% endif %}>{{ s }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-4">
+                <button type="submit" class="btn btn-primary-app" {% if not selected_phase_id %}disabled{% endif %}>Apply filter</button>
+                {% if selected_phase_id %}
+                <a href="{% url 'core:paper_checking_dashboard' %}" class="btn btn-outline-secondary rounded-pill">Reset</a>
+                {% endif %}
+            </div>
+        </form>
+        {% if not phases %}
+        <p class="text-muted small mb-0 mt-2">No paper checking duties reference allocations for <strong>{{ department_name }}</strong> yet. Ensure evaluation Excel is uploaded and department codes match Admin → Departments.</p>
+        {% elif not selected_phase_id %}
+        <p class="text-muted small mb-0 mt-3">Select a <strong>phase</strong> to load evaluator rows for your department’s blocks.</p>
+        {% endif %}
+    </div>
+</div>
+
+{% if selected_phase_id %}
+<div class="card card-app">
+    <div class="card-header bg-white border-0 py-3">
+        <h5 class="mb-0 fw-semibold">Assignments</h5>
+        {% if selected_subject %}<p class="small text-muted mb-0 mt-1">Subject: <strong>{{ selected_subject }}</strong></p>{% endif %}
+    </div>
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table table-app mb-0">
+                <thead>
+                    <tr>
+                        <th>Phase</th><th>Exam</th><th>Subject</th><th>Evaluator</th><th>Papers</th><th>Deadline</th><th>Blocks for {{ department_name }}</th>{% if dept_faculty %}<th class="text-end">Split duty</th>{% endif %}
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for d in duties %}
+                    <tr>
+                        <td>{{ d.phase.name }}</td>
+                        <td>{{ d.exam_date|date:"M j, Y" }}</td>
+                        <td class="fw-semibold">{{ d.subject_name }}</td>
+                        <td>
+                            {% if d.adjusted_shares.all %}
+                            <span class="badge text-bg-info text-dark mb-1">Adjusted</span>
+                            <div class="pc-adjust-summary">
+                                {% for s in d.adjusted_shares.all %}
+                                <strong>{{ s.faculty.short_name }}</strong>: {{ s.paper_count }}{% if not forloop.last %} · {% endif %}
+                                {% endfor %}
+                            </div>
+                            <div class="text-muted small mt-1">Sheet evaluator: {% if d.faculty %}{{ d.faculty.short_name }}{% else %}{{ d.evaluator_short_raw }}{% endif %}</div>
+                            {% else %}
+                            {% if d.faculty %}{{ d.faculty.full_name }}{% else %}<span class="text-warning">{{ d.evaluator_short_raw }}</span>{% endif %}
+                            {% endif %}
+                        </td>
+                        <td>{{ d.total_students }}</td>
+                        <td>{{ d.deadline_date|date:"M j, Y" }}</td>
+                        <td class="small">
+                            {% for a in d.allocations.all %}
+                            {% if a.department_id == profile.department_id %}
+                            <span class="alloc-badge">{{ a.department_code_raw }}: {{ a.block_range }}</span>
+                            {% endif %}
+                            {% empty %}—{% endfor %}
+                        </td>
+                        {% if dept_faculty %}
+                        <td class="text-end text-nowrap">
+                            <button type="button" class="btn btn-sm btn-outline-primary rounded-3"
+                                    data-bs-toggle="modal" data-bs-target="#pcAdjustModal"
+                                    data-duty-id="{{ d.pk }}"
+                                    data-total="{{ d.total_students }}"
+                                    data-label="{{ d.subject_name|escapejs }} · {{ d.exam_date|date:'M j, Y' }}"
+                                    data-adjustments='[{% for s in d.adjusted_shares.all %}{"id":{{ s.faculty_id }},"papers":{{ s.paper_count }}}{% if not forloop.last %},{% endif %}{% endfor %}]'>
+                                Adjust
+                            </button>
+                        </td>
+                        {% endif %}
+                    </tr>
+                    {% empty %}
+                    <tr><td colspan="{% if dept_faculty %}8{% else %}7{% endif %}" class="text-center text-muted py-4">No rows for this filter.</td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+{% if history_completions_enriched %}
+<div class="pc-history-card mt-4">
+    <div class="pc-history-head"><i class="fas fa-history me-2"></i>History — decisions you made ({{ history_completions_enriched|length }} recent)</div>
+    <div class="table-responsive mb-0">
+        <table class="table table-app mb-0">
+            <thead>
+                <tr>
+                    <th>Result</th>
+                    <th>Faculty</th>
+                    <th>Phase</th>
+                    <th>Exam</th>
+                    <th>Subject</th>
+                    <th>Papers</th>
+                    <th class="text-end">Credit</th>
+                    <th>Submitted</th>
+                    <th>Decided</th>
+                    <th>By</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for item in history_completions_enriched %}
+                {% with r=item.r %}
+                <tr>
+                    <td>
+                        {% if r.status == 'approved' %}
+                        <span class="badge text-bg-success">Accepted</span>
+                        {% else %}
+                        <span class="badge text-bg-secondary">Dismissed</span>
+                        {% endif %}
+                    </td>
+                    <td>{{ r.faculty.full_name }} <span class="text-muted small">({{ r.faculty.short_name }})</span></td>
+                    <td><span class="badge text-bg-light text-dark border">{{ r.duty.phase.name }}</span></td>
+                    <td>{{ r.duty.exam_date|date:"M j, Y" }}</td>
+                    <td class="fw-semibold">{{ r.duty.subject_name }}</td>
+                    <td>{{ r.papers_for_faculty_display }}</td>
+                    <td class="text-end fw-semibold">{% if item.credit is not None %}{{ item.credit|floatformat:2 }}{% else %}—{% endif %}</td>
+                    <td class="small">{{ r.submitted_at|date:"M j, Y H:i" }}</td>
+                    <td class="small">{% if r.decided_at %}{{ r.decided_at|date:"M j, Y H:i" }}{% else %}—{% endif %}</td>
+                    <td class="small">{% if r.decided_by %}{{ r.decided_by.username }}{% else %}—{% endif %}</td>
+                </tr>
+                {% endwith %}
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% else %}
+<div class="card card-app border-0 bg-light mt-4">
+    <div class="card-body py-3 text-muted small">
+        <i class="fas fa-history me-2"></i><strong>History</strong> will appear here after you accept or dismiss completion requests. None yet.
+    </div>
+</div>
+{% endif %}
+
+{% if dept_faculty and selected_phase_id %}
+<template id="pc-share-row-tpl">
+    <tr class="pc-share-row">
+        <td>
+            <select name="share_faculty" class="form-select form-select-sm form-select-app" required>
+                <option value="">— Faculty —</option>
+                {% for f in dept_faculty %}
+                <option value="{{ f.pk }}">{{ f.full_name }} ({{ f.short_name }})</option>
+                {% endfor %}
+            </select>
+        </td>
+        <td style="width:7rem"><input type="number" name="share_papers" class="form-control form-control-sm form-control-app" min="1" step="1" required></td>
+        <td class="text-end" style="width:4rem"><button type="button" class="btn btn-link btn-sm text-danger p-0 pc-remove-share">Remove</button></td>
+    </tr>
+</template>
+
+<div class="modal fade" id="pcAdjustModal" tabindex="-1" aria-labelledby="pcAdjustModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered modal-lg">
+        <div class="modal-content" style="border-radius:16px;">
+            <div class="modal-header border-0 pb-0">
+                <h5 class="modal-title fw-bold" id="pcAdjustModalLabel">Split paper checking</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <form method="post" action="{% url 'core:paper_checking_child_save_adjustment' %}" id="pcAdjustForm">
+                {% csrf_token %}
+                <input type="hidden" name="duty_id" id="pcAdjustDutyId" value="">
+                <input type="hidden" name="filter_phase_id" value="{{ selected_phase_id }}">
+                <input type="hidden" name="filter_subject" value="{{ selected_subject }}">
+                <div class="modal-body pt-0">
+                    <p class="small text-muted mb-2" id="pcAdjustDutyMeta"></p>
+                    <p class="small mb-3">Assign the <strong id="pcAdjustTotalN">0</strong> papers from this duty row to one or more faculty in your department. Totals must match exactly. Faculty on the sheet will no longer see this row in <em>My exam duties</em>; only the faculty you list below will see it (marked <strong>Adjusted</strong>).</p>
+                    <div class="table-responsive">
+                        <table class="table table-sm align-middle mb-2">
+                            <thead><tr><th>Faculty</th><th>Papers</th><th></th></tr></thead>
+                            <tbody id="pcShareRowsBody"></tbody>
+                        </table>
+                    </div>
+                    <button type="button" class="btn btn-outline-secondary btn-sm mb-3" id="pcAddShareRow"><i class="fas fa-plus me-1"></i>Add faculty</button>
+                    <p class="small text-danger mb-0 d-none" id="pcAdjustSumWarn">The sum of paper counts must equal the duty total before saving.</p>
+                </div>
+                <div class="modal-footer border-0 pt-0">
+                    <button type="button" class="btn btn-outline-secondary rounded-3" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-success rounded-3" id="pcAdjustSubmit">Save adjustment</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+<script>
+(function () {
+    var modalEl = document.getElementById('pcAdjustModal');
+    var tpl = document.getElementById('pc-share-row-tpl');
+    var bodyEl = document.getElementById('pcShareRowsBody');
+    var dutyIdInput = document.getElementById('pcAdjustDutyId');
+    var totalN = document.getElementById('pcAdjustTotalN');
+    var metaEl = document.getElementById('pcAdjustDutyMeta');
+    var sumWarn = document.getElementById('pcAdjustSumWarn');
+    if (!modalEl || !tpl || !bodyEl) return;
+
+    function appendRow(facultyId, papers) {
+        var node = tpl.content.cloneNode(true);
+        var sel = node.querySelector('select[name="share_faculty"]');
+        var inp = node.querySelector('input[name="share_papers"]');
+        if (facultyId) sel.value = String(facultyId);
+        if (papers != null) inp.value = String(papers);
+        bodyEl.appendChild(node);
+    }
+
+    function rowCount() { return bodyEl.querySelectorAll('.pc-share-row').length; }
+
+    modalEl.addEventListener('show.bs.modal', function (ev) {
+        var btn = ev.relatedTarget;
+        if (!btn || !btn.getAttribute) return;
+        var did = btn.getAttribute('data-duty-id');
+        var total = btn.getAttribute('data-total');
+        var label = btn.getAttribute('data-label') || '';
+        var adjRaw = btn.getAttribute('data-adjustments') || '[]';
+        dutyIdInput.value = did || '';
+        totalN.textContent = total || '0';
+        metaEl.textContent = label;
+        bodyEl.innerHTML = '';
+        sumWarn.classList.add('d-none');
+        var list = [];
+        try { list = JSON.parse(adjRaw); } catch (e) { list = []; }
+        if (list.length) {
+            list.forEach(function (item) { appendRow(item.id, item.papers); });
+        } else {
+            appendRow('', '');
+            appendRow('', '');
+        }
+    });
+
+    document.getElementById('pcAddShareRow').addEventListener('click', function () {
+        appendRow('', '');
+    });
+
+    bodyEl.addEventListener('click', function (ev) {
+        var t = ev.target;
+        if (!t.classList || !t.classList.contains('pc-remove-share')) return;
+        if (rowCount() <= 1) return;
+        var tr = t.closest('tr');
+        if (tr) tr.remove();
+    });
+
+    document.getElementById('pcAdjustForm').addEventListener('submit', function (ev) {
+        var exp = parseInt(totalN.textContent, 10) || 0;
+        var inputs = bodyEl.querySelectorAll('input[name="share_papers"]');
+        var sum = 0;
+        inputs.forEach(function (inp) {
+            var v = parseInt(inp.value, 10);
+            if (!isNaN(v)) sum += v;
+        });
+        if (sum !== exp) {
+            ev.preventDefault();
+            sumWarn.classList.remove('d-none');
+        }
+    });
+})();
+</script>
+{% endif %}
+{% endblock %}

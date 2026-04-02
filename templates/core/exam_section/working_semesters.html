@@ -1,0 +1,83 @@
+{% extends 'core/exam_portal_base.html' %}
+{% block title %}Working academic semesters{% endblock %}
+{% block content %}
+<div class="exam-portal-hero mb-4 align-items-start">
+    <div class="flex-grow-1" style="min-width: min(100%, 280px);">
+        <p class="mb-2"><span class="ea-badge-dept">Exam section</span></p>
+        <h1 class="page-title">Working academic semesters</h1>
+        <p class="page-subtitle mb-0">
+            Choose one or more institute semesters. Everything in this portal — paper checking &amp; setting, supervision and DR facilities, section credit report, overall faculty report, and daily DR — uses departments and phases tied to these semesters only.
+        </p>
+    </div>
+    <a href="{% url 'core:exam_section_dashboard' %}" class="btn btn-outline-light btn-sm rounded-pill px-3 border-secondary align-self-start"><i class="fas fa-arrow-left me-1"></i>Exam section home</a>
+</div>
+
+{% if can_edit_working_semesters %}
+<div class="card exam-section-card mb-4">
+    <div class="card-header card-header-slate py-3">
+        <h5 class="mb-0 fw-semibold"><i class="fas fa-calendar-week me-2 text-primary"></i>Select semesters in scope</h5>
+    </div>
+    <div class="card-body">
+        <form method="post" action="{% url 'core:exam_section_working_semesters' %}">
+            {% csrf_token %}
+            <p class="small text-muted mb-3">Check every semester you are actively managing. Departments belong to exactly one semester; duties and reports aggregate only across the matching departments and their phases.</p>
+            <div class="row g-2 mb-4">
+                {% for sem in all_semesters %}
+                <div class="col-md-6 col-xl-4">
+                    <div class="form-check border rounded-3 px-3 py-2 h-100 bg-light">
+                        <input class="form-check-input" type="checkbox" name="semester_ids" value="{{ sem.pk }}" id="sem_{{ sem.pk }}"
+                            {% if sem.pk in selected_ids %}checked{% endif %}>
+                        <label class="form-check-label w-100" for="sem_{{ sem.pk }}">
+                            <strong>{{ sem.label }}</strong>
+                            <span class="d-block small text-muted"><code class="small">{{ sem.code }}</code>{% if sem.faculty_portal_active %} · portal active{% endif %}</span>
+                        </label>
+                    </div>
+                </div>
+                {% empty %}
+                <p class="text-muted mb-0">No academic semesters defined yet. Create them in the admin (Academic semesters) first.</p>
+                {% endfor %}
+            </div>
+            <button type="submit" class="btn btn-primary-app" {% if not all_semesters %}disabled{% endif %}><i class="fas fa-save me-1"></i>Save working semesters</button>
+        </form>
+    </div>
+</div>
+{% else %}
+<div class="alert alert-info border-0 shadow-sm mb-4">
+    <strong>Institute super admin.</strong> Working-semester scope applies to <em>exam section operator</em> logins only. Your views stay institute-wide. Sign in as an operator to configure this filter.
+</div>
+{% endif %}
+
+<div class="card exam-section-card accent-success mb-4">
+    <div class="card-header card-header-slate py-3">
+        <h5 class="mb-0 fw-semibold"><i class="fas fa-list-check me-2 text-success"></i>Currently scoped semesters</h5>
+    </div>
+    <div class="card-body p-0">
+        {% if can_edit_working_semesters and selected_semester_detail %}
+        <div class="table-responsive">
+            <table class="table table-hover table-app mb-0 align-middle">
+                <thead class="table-light">
+                    <tr>
+                        <th>Academic semester</th>
+                        <th>Code</th>
+                        <th class="text-end">Departments</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for row in selected_semester_detail %}
+                    <tr>
+                        <td>{{ row.semester.label }}</td>
+                        <td><code>{{ row.semester.code }}</code></td>
+                        <td class="text-end">{{ row.department_count }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% elif can_edit_working_semesters %}
+        <p class="text-muted mb-0 p-4">No semesters selected. Choose at least one above and save.</p>
+        {% else %}
+        <p class="text-muted mb-0 p-4">Not applicable for this login.</p>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

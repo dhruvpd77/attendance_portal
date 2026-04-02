@@ -1,0 +1,222 @@
+{% extends 'core/exam_portal_base.html' %}
+{% block title %}Section credit & remuneration report{% endblock %}
+{% block content %}
+
+<div class="card exam-section-card mb-4">
+    <div class="card-header">
+        <h5 class="mb-0 fw-semibold"><i class="fa-solid fa-file-excel me-2"></i>Institute daily DR (exam.xlsx)</h5>
+    </div>
+    <div class="card-body">
+        <p class="small text-muted mb-3 mb-md-4">{{ daily_dr_blurb|safe }}</p>
+        {% include 'core/exam_paper/_dr_date_range_form.html' with dr_url=daily_dr_url dr_date_from=date_from dr_date_to=date_to %}
+    </div>
+</div>
+
+    <div class="exam-portal-hero mb-4 align-items-start">
+        <div class="flex-grow-1">
+            <h1 class="page-title">Section credit & remuneration</h1>
+            <p class="page-subtitle mb-0">
+                Date range filters <strong>paper checking</strong> and <strong>paper setting</strong> by approval date;
+                <strong>supervision</strong> by completed / duty date. Expand a faculty row for line detail (same breakdown style as the faculty portal).
+            </p>
+            {% if report_scope_hint %}
+            <p class="small mt-2 mb-0 text-white-50" style="max-width:52rem;"><i class="fas fa-info-circle me-1"></i>{{ report_scope_hint }}</p>
+            {% endif %}
+        </div>
+    <a href="{% url 'core:section_credit_report_excel' %}?date_from={{ date_from|date:'Y-m-d' }}&date_to={{ date_to|date:'Y-m-d' }}{% if department_id %}&department_id={{ department_id }}{% endif %}{% if duty_department_id %}&duty_department_id={{ duty_department_id }}{% endif %}{% if paper_phase_id %}&paper_phase_id={{ paper_phase_id }}{% endif %}{% if sup_phase_id %}&sup_phase_id={{ sup_phase_id }}{% endif %}{% if setting_phase_id %}&setting_phase_id={{ setting_phase_id }}{% endif %}"
+       class="btn btn-success btn-sm rounded-pill"><i class="fas fa-file-excel me-1"></i>Export Excel</a>
+</div>
+
+<div class="card card-app mb-4">
+    <div class="card-body">
+        <form method="get" class="row g-3 align-items-end">
+            <div class="col-md-3">
+                <label class="form-label small">From</label>
+                <input type="date" name="date_from" class="form-control form-control-app" value="{{ date_from|date:'Y-m-d' }}">
+            </div>
+            <div class="col-md-3">
+                <label class="form-label small">To</label>
+                <input type="date" name="date_to" class="form-control form-control-app" value="{{ date_to|date:'Y-m-d' }}">
+            </div>
+            {% if institute_scope %}
+            <div class="col-md-4">
+                <label class="form-label small">Department</label>
+                <select name="department_id" class="form-select form-select-app">
+                    <option value="">All departments</option>
+                    {% for d in dept_choices %}
+                    <option value="{{ d.pk }}" {% if department_id == d.pk %}selected{% endif %}>{{ d.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            {% endif %}
+            {% if show_duty_dept_filter %}
+            <div class="col-md-4">
+                <label class="form-label small">Work for department</label>
+                <select name="duty_department_id" class="form-select form-select-app">
+                    <option value="">All (hub / managed departments)</option>
+                    {% for d in duty_dept_choices %}
+                    <option value="{{ d.pk }}" {% if duty_department_id == d.pk %}selected{% endif %}>{{ d.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            {% endif %}
+            <div class="col-md-4 col-lg-3">
+                <label class="form-label small">Paper checking phase</label>
+                <select name="paper_phase_id" class="form-select form-select-app">
+                    <option value="">All</option>
+                    {% for ph in paper_phases_filter %}
+                    <option value="{{ ph.pk }}" {% if paper_phase_id == ph.pk %}selected{% endif %}>{{ ph.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-4 col-lg-3">
+                <label class="form-label small">Supervision phase</label>
+                <select name="sup_phase_id" class="form-select form-select-app">
+                    <option value="">All</option>
+                    {% for ph in sup_phases_filter %}
+                    <option value="{{ ph.pk }}" {% if sup_phase_id == ph.pk %}selected{% endif %}>{{ ph.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-4 col-lg-3">
+                <label class="form-label small">Paper setting phase</label>
+                <select name="setting_phase_id" class="form-select form-select-app">
+                    <option value="">All</option>
+                    {% for ph in setting_phases_filter %}
+                    <option value="{{ ph.pk }}" {% if setting_phase_id == ph.pk %}selected{% endif %}>{{ ph.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-2">
+                <button type="submit" class="btn btn-primary-app w-100">Apply</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<div class="card exam-section-card overflow-hidden">
+    <div class="card-header card-header-slate py-3">
+        <h5 class="mb-0 fw-semibold">Faculty summary</h5>
+    </div>
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table table-sm mb-0 exam-table-theme">
+                <thead>
+                    <tr>
+                        <th></th>
+                        <th>Faculty</th>
+                        <th>Dept</th>
+                        <th class="text-end small">Paper checking<br>count</th>
+                        <th class="text-end small">Paper checking<br>credit</th>
+                        <th class="text-end small">Paper checking<br>rupees ₹</th>
+                        <th class="text-end small">No. of<br>supervision</th>
+                        <th class="text-end small">Supervision<br>credit</th>
+                        <th class="text-end small">Supervision<br>rupees ₹</th>
+                        <th class="text-end small">No. paper<br>setting</th>
+                        <th class="text-end small">Paper setting<br>credit</th>
+                        <th class="text-end small">Paper setting<br>rupees ₹</th>
+                        <th class="text-end small">Total<br>credit</th>
+                        <th class="text-end small">Total<br>rupees ₹</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for row in rows %}
+                    {% with f=row.faculty %}
+                    <tr class="align-middle">
+                        <td class="text-center">
+                            <button class="btn btn-sm btn-outline-secondary collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#fac-detail-{{ f.pk }}" aria-expanded="false" aria-controls="fac-detail-{{ f.pk }}">▾</button>
+                        </td>
+                        <td class="fw-semibold">{{ f.full_name }} <span class="text-muted small">({{ f.short_name }})</span></td>
+                        <td class="small">{% if f.department %}{{ f.department.name }}{% else %}—{% endif %}</td>
+                        <td class="text-end">{{ row.paper_n }}</td>
+                        <td class="text-end">{{ row.paper_credits|floatformat:2 }}</td>
+                        <td class="text-end">{{ row.paper_rem|floatformat:2 }}</td>
+                        <td class="text-end">{{ row.sup_count }}</td>
+                        <td class="text-end">{{ row.sup_credits|floatformat:2 }}</td>
+                        <td class="text-end">{{ row.sup_rem|floatformat:2 }}</td>
+                        <td class="text-end">{{ row.setting_n }}</td>
+                        <td class="text-end">{{ row.setting_credits|floatformat:2 }}</td>
+                        <td class="text-end">{{ row.setting_rem|floatformat:2 }}</td>
+                        <td class="text-end fw-semibold">{{ row.total_credits|floatformat:2 }}</td>
+                        <td class="text-end fw-bold">{{ row.total_rem|floatformat:2 }}</td>
+                    </tr>
+                    <tr class="bg-light">
+                        <td colspan="14" class="p-0 border-0">
+                            <div class="collapse px-3 py-3" id="fac-detail-{{ f.pk }}">
+                            <div class="row g-3">
+                                <div class="col-lg-4">
+                                    <h6 class="text-success fw-bold small text-uppercase">Paper checking</h6>
+                                    {% if row.line_paper %}
+                                    <div class="table-responsive">
+                                        <table class="table table-sm table-bordered bg-white mb-0 small">
+                                            <thead><tr><th>Subject</th><th>Phase</th><th>Papers</th><th class="text-end">Cr</th><th class="text-end">₹</th></tr></thead>
+                                            <tbody>
+                                                {% for ln in row.line_paper %}
+                                                <tr>
+                                                    <td>{{ ln.subject }}</td>
+                                                    <td>{{ ln.phase }}</td>
+                                                    <td>{{ ln.papers }}</td>
+                                                    <td class="text-end">{{ ln.credit|floatformat:2 }}</td>
+                                                    <td class="text-end">{{ ln.rem|floatformat:2 }}</td>
+                                                </tr>
+                                                {% endfor %}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                    {% else %}<p class="small text-muted mb-0">None in range.</p>{% endif %}
+                                </div>
+                                <div class="col-lg-4">
+                                    <h6 class="text-primary fw-bold small text-uppercase">Supervision</h6>
+                                    {% if row.line_sup %}
+                                    <div class="table-responsive">
+                                        <table class="table table-sm table-bordered bg-white mb-0 small">
+                                            <thead><tr><th>Date</th><th>Subject</th><th>Phase</th><th class="text-end">Cr</th><th class="text-end">₹</th></tr></thead>
+                                            <tbody>
+                                                {% for ln in row.line_sup %}
+                                                <tr>
+                                                    <td>{{ ln.date|date:"M j, Y" }}</td>
+                                                    <td>{{ ln.subject }}</td>
+                                                    <td>{{ ln.phase }}</td>
+                                                    <td class="text-end">{{ ln.credit|floatformat:2 }}</td>
+                                                    <td class="text-end">{{ ln.rem|floatformat:2 }}</td>
+                                                </tr>
+                                                {% endfor %}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                    {% else %}<p class="small text-muted mb-0">None in range.</p>{% endif %}
+                                </div>
+                                <div class="col-lg-4">
+                                    <h6 class="text-warning fw-bold small text-uppercase">Paper setting</h6>
+                                    {% if row.line_set %}
+                                    <div class="table-responsive">
+                                        <table class="table table-sm table-bordered bg-white mb-0 small">
+                                            <thead><tr><th>Subject</th><th>Phase</th><th class="text-end">Cr</th><th class="text-end">₹</th></tr></thead>
+                                            <tbody>
+                                                {% for ln in row.line_set %}
+                                                <tr>
+                                                    <td>{{ ln.subject }}</td>
+                                                    <td>{{ ln.phase }}</td>
+                                                    <td class="text-end">{{ ln.credit|floatformat:2 }}</td>
+                                                    <td class="text-end">{{ ln.rem|floatformat:2 }}</td>
+                                                </tr>
+                                                {% endfor %}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                    {% else %}<p class="small text-muted mb-0">None in range.</p>{% endif %}
+                                </div>
+                            </div>
+                            </div>
+                        </td>
+                    </tr>
+                    {% endwith %}
+                    {% empty %}
+                    <tr><td colspan="14" class="text-center text-muted py-4">No faculty in scope or no data in this range.</td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endblock %}

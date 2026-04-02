@@ -43,6 +43,10 @@ def role_redirect(request):
         return redirect('core:admin_dashboard')
     if role_profile.role == 'exam_admin':
         return redirect('core:exam_admin_dashboard')
+    if role_profile.role == 'exam_section':
+        return redirect('core:exam_section_dashboard')
+    if role_profile.role in ('dept_exam_parent', 'dept_exam_child'):
+        return redirect('core:dept_exam_dashboard')
     if role_profile.role == 'faculty':
         return redirect('core:faculty_dashboard')
     if role_profile.role == 'student':

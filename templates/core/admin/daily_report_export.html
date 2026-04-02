@@ -12,7 +12,7 @@
 
 <div class="alert alert-secondary mb-3">
     <strong>{{ department.name }}</strong>
-    {% if department.semester %}<span class="text-muted">— Semester: <strong>{{ department.semester }}</strong></span>{% else %}<span class="text-muted">— set <strong>Semester</strong> under Departments → Edit if you want it on the export.</span>{% endif %}
+    {% if department.dr_export_semester_label %}<span class="text-muted">— DR semester: <strong>{{ department.dr_export_semester_label }}</strong></span>{% else %}<span class="text-muted">— set <strong>Daily Report semester label</strong> under Departments → Edit if you want it on the export.</span>{% endif %}
     {% if is_super_admin %}<span class="text-muted d-block small">Super admin: pick department below when needed.</span>{% endif %}
 </div>
 

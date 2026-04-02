@@ -1,0 +1,230 @@
+{% extends 'core/exam_portal_base.html' %}
+{% block title %}DR facilities — supervision{% endblock %}
+{% block content %}
+<div class="exam-portal-hero mb-4 d-flex flex-wrap justify-content-between align-items-start gap-3">
+    <div>
+        <h1 class="page-title">DR facilities</h1>
+        <p class="page-subtitle mb-2">
+            <span class="badge badge-scope rounded-pill">Scope: {{ scope_label }}</span>
+        </p>
+        <p class="page-subtitle small mb-0" style="color:#cbd5e1 !important;">
+            Phase-wise and department-wise supervision. Exports use the same Excel layout as other supervision DR downloads.
+            {% if not show_institute_filters %}Only your department’s faculty appear in filters and exports.{% endif %}
+        </p>
+    </div>
+    {% if is_exam_section_view %}
+    <a href="{% url 'core:exam_section_dashboard' %}" class="btn btn-outline-light btn-sm rounded-pill border-secondary">Exam section home</a>
+    {% else %}
+    <a href="{% url 'core:dept_exam_dashboard' %}" class="btn btn-outline-light btn-sm rounded-pill border-secondary">Supervision hub</a>
+    {% endif %}
+</div>
+
+<div class="card exam-section-card mb-4">
+    <div class="card-header">
+        <h5 class="mb-0 fw-semibold"><i class="fas fa-filter me-2"></i>Filters</h5>
+    </div>
+    <div class="card-body">
+        <form method="get" class="row g-3 align-items-end">
+            <div class="col-md-3">
+                <label class="form-label">Phase</label>
+                <select name="phase_id" class="form-select form-select-app">
+                    <option value="">All phases</option>
+                    {% for p in phases %}
+                    <option value="{{ p.pk }}" {% if phase_id == p.pk %}selected{% endif %}>{{ p.name }}{% if p.hub_coordinator_id %} (institute){% elif p.department %} — {{ p.department.name }}{% endif %}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            {% if departments|length > 1 %}
+            <div class="col-md-3">
+                <label class="form-label">Department</label>
+                <select name="department_id" class="form-select form-select-app">
+                    <option value="">All (in scope)</option>
+                    {% for d in departments %}
+                    <option value="{{ d.pk }}" {% if department_id == d.pk %}selected{% endif %}>{{ d.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            {% elif departments %}
+            <input type="hidden" name="department_id" value="{{ departments.0.pk }}">
+            <div class="col-md-3">
+                <label class="form-label">Department</label>
+                <p class="form-control-plaintext mb-0 fw-semibold">{{ departments.0.name }}</p>
+            </div>
+            {% endif %}
+            <div class="col-md-3">
+                <label class="form-label">Faculty</label>
+                <select name="faculty_id" class="form-select form-select-app">
+                    <option value="">All</option>
+                    {% for f in faculties %}
+                    <option value="{{ f.pk }}" {% if faculty_id == f.pk %}selected{% endif %}>{{ f.full_name }} ({{ f.short_name }}) — {{ f.department.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-auto">
+                <button type="submit" class="btn btn-primary-app">Apply</button>
+                <a href="{% url 'core:dr_facilities_dashboard' %}" class="btn btn-outline-secondary">Reset</a>
+            </div>
+        </form>
+    </div>
+</div>
+
+<div class="row g-4 mb-4">
+    <div class="col-md-6">
+        <div class="card card-app h-100">
+            <div class="card-header bg-white border-0 py-3">
+                <h6 class="mb-0 fw-semibold">Summary — by phase</h6>
+            </div>
+            <div class="card-body p-0 table-responsive">
+                <table class="table table-app table-sm mb-0">
+                    <thead><tr><th>Phase</th><th class="text-end">Duties</th></tr></thead>
+                    <tbody>
+                        {% for row in by_phase %}
+                        <tr>
+                            <td>{{ row.phase__name }}</td>
+                            <td class="text-end">{{ row.n }}</td>
+                        </tr>
+                        {% empty %}
+                        <tr><td colspan="2" class="text-muted text-center py-3">No rows match.</td></tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-6">
+        <div class="card card-app h-100">
+            <div class="card-header bg-white border-0 py-3">
+                <h6 class="mb-0 fw-semibold">Summary — by department</h6>
+            </div>
+            <div class="card-body p-0 table-responsive">
+                <table class="table table-app table-sm mb-0">
+                    <thead><tr><th>Department</th><th class="text-end">Duties</th></tr></thead>
+                    <tbody>
+                        {% for row in by_dept %}
+                        <tr>
+                            <td>{{ row.faculty__department__name }}</td>
+                            <td class="text-end">{{ row.n }}</td>
+                        </tr>
+                        {% empty %}
+                        <tr><td colspan="2" class="text-muted text-center py-3">No rows match.</td></tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row g-4 mb-4">
+    <div class="col-lg-6">
+        <div class="card card-app">
+            <div class="card-header bg-white border-0 py-3">
+                <h6 class="mb-0 fw-semibold"><i class="fa-solid fa-building me-2 text-primary"></i>Download — by department</h6>
+            </div>
+            <div class="card-body">
+                <form method="get" action="{% url 'core:dr_facilities_export_department' %}" class="row g-2 align-items-end">
+                    <div class="col-12">
+                        <label class="form-label small">Department</label>
+                        <select name="department_id" class="form-select form-select-app" required>
+                            {% for d in departments %}
+                            <option value="{{ d.pk }}" {% if department_id == d.pk %}selected{% endif %}>{{ d.name }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="col-12">
+                        <label class="form-label small">Phase <span class="text-muted">(optional)</span></label>
+                        <select name="phase_id" class="form-select form-select-app">
+                            <option value="">All phases</option>
+                            {% for p in phases %}
+                            <option value="{{ p.pk }}" {% if phase_id == p.pk %}selected{% endif %}>{{ p.name }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="col-12">
+                        <button type="submit" class="btn btn-success"><i class="fa-solid fa-file-excel me-1"></i>Department Excel</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+    <div class="col-lg-6">
+        <div class="card card-app">
+            <div class="card-header bg-white border-0 py-3">
+                <h6 class="mb-0 fw-semibold"><i class="fa-solid fa-user-tie me-2 text-primary"></i>Download — by faculty</h6>
+            </div>
+            <div class="card-body">
+                <form method="get" action="{% url 'core:dr_facilities_export_faculty' %}" class="row g-2 align-items-end">
+                    <div class="col-12">
+                        <label class="form-label small">Faculty</label>
+                        <select name="faculty_id" class="form-select form-select-app" required>
+                            <option value="">— Select —</option>
+                            {% for f in faculties %}
+                            <option value="{{ f.pk }}" {% if faculty_id == f.pk %}selected{% endif %}>{{ f.full_name }} ({{ f.short_name }})</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="col-12">
+                        <label class="form-label small">Phase <span class="text-muted">(optional)</span></label>
+                        <select name="phase_id" class="form-select form-select-app">
+                            <option value="">All phases</option>
+                            {% for p in phases %}
+                            <option value="{{ p.pk }}" {% if phase_id == p.pk %}selected{% endif %}>{{ p.name }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="col-12">
+                        <button type="submit" class="btn btn-success"><i class="fa-solid fa-file-excel me-1"></i>Faculty Excel</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="card card-app">
+    <div class="card-header bg-white border-0 py-3 d-flex flex-wrap justify-content-between align-items-center gap-2">
+        <h5 class="mb-0 fw-semibold">Detailed records</h5>
+        <span class="badge text-bg-secondary">{{ total_count }} row{{ total_count|pluralize }}{% if truncated %} (showing first {{ duties|length }}){% endif %}</span>
+    </div>
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table table-app table-sm mb-0">
+                <thead>
+                    <tr>
+                        <th>Phase</th>
+                        <th>Faculty</th>
+                        <th>Dept</th>
+                        <th>Division</th>
+                        <th>Date</th>
+                        <th>Time</th>
+                        <th>Subject</th>
+                        <th>Status</th>
+                        <th>Block</th>
+                        <th>Room</th>
+                        <th>Proxy</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for d in duties %}
+                    <tr>
+                        <td>{{ d.phase.name }}</td>
+                        <td>{% if d.faculty %}{{ d.faculty.full_name }}{% else %}{{ d.faculty_name_raw }}{% endif %}</td>
+                        <td>{% if d.faculty %}{{ d.faculty.department.name }}{% else %}—{% endif %}</td>
+                        <td><code>{{ d.division_code }}</code></td>
+                        <td>{{ d.supervision_date }}</td>
+                        <td>{{ d.time_slot }}</td>
+                        <td>{{ d.subject_name }}</td>
+                        <td>{{ d.get_completion_status_display }}</td>
+                        <td>{{ d.block_no }}</td>
+                        <td>{{ d.room_no }}</td>
+                        <td>{% if d.is_proxy %}Yes{% else %}—{% endif %}</td>
+                    </tr>
+                    {% empty %}
+                    <tr><td colspan="11" class="text-muted text-center py-4">No supervision duties match the current filters.</td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endblock %}

@@ -1,34 +1,12 @@
-{% extends 'base.html' %}
+{% extends 'core/exam_portal_base.html' %}
 {% load static %}
 {% block title %}{{ phase.name }} — {{ department.name }} — Exam Admin{% endblock %}
-{% block extra_head %}
-{{ block.super }}
-<style>
-.ea-hero {
-    background: linear-gradient(135deg, #0f172a 0%, #1e3a5f 50%, #312e81 100%);
-    border-radius: 16px;
-    padding: 1.25rem 1.5rem;
-    margin-bottom: 1.25rem;
-    color: #fff;
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    justify-content: space-between;
-    gap: 1rem;
-}
-.ea-hero .page-title { color: #fff !important; font-size: 1.35rem; margin-bottom: 0.25rem !important; }
-.ea-hero .page-subtitle { color: #c7d2fe !important; font-size: 0.875rem; margin: 0; max-width: 40rem; }
-.ea-badge-dept { background: rgba(255,255,255,0.15); border-radius: 8px; padding: 0.2rem 0.55rem; font-size: 0.8rem; font-weight: 600; }
-.ea-card { border: none; border-radius: 14px; box-shadow: 0 4px 20px rgba(0,0,0,0.08); margin-bottom: 1.25rem; overflow: hidden; border-left: 5px solid #6366f1; }
-.ea-card .card-header { background: linear-gradient(90deg, #1e293b 0%, #3730a3 100%); color: #fff !important; font-weight: 600; padding: 0.85rem 1.15rem; border: none; }
-</style>
-{% endblock %}
 {% block content %}
 <div class="ea-hero">
     <div>
         <p class="mb-2"><span class="ea-badge-dept">{{ department.name }}</span></p>
         <h1 class="page-title mb-1">{{ phase.name }} — Subjects &amp; marksheets</h1>
-        <p class="page-subtitle mb-0">Add subjects from this department. Upload Excel per subject. Enrollment column maps students. Same workflow as admin Result.</p>
+        <p class="page-subtitle mb-0">Add subjects from this department. Upload one <strong>.xlsx</strong> per subject. Use the <strong>required column format</strong> shown under &ldquo;Subjects&rdquo; below.</p>
     </div>
     <div class="d-flex flex-wrap gap-2">
         <a href="{% url 'core:exam_admin_exam_phases_list' %}" class="btn btn-outline-light btn-sm"><i class="fas fa-arrow-left me-1"></i> Phases</a>
@@ -70,6 +48,21 @@
 <div class="card ea-card">
     <div class="card-header"><i class="fas fa-table me-2"></i>Subjects in {{ phase.name }}</div>
     <div class="card-body p-0">
+        <div class="px-3 py-3 border-bottom" style="background: rgba(99,102,241,0.08);">
+            <h6 class="fw-bold mb-2 text-dark"><i class="fas fa-file-excel text-success me-1"></i> Marksheet upload — format you must follow</h6>
+            <ul class="small mb-2 ps-3">
+                <li>File type: <strong>.xlsx</strong> (saved from Excel). The <strong>first sheet</strong> is read.</li>
+                <li>Put the <strong>header row</strong> within the <strong>first 30 rows</strong> of that sheet (one header row, then one row per student).</li>
+                <li>Use this <strong>exact header text</strong>, in this column order <strong>A through G</strong>:</li>
+            </ul>
+            <div class="table-responsive small mb-2">
+                <table class="table table-sm table-bordered mb-0 bg-white">
+                    <thead class="table-light"><tr><th>A</th><th>B</th><th>C</th><th>D</th><th>E</th><th>F</th><th>G</th></tr></thead>
+                    <tbody><tr><td><code>ROLL NO</code></td><td><code>DIV</code></td><td><code>BRANCH</code></td><td><code>Enrollment No</code></td><td><code>NAME</code></td><td><code>Mentor</code></td><td><code>Marks</code></td></tr></tbody>
+                </table>
+            </div>
+            <p class="small mb-0"><strong>Important:</strong> Marks are saved only by matching <strong>Enrollment No</strong> to students in <strong>{{ department.name }}</strong>. Use the same enrollment numbers as in the portal; use <strong>digits only</strong> in that column. Rows whose enrollment is not found are skipped. Headers must include <strong>enroll</strong> and <strong>mark</strong> in the wording — the names above satisfy that.</p>
+        </div>
         {% if phase_subjects %}
         <div class="table-responsive">
             <table class="table table-hover mb-0">
@@ -197,10 +190,4 @@
     </div>
 </div>
 
-<div class="card ea-card mt-4 mb-4">
-    <div class="card-body p-4">
-        <h6 class="fw-bold mb-2"><i class="fas fa-info-circle me-1"></i>Excel format</h6>
-        <p class="small text-secondary mb-0">Header row: <strong>ROLL NO., DIV, BRANCH, Enrolllment No:, NAME OF STUDENT, Mentor, Marks(25)</strong>. Data below. Enrollment maps to students in <strong>{{ department.name }}</strong>.</p>
-    </div>
-</div>
 {% endblock %}

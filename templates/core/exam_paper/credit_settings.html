@@ -1,0 +1,196 @@
+{% extends 'core/exam_portal_base.html' %}
+{% block title %}Exam credit settings{% endblock %}
+{% block content %}
+<div class="exam-portal-hero mb-4 align-items-start">
+    <div class="flex-grow-1" style="min-width: min(100%, 280px);">
+        <h1 class="page-title">Credit settings</h1>
+        <p class="page-subtitle mb-0">
+            Choose <strong>who these numbers apply to</strong> below. <strong>All departments</strong> = institute default. Saving for a <strong>specific department</strong> overrides only that department.
+            <strong>Paper checking</strong> uses the steps below (subject table → fallbacks). <strong>Paper setting</strong> and <strong>supervision</strong> use phase-name buckets only.
+        </p>
+    </div>
+</div>
+
+<div class="card card-app mb-4 border-primary border-opacity-25">
+    <div class="card-body py-3">
+        <form method="get" class="row g-2 align-items-end">
+            <div class="col-md-8">
+                <label class="form-label small fw-semibold text-primary mb-1">Applies to</label>
+                <select name="credit_scope" class="form-select form-select-app" onchange="this.form.submit()">
+                    {% for val, lab in scope_choices %}
+                    <option value="{{ val }}" {% if credit_scope == val %}selected{% endif %}>{{ lab }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+        </form>
+        <p class="small text-muted mb-0 mt-2">Editing: <strong>{{ scope_label }}</strong>.</p>
+    </div>
+</div>
+
+<div class="card exam-section-card mb-4">
+    <div class="card-header card-header-slate">
+        <h5 class="mb-0 fw-semibold"><i class="fas fa-pen-fancy me-2"></i>Paper setting — {{ scope_label }}</h5>
+    </div>
+    <div class="card-body">
+        <p class="small text-muted">Credits and <strong>remuneration (₹)</strong> when a coordinator <strong>approves</strong> paper setting. Bucket follows the <strong>phase name</strong> (T1–T3 vs SEE/T4 vs Remedial vs Fast track keywords).</p>
+        <form method="post">
+            {% csrf_token %}
+            <input type="hidden" name="save_task" value="paper_setting">
+            <input type="hidden" name="credit_scope" value="{{ credit_scope }}">
+            <div class="row g-3 mb-3">
+                {% for b, lab, val, remval in ps_default_rows %}
+                <div class="col-6 col-md-3">
+                    <label class="form-label small fw-semibold">{{ lab }}</label>
+                    <input type="text" name="ps_{{ b }}" class="form-control form-control-app mb-1" inputmode="decimal" placeholder="Credit" value="{{ val }}">
+                    <input type="text" name="ps_rem_{{ b }}" class="form-control form-control-app" inputmode="decimal" placeholder="₹ / duty" value="{{ remval }}">
+                </div>
+                {% endfor %}
+            </div>
+            <p class="small fw-semibold text-secondary mb-2">Subject overrides <span class="fw-normal text-muted">(optional)</span></p>
+            <div class="table-responsive border rounded-2 mb-3">
+                <table class="table table-sm mb-0 exam-table-theme">
+                    <thead><tr><th>Subject</th><th>Phase bucket</th><th>Credit</th><th>₹ / duty</th></tr></thead>
+                    <tbody>
+                        {% for r in ps_overrides %}
+                        <tr>
+                            <td><input class="form-control form-control-sm" name="ps_ov_subject" value="{{ r.subject_name }}"></td>
+                            <td>
+                                <select class="form-select form-select-sm" name="ps_ov_bucket">
+                                    {% for b, lab in bucket_key_labels %}
+                                    <option value="{{ b }}" {% if r.phase_bucket == b %}selected{% endif %}>{{ lab }}</option>
+                                    {% endfor %}
+                                </select>
+                            </td>
+                            <td><input class="form-control form-control-sm" name="ps_ov_credit" inputmode="decimal" value="{{ r.credit }}"></td>
+                            <td><input class="form-control form-control-sm" name="ps_ov_remuneration" inputmode="decimal" value="{{ r.remuneration }}"></td>
+                        </tr>
+                        {% endfor %}
+                        {% for _ in "123"|make_list %}
+                        <tr>
+                            <td><input class="form-control form-control-sm" name="ps_ov_subject" value=""></td>
+                            <td>
+                                <select class="form-select form-select-sm" name="ps_ov_bucket">
+                                    {% for b, lab in bucket_key_labels %}
+                                    <option value="{{ b }}">{{ lab }}</option>
+                                    {% endfor %}
+                                </select>
+                            </td>
+                            <td><input class="form-control form-control-sm" name="ps_ov_credit" inputmode="decimal" placeholder=""></td>
+                            <td><input class="form-control form-control-sm" name="ps_ov_remuneration" inputmode="decimal" placeholder=""></td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            <button type="submit" class="btn btn-warning text-dark rounded-pill px-4 fw-semibold">Save paper setting credits</button>
+        </form>
+    </div>
+</div>
+
+<div class="card exam-section-card mb-4">
+    <div class="card-header card-header-slate">
+        <h5 class="mb-0 fw-semibold"><i class="fas fa-check-double me-2"></i>Paper checking — {{ scope_label }}</h5>
+    </div>
+    <div class="card-body">
+        <div class="alert alert-info border-0 mb-4 small" style="background:#eff6ff;color:#1e3a5f;">
+            <strong class="d-block mb-2">How paper-checking credit &amp; ₹ are resolved (in order)</strong>
+            <ol class="mb-0 ps-3">
+                <li class="mb-1"><strong>Per phase + subject table</strong> — Open each evaluation phase and set <em>credit per paper</em> (and practical online/offline if needed). Remuneration for those rows follows the <strong>same departmental rules</strong> as credits (₹ scales with earned credit from the bucket rules below).</li>
+                <li class="mb-1"><strong>Overrides on this page (subject + bucket)</strong> — When you add a subject name here, it applies if it matches the duty’s subject for that phase <em>bucket</em> (T1–T3 vs SEE, etc.). Use for extra per-subject rates without opening the phase screen.</li>
+                <li><strong>Bucket defaults below</strong> — Used when there is <em>no</em> subject row on the phase and no matching override here. Enter both <strong>credit / paper</strong> and <strong>₹ / paper</strong> for each column.</li>
+            </ol>
+        </div>
+        {% if checking_phases %}
+        <div class="mb-4 rounded-2 border border-success border-opacity-25 px-3 py-3 bg-light">
+            <span class="fw-semibold text-success"><i class="fas fa-star me-1"></i>Step 1 — Phase subject credits (preferred)</span>
+            <p class="small text-muted mb-2 mt-1">Set exact rates per subject inside each phase. Faculty totals and DR exports use these first.</p>
+            <ul class="mb-0 small">
+                {% for ph in checking_phases %}
+                <li><a href="{% url 'core:paper_checking_phase_detail' ph.pk %}">{{ ph.name }}</a> — subject table</li>
+                {% endfor %}
+            </ul>
+        </div>
+        {% endif %}
+        <form method="post">
+            {% csrf_token %}
+            <input type="hidden" name="save_task" value="paper_checking">
+            <input type="hidden" name="credit_scope" value="{{ credit_scope }}">
+            <p class="fw-semibold text-secondary small mb-2"><i class="fas fa-layer-group me-1"></i>Step 2 — Fallback credit &amp; ₹ per paper (by phase <em>name</em> bucket)</p>
+            <p class="small text-muted mb-3">Matches evaluation <strong>phase name</strong> keywords (e.g. T1 → T1–T3 bucket, SEE → T4). Only used when step 1 / overrides do not give a subject rate.</p>
+            <div class="row g-3 mb-3">
+                {% for b, lab, val, remval in pc_default_rows %}
+                <div class="col-6 col-md-3">
+                    <label class="form-label small fw-semibold">{{ lab }}</label>
+                    <div class="small text-muted mb-1">Per evaluated paper</div>
+                    <input type="text" name="pc_{{ b }}" class="form-control form-control-app mb-2" inputmode="decimal" placeholder="Credit" value="{{ val }}" title="Credit per paper">
+                    <input type="text" name="pc_rem_{{ b }}" class="form-control form-control-app" inputmode="decimal" placeholder="₹ per paper" value="{{ remval }}" title="Rupee per paper">
+                </div>
+                {% endfor %}
+            </div>
+            <p class="fw-semibold text-secondary small mb-2"><i class="fas fa-pen me-1"></i>Subject overrides (optional)</p>
+            <p class="small text-muted mb-2">Same buckets as above; applies when subject name matches the duty. Empty rows are ignored on save.</p>
+            <div class="table-responsive border rounded-2 mb-3">
+                <table class="table table-sm mb-0 exam-table-theme">
+                    <thead><tr><th>Subject</th><th>Phase bucket</th><th>Credit / paper</th><th>₹ / paper</th></tr></thead>
+                    <tbody>
+                        {% for r in pc_overrides %}
+                        <tr>
+                            <td><input class="form-control form-control-sm" name="pc_ov_subject" value="{{ r.subject_name }}"></td>
+                            <td>
+                                <select class="form-select form-select-sm" name="pc_ov_bucket">
+                                    {% for b, lab in bucket_key_labels %}
+                                    <option value="{{ b }}" {% if r.phase_bucket == b %}selected{% endif %}>{{ lab }}</option>
+                                    {% endfor %}
+                                </select>
+                            </td>
+                            <td><input class="form-control form-control-sm" name="pc_ov_credit" inputmode="decimal" value="{{ r.credit }}"></td>
+                            <td><input class="form-control form-control-sm" name="pc_ov_remuneration" inputmode="decimal" value="{{ r.remuneration }}"></td>
+                        </tr>
+                        {% endfor %}
+                        {% for _ in "123"|make_list %}
+                        <tr>
+                            <td><input class="form-control form-control-sm" name="pc_ov_subject" value=""></td>
+                            <td>
+                                <select class="form-select form-select-sm" name="pc_ov_bucket">
+                                    {% for b, lab in bucket_key_labels %}
+                                    <option value="{{ b }}">{{ lab }}</option>
+                                    {% endfor %}
+                                </select>
+                            </td>
+                            <td><input class="form-control form-control-sm" name="pc_ov_credit" inputmode="decimal" placeholder=""></td>
+                            <td><input class="form-control form-control-sm" name="pc_ov_remuneration" inputmode="decimal" placeholder=""></td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            <a href="{% url 'core:paper_checking_dashboard' %}" class="btn btn-outline-secondary rounded-pill me-2">Paper checking dashboard</a>
+            <button type="submit" class="btn btn-success rounded-pill px-4 fw-semibold">Save paper checking fallbacks</button>
+        </form>
+    </div>
+</div>
+
+<div class="card exam-section-card mb-4">
+    <div class="card-header card-header-slate">
+        <h5 class="mb-0 fw-semibold"><i class="fas fa-user-check me-2"></i>Supervision — {{ scope_label }}</h5>
+    </div>
+    <div class="card-body">
+        <p class="small text-muted">Credits and <strong>₹ per completed</strong> supervision slot by phase bucket (phase name keywords).</p>
+        <form method="post">
+            {% csrf_token %}
+            <input type="hidden" name="save_task" value="supervision">
+            <input type="hidden" name="credit_scope" value="{{ credit_scope }}">
+            <div class="row g-3 mb-3">
+                {% for b, lab, val, remval in sv_default_rows %}
+                <div class="col-6 col-md-3">
+                    <label class="form-label small fw-semibold">{{ lab }}</label>
+                    <input type="text" name="sv_{{ b }}" class="form-control form-control-app mb-1" inputmode="decimal" placeholder="Credit" value="{{ val }}">
+                    <input type="text" name="sv_rem_{{ b }}" class="form-control form-control-app" inputmode="decimal" placeholder="₹ / slot" value="{{ remval }}">
+                </div>
+                {% endfor %}
+            </div>
+            <button type="submit" class="btn btn-primary-app rounded-pill px-4">Save supervision credits</button>
+        </form>
+    </div>
+</div>
+{% endblock %}

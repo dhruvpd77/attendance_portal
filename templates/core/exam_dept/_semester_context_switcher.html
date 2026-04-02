@@ -1,0 +1,22 @@
+{# profiles: DepartmentExamProfile[]. active: Django user for profile_id match. post_url name, active_profile #}
+{% if profiles and profiles|length > 1 %}
+<div class="card card-app mb-4 border-secondary shadow-sm">
+    <div class="card-body py-3 d-flex flex-wrap align-items-center gap-2">
+        <span class="small fw-semibold text-secondary text-uppercase" style="letter-spacing:0.03em;">Academic semester</span>
+        {% for p in profiles %}
+        <form method="post" action="{% url post_url %}" class="d-inline m-0">
+            {% csrf_token %}
+            <input type="hidden" name="profile_id" value="{{ p.pk }}">
+            <input type="hidden" name="next" value="{{ request.path }}">
+            <button type="submit" class="btn btn-sm rounded-pill {% if active_profile and p.pk == active_profile.pk %}btn-primary-app{% else %}btn-outline-secondary{% endif %}">
+                {{ p.institute_semester.label }}{% if p.is_hub_coordinator %} · hub{% elif p.department %} · {{ p.department.name }}{% endif %}
+            </button>
+        </form>
+        {% endfor %}
+    </div>
+</div>
+{% elif active_profile and active_profile.institute_semester %}
+<p class="small text-muted mb-3 mb-md-4">
+    Academic semester: <strong>{{ active_profile.institute_semester.label }}</strong>
+</p>
+{% endif %}

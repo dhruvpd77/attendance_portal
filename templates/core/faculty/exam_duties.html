@@ -1,0 +1,389 @@
+{% extends 'core/exam_portal_base.html' %}
+{% block title %}My exam duties{% endblock %}
+{% block extra_head %}
+{{ block.super }}
+<style>
+/* Three column “pickers” — equal width */
+.fac-duty-pickers {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 0.85rem;
+    margin-bottom: 1.25rem;
+}
+@media (max-width: 767.98px) {
+    .fac-duty-pickers { grid-template-columns: 1fr; }
+}
+.fac-duty-picker {
+    border: none;
+    border-radius: 16px;
+    padding: 1rem 1.1rem;
+    text-align: left;
+    cursor: pointer;
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+    color: #fff;
+    font-weight: 700;
+    font-size: 0.95rem;
+    display: flex;
+    align-items: center;
+    gap: 0.65rem;
+    box-shadow: 0 4px 18px rgba(0,0,0,0.12);
+    position: relative;
+    min-height: 3.25rem;
+}
+.fac-duty-picker:hover { transform: translateY(-2px); box-shadow: 0 8px 26px rgba(0,0,0,0.16); color: #fff; }
+.fac-duty-picker:focus { outline: 3px solid rgba(255,255,255,0.35); outline-offset: 2px; color: #fff; }
+.fac-duty-picker .picker-icon { font-size: 1.35rem; opacity: 0.95; }
+.fac-duty-picker .picker-meta { margin-left: auto; font-size: 0.75rem; font-weight: 600; opacity: 0.9; background: rgba(0,0,0,0.15); padding: 0.2rem 0.55rem; border-radius: 999px; }
+.fac-duty-picker.supervision-bg {
+    background: linear-gradient(135deg, #1d4ed8 0%, #2563eb 55%, #3b82f6 100%);
+}
+.fac-duty-picker.checking-bg {
+    background: linear-gradient(135deg, #047857 0%, #059669 50%, #10b981 100%);
+}
+.fac-duty-picker.setting-bg {
+    background: linear-gradient(135deg, #c2410c 0%, #ea580c 50%, #f59e0b 100%);
+}
+.fac-duty-picker.is-active {
+    box-shadow: 0 0 0 3px #fff, 0 8px 28px rgba(0,0,0,0.22);
+    transform: translateY(-1px);
+}
+
+/* Content panel under pickers */
+.fac-duty-panel {
+    border-radius: 18px;
+    overflow: hidden;
+    background: #fff;
+    box-shadow: 0 8px 32px rgba(15, 23, 42, 0.08);
+    border: 1px solid #e2e8f0;
+    min-height: 120px;
+}
+.fac-duty-panel .panel-head {
+    padding: 0.85rem 1.25rem;
+    font-weight: 700;
+    font-size: 0.98rem;
+    color: #0f172a;
+    border-bottom: 1px solid #e2e8f0;
+    background: #f8fafc;
+    display: none;
+}
+.fac-duty-panel[data-active-panel="supervision"] .panel-head-supervision,
+.fac-duty-panel[data-active-panel="checking"] .panel-head-checking,
+.fac-duty-panel[data-active-panel="setting"] .panel-head-setting { display: block; }
+
+.panel-body-supervision, .panel-body-checking, .panel-body-setting { display: none; }
+.fac-duty-panel[data-active-panel="supervision"] .panel-body-supervision,
+.fac-duty-panel[data-active-panel="checking"] .panel-body-checking,
+.fac-duty-panel[data-active-panel="setting"] .panel-body-setting { display: block; }
+
+.fac-duty-panel .table thead th {
+    background: #f1f5f9;
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: #475569;
+    border: none;
+    padding: 0.75rem 1rem;
+}
+.fac-duty-panel .table tbody td { padding: 0.85rem 1rem; vertical-align: middle; border-color: #f1f5f9; }
+.fac-duty-panel .table tbody tr:nth-child(even) { background: #fafafa; }
+.fac-duty-panel .division-code { color: #dc2626; font-weight: 600; }
+.tr-supervision-done { background: #fef9c3 !important; }
+.tr-supervision-proxy { background: #fef3c7 !important; }
+.deadline-pill { background: linear-gradient(135deg, #0ea5e9, #0284c7); color: #fff; font-weight: 600; padding: 0.25rem 0.6rem; border-radius: 8px; font-size: 0.8rem; }
+.block-tag { display: inline-block; background: #ecfdf5; color: #065f46; border-radius: 8px; padding: 0.15rem 0.5rem; font-size: 0.78rem; margin: 0.1rem 0.2rem 0.1rem 0; }
+.fac-duty-empty { padding: 2.5rem 1.5rem; text-align: center; color: #64748b; }
+</style>
+{% endblock %}
+{% block content %}
+
+<div class="fac-exam-wrap">
+    <div class="fac-exam-hero">
+        {% if faculty_exam_duties_history_page %}
+        <h1>Exam duties — History</h1>
+        <p class="mb-0">{{ faculty.full_name }} — read-only lists for academic semesters where <strong>Faculty portal</strong> is off. Use the sidebar <strong>My exam duties</strong> for the current open semester.</p>
+        {% else %}
+        <h1>My exam duties</h1>
+        <p class="mb-0">{{ faculty.full_name }} — choose a category below to view supervision, paper checking, or paper setting (current open semesters only).</p>
+        {% endif %}
+    </div>
+
+    {% if faculty_exam_duties_history_page %}
+    <div class="alert alert-secondary border-0 rounded-3 mb-3 small shadow-sm">
+        This page is <strong>read-only</strong>. Pending and completed statuses reflect the coordinator workflow for closed semesters.
+    </div>
+    {% elif exam_portal_semester_history or has_exam_history_elsewhere %}
+    <div class="alert alert-secondary border-0 rounded-3 mb-3 small shadow-sm">
+        <strong>Current cycle only here.</strong> Semesters with Faculty portal <strong>off</strong> are listed under
+        <a href="{% url 'core:faculty_exam_history_duties' %}" class="alert-link fw-semibold">History — exam duties</a> (read-only).
+    </div>
+    {% endif %}
+
+    {% with sup_count=duties|length check_count=paper_checking_rows|length set_count=paper_setting_rows|length %}
+    <div class="fac-duty-pickers" role="tablist" aria-label="Exam duty type">
+        <button type="button" class="fac-duty-picker supervision-bg is-active" id="picker-supervision" role="tab" aria-selected="true" aria-controls="panel-supervision" data-panel="supervision" data-hash="supervision">
+            <span class="picker-icon"><i class="fas fa-clipboard-list"></i></span>
+            <span>Supervision duty</span>
+            <span class="picker-meta">{{ sup_count }}</span>
+        </button>
+        <button type="button" class="fac-duty-picker checking-bg" id="picker-checking" role="tab" aria-selected="false" aria-controls="panel-checking" data-panel="checking" data-hash="checking">
+            <span class="picker-icon"><i class="fas fa-check-double"></i></span>
+            <span>Paper checking</span>
+            <span class="picker-meta">{{ check_count }}</span>
+        </button>
+        <button type="button" class="fac-duty-picker setting-bg" id="picker-setting" role="tab" aria-selected="false" aria-controls="panel-setting" data-panel="setting" data-hash="setting">
+            <span class="picker-icon"><i class="fas fa-file-alt"></i></span>
+            <span>Paper setting</span>
+            <span class="picker-meta">{{ set_count }}</span>
+        </button>
+    </div>
+    {% endwith %}
+
+    <div class="fac-duty-panel" id="dutyContentPanel" data-active-panel="supervision">
+        <div class="panel-head panel-head-supervision">
+            <i class="fas fa-clipboard-list text-primary me-2"></i>Supervision — invigilation slots from uploaded sheets
+        </div>
+        <div class="panel-head panel-head-checking">
+            <i class="fas fa-check-double text-success me-2"></i>Paper checking — submit <strong>Completed</strong> for coordinator approval
+        </div>
+        <div class="panel-head panel-head-setting">
+            <i class="fas fa-file-alt text-warning me-2"></i>Paper setting — submit <strong>Completed</strong> for coordinator approval
+        </div>
+
+        <div class="panel-body-supervision" id="panel-supervision" role="tabpanel" aria-labelledby="picker-supervision">
+            {% if not duties and not faculty_exam_duties_history_page and has_exam_history_elsewhere %}
+            <div class="fac-duty-empty border-bottom">No supervision duties in the current cycle. See <a href="{% url 'core:faculty_exam_history_duties' %}#supervision">History — exam duties</a>.</div>
+            {% endif %}
+            {% regroup duties by phase as by_phase %}
+            {% for group in by_phase %}
+            <div class="px-3 py-2 border-bottom bg-light"><strong>Phase {{ group.grouper.name }}</strong> <span class="text-muted small">({{ group.list|length }} slot{{ group.list|length|pluralize }})</span></div>
+            <div class="table-responsive">
+                <table class="table table-hover mb-0">
+                    <thead><tr><th>Date</th><th>Time</th><th>Subject</th><th>Division</th><th>Status</th><th>Room / Block</th><th></th></tr></thead>
+                    <tbody>
+                        {% for d in group.list %}
+                        <tr class="{% if d.is_proxy %}tr-supervision-proxy{% elif d.completion_status == 'completed' %}tr-supervision-done{% endif %}">
+                            <td>{{ d.supervision_date|date:"M j, Y" }}</td>
+                            <td>{{ d.time_slot }}</td>
+                            <td>{{ d.subject_name }}</td>
+                            <td><code class="division-code">{{ d.division_code }}</code></td>
+                            <td>
+                                {% if d.completion_status == 'completed' %}<span class="badge text-bg-success">Done</span>
+                                {% elif d.is_proxy %}<span class="badge text-bg-warning text-dark">Proxy</span>
+                                {% else %}<span class="badge text-bg-secondary">Open</span>{% endif %}
+                            </td>
+                            <td class="small">{% if d.completion_status == 'completed' %}R {{ d.room_no }} · B {{ d.block_no }}{% else %}—{% endif %}</td>
+                            <td class="text-end">
+                                {% if not faculty_exam_duties_history_page and d.completion_status == 'open' %}
+                                <button type="button" class="btn btn-sm btn-primary rounded-3" data-bs-toggle="modal" data-bs-target="#completeModal" data-duty-id="{{ d.pk }}" data-label="{{ d.supervision_date }} · {{ d.time_slot }} · {{ d.subject_name }}">Complete</button>
+                                {% else %}<span class="text-muted small">—</span>{% endif %}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% empty %}
+            <div class="fac-duty-empty">{% if faculty_exam_duties_history_page %}No supervision duties in history for your account.{% else %}No supervision duties assigned.{% endif %}</div>
+            {% endfor %}
+        </div>
+
+        <div class="panel-body-checking" id="panel-checking" role="tabpanel" aria-labelledby="picker-checking" hidden>
+            {% if paper_checking_rows %}
+            <div class="table-responsive">
+                <table class="table table-hover mb-0">
+                    <thead>
+                        <tr><th>Phase</th><th>Exam date</th><th>Subject</th><th>Papers</th><th>Deadline</th><th>Department / blocks</th><th>Status</th><th class="text-end">Action</th></tr>
+                    </thead>
+                    <tbody>
+                        {% for row in paper_checking_rows %}
+                        {% with d=row.duty st=row.status %}
+                        <tr class="{% if row.adjusted %}table-warning bg-opacity-10{% endif %}">
+                            <td><span class="badge text-bg-success">{{ d.phase.name }}</span></td>
+                            <td>{{ d.exam_date|date:"M j, Y" }}</td>
+                            <td class="fw-semibold">{{ d.subject_name }}{% if row.adjusted %} <span class="badge rounded-pill text-bg-info text-dark ms-1">Adjusted</span>{% endif %}</td>
+                            <td>
+                                <span class="fw-semibold">{{ row.paper_count }}</span>
+                                {% if row.adjusted %}<span class="text-muted small"> / {{ d.total_students }} total</span>{% endif %}
+                            </td>
+                            <td><span class="deadline-pill">{{ d.deadline_date|date:"D, M j" }}</span></td>
+                            <td class="small">
+                                {% for a in d.allocations.all %}
+                                <span class="block-tag">{{ a.department_code_raw }}{% if a.department %} · {{ a.department.name }}{% endif %}: {{ a.block_range }}</span>
+                                {% empty %}—{% endfor %}
+                            </td>
+                            <td>
+                                {% if st == 'approved' %}<span class="badge text-bg-success">Approved</span>
+                                {% if row.approved_credit is not None %}<div class="small fw-semibold text-success mt-1">{{ row.approved_credit|floatformat:2 }} credits</div>{% endif %}
+                                {% elif st == 'pending' %}<span class="badge text-bg-warning text-dark">Pending</span>
+                                {% else %}<span class="badge text-bg-secondary">Open</span>{% endif %}
+                            </td>
+                            <td class="text-end text-nowrap">
+                                {% if not faculty_exam_duties_history_page and st == 'open' %}
+                                <form method="post" action="{% url 'core:faculty_paper_checking_completion_request' %}" class="d-inline" onsubmit="return confirm('Send completion to your department exam coordinator for approval? Practical subjects use one submission: credits = papers × (online rate + offline rate).');">
+                                    {% csrf_token %}
+                                    <input type="hidden" name="duty_id" value="{{ d.pk }}">
+                                    <button type="submit" class="btn btn-sm btn-success rounded-3">Completed</button>
+                                </form>
+                                {% elif st == 'pending' %}
+                                <span class="small text-muted">Awaiting coordinator</span>
+                                {% else %}
+                                <span class="small text-success fw-semibold">Done</span>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% endwith %}
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            {% if not faculty_exam_duties_history_page and has_exam_history_elsewhere %}
+            <div class="fac-duty-empty border-bottom">No paper checking duties in the current cycle. See <a href="{% url 'core:faculty_exam_history_duties' %}#checking">History</a>.</div>
+            {% else %}
+            <div class="fac-duty-empty">{% if faculty_exam_duties_history_page %}No paper checking rows in history.{% else %}No paper checking duties assigned.{% endif %}</div>
+            {% endif %}
+            {% endif %}
+        </div>
+
+        <div class="panel-body-setting" id="panel-setting" role="tabpanel" aria-labelledby="picker-setting" hidden>
+            {% if paper_setting_rows %}
+            <div class="table-responsive">
+                <table class="table table-hover mb-0">
+                    <thead>
+                        <tr><th>Phase</th><th>Date</th><th>Deadline</th><th>Subject</th><th>Notes</th><th>Status</th><th class="text-end">Action</th></tr>
+                    </thead>
+                    <tbody>
+                        {% for row in paper_setting_rows %}
+                        {% with d=row.duty st=row.status %}
+                        <tr>
+                            <td><span class="badge text-bg-warning text-dark">{{ d.phase.name }}</span></td>
+                            <td>{% if d.duty_date %}{{ d.duty_date|date:"M j, Y" }}{% else %}—{% endif %}</td>
+                            <td>{% if d.deadline_date %}<span class="deadline-pill">{{ d.deadline_date|date:"D, M j" }}</span>{% else %}—{% endif %}</td>
+                            <td class="fw-semibold">{{ d.subject_name }}</td>
+                            <td class="small text-muted">{{ d.notes|default:"—"|truncatechars:40 }}</td>
+                            <td>
+                                {% if st == 'approved' %}<span class="badge text-bg-success">Approved</span>
+                                {% if row.approved_credit is not None %}<div class="small fw-semibold text-success mt-1">{{ row.approved_credit|floatformat:2 }} credits</div>{% endif %}
+                                {% elif st == 'pending' %}<span class="badge text-bg-warning text-dark">Pending</span>
+                                {% else %}<span class="badge text-bg-secondary">Open</span>{% endif %}
+                            </td>
+                            <td class="text-end text-nowrap">
+                                {% if not faculty_exam_duties_history_page and st == 'open' %}
+                                <form method="post" action="{% url 'core:faculty_paper_setting_completion_request' %}" class="d-inline" onsubmit="return confirm('Send paper setting completion to your department exam coordinator?');">
+                                    {% csrf_token %}
+                                    <input type="hidden" name="duty_id" value="{{ d.pk }}">
+                                    <button type="submit" class="btn btn-sm btn-success rounded-3">Completed</button>
+                                </form>
+                                {% elif st == 'pending' %}
+                                <span class="small text-muted">Awaiting coordinator</span>
+                                {% else %}
+                                <span class="small text-success fw-semibold">Done</span>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% endwith %}
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            {% if not faculty_exam_duties_history_page and has_exam_history_elsewhere %}
+            <div class="fac-duty-empty border-bottom">No paper setting duties in the current cycle. See <a href="{% url 'core:faculty_exam_history_duties' %}#setting">History</a>.</div>
+            {% else %}
+            <div class="fac-duty-empty">{% if faculty_exam_duties_history_page %}No paper setting rows in history.{% else %}No paper setting duties assigned.{% endif %}</div>
+            {% endif %}
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+{% if not faculty_exam_duties_history_page %}
+<div class="modal fade" id="completeModal" tabindex="-1" aria-labelledby="completeModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content" style="border-radius:16px;">
+            <div class="modal-header border-0 pb-0">
+                <h5 class="modal-title" id="completeModalLabel">Mark supervision complete</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <form method="post" action="{% url 'core:faculty_supervision_duty_complete' %}">
+                {% csrf_token %}
+                <input type="hidden" name="duty_id" id="completeDutyId" value="">
+                <div class="modal-body">
+                    <p class="small text-muted mb-3" id="completeDutyLabel"></p>
+                    <div class="mb-3">
+                        <label class="form-label">Room no.</label>
+                        <input type="text" name="room_no" class="form-control form-control-app" required autocomplete="off">
+                    </div>
+                    <div class="mb-0">
+                        <label class="form-label">Block no.</label>
+                        <input type="text" name="block_no" class="form-control form-control-app" required autocomplete="off">
+                    </div>
+                </div>
+                <div class="modal-footer border-0">
+                    <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-primary-app">Save</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endif %}
+{% endblock %}
+{% block extra_js %}
+<script>
+(function() {
+    var panel = document.getElementById('dutyContentPanel');
+    var pickers = document.querySelectorAll('.fac-duty-picker');
+    if (!panel || !pickers.length) return;
+
+    function setActive(which) {
+        pickers.forEach(function(p) {
+            var on = p.getAttribute('data-panel') === which;
+            p.classList.toggle('is-active', on);
+            p.setAttribute('aria-selected', on ? 'true' : 'false');
+        });
+        panel.setAttribute('data-active-panel', which);
+        ['supervision', 'checking', 'setting'].forEach(function(id) {
+            var el = document.getElementById('panel-' + id);
+            if (el) {
+                el.hidden = id !== which;
+            }
+        });
+        try {
+            if (history.replaceState) {
+                var h = which === 'supervision' ? '' : '#' + which;
+                history.replaceState(null, '', window.location.pathname + window.location.search + h);
+            }
+        } catch (e) {}
+    }
+
+    pickers.forEach(function(btn) {
+        btn.addEventListener('click', function() {
+            setActive(btn.getAttribute('data-panel'));
+        });
+    });
+
+    function fromHash() {
+        var h = (window.location.hash || '').replace(/^#/, '').toLowerCase();
+        if (h === 'checking' || h === 'setting' || h === 'supervision') return h === 'supervision' ? 'supervision' : h;
+        return 'supervision';
+    }
+    setActive(fromHash());
+
+    window.addEventListener('hashchange', function() {
+        setActive(fromHash());
+    });
+
+    var modal = document.getElementById('completeModal');
+    if (modal) {
+        modal.addEventListener('show.bs.modal', function(ev) {
+            var btn = ev.relatedTarget;
+            if (!btn) return;
+            document.getElementById('completeDutyId').value = btn.getAttribute('data-duty-id') || '';
+            var lab = document.getElementById('completeDutyLabel');
+            if (lab) lab.textContent = btn.getAttribute('data-label') || '';
+        });
+    }
+})();
+</script>
+{% endblock %}

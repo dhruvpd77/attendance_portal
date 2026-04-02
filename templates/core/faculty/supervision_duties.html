@@ -1,0 +1,119 @@
+{% extends 'core/exam_portal_base.html' %}
+{% block title %}Duty assigned{% endblock %}
+{% block content %}
+<div class="exam-portal-hero mb-4 align-items-start">
+    <div>
+        <h1 class="page-title">Duty assigned</h1>
+        <p class="page-subtitle mb-0">{{ faculty.full_name }} — phase-wise invigilation from uploaded supervision sheets. Mark each slot complete with room and block when done.</p>
+    </div>
+</div>
+
+{% regroup duties by phase as by_phase %}
+{% for group in by_phase %}
+<div class="card card-app mb-4">
+    <div class="card-header border-0 py-3 d-flex justify-content-between align-items-center flex-wrap gap-2">
+        <h5 class="mb-0 fw-semibold"><i class="fas fa-layer-group me-2 text-info"></i>Phase {{ group.grouper.name }}</h5>
+        <span class="badge text-bg-secondary">{{ group.list|length }} slot{{ group.list|length|pluralize }}</span>
+    </div>
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table table-app mb-0">
+                <thead>
+                    <tr>
+                        <th>Date</th>
+                        <th>Time</th>
+                        <th>Subject</th>
+                        <th>Division</th>
+                        <th>Status</th>
+                        <th>Room / Block</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for d in group.list %}
+                    <tr class="{% if d.is_proxy %}table-warning{% endif %}">
+                        <td>{{ d.supervision_date|date:"M j, Y" }}</td>
+                        <td>{{ d.time_slot }}</td>
+                        <td>{{ d.subject_name }}</td>
+                        <td><code>{{ d.division_code }}</code></td>
+                        <td>
+                            {% if d.completion_status == 'completed' %}
+                            <span class="badge text-bg-success">Completed</span>
+                            {% elif d.is_proxy %}
+                            <span class="badge text-bg-warning text-dark">Proxy</span>
+                            {% else %}
+                            <span class="badge text-bg-secondary">Open</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if d.completion_status == 'completed' %}
+                            <span class="small">R {{ d.room_no }} · B {{ d.block_no }}</span>
+                            {% else %}
+                            <span class="text-muted small">—</span>
+                            {% endif %}
+                        </td>
+                        <td class="text-end">
+                            {% if d.completion_status == 'open' %}
+                            <button type="button" class="btn btn-sm btn-primary-app" data-bs-toggle="modal" data-bs-target="#completeModal" data-duty-id="{{ d.pk }}" data-label="{{ d.supervision_date }} · {{ d.time_slot }} · {{ d.subject_name }}">Open</button>
+                            {% else %}
+                            <span class="small text-muted">Done</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% empty %}
+<div class="card card-app">
+    <div class="card-body py-5 text-center text-muted">No supervision duties assigned yet.</div>
+</div>
+{% endfor %}
+
+<div class="modal fade" id="completeModal" tabindex="-1" aria-labelledby="completeModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="completeModalLabel">Mark supervision complete</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <form method="post" action="{% url 'core:faculty_supervision_duty_complete' %}">
+                {% csrf_token %}
+                <input type="hidden" name="duty_id" id="completeDutyId" value="">
+                <div class="modal-body">
+                    <p class="small text-muted mb-3" id="completeDutyLabel"></p>
+                    <div class="mb-3">
+                        <label class="form-label">Room no.</label>
+                        <input type="text" name="room_no" class="form-control form-control-app" required autocomplete="off" placeholder="e.g. 308">
+                    </div>
+                    <div class="mb-0">
+                        <label class="form-label">Block no.</label>
+                        <input type="text" name="block_no" class="form-control form-control-app" required autocomplete="off" placeholder="e.g. 6">
+                    </div>
+                </div>
+                <div class="modal-footer border-0 pt-0">
+                    <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-primary-app">Save &amp; complete</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endblock %}
+{% block extra_js %}
+<script>
+(function() {
+    var modal = document.getElementById('completeModal');
+    if (!modal) return;
+    modal.addEventListener('show.bs.modal', function(ev) {
+        var btn = ev.relatedTarget;
+        if (!btn) return;
+        document.getElementById('completeDutyId').value = btn.getAttribute('data-duty-id') || '';
+        var lab = document.getElementById('completeDutyLabel');
+        if (lab) lab.textContent = btn.getAttribute('data-label') || '';
+    });
+})();
+</script>
+{% endblock %}

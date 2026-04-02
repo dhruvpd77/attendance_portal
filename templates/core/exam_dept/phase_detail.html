@@ -1,0 +1,218 @@
+{% extends 'core/exam_portal_base.html' %}
+{% block title %}{{ phase.name }} — supervision{% endblock %}
+{% block content %}
+<div class="exam-portal-hero mb-4 align-items-start">
+    <div class="flex-grow-1">
+        <h1 class="page-title mb-2">Phase {{ phase.name }}</h1>
+        <p class="page-subtitle mb-1">
+            Coordinator: <strong>{{ user.username }}</strong>
+            {% if is_hub_phase %}
+            · <strong>Institute-wide phase</strong> — faculty rows match across all attendance departments.
+            {% else %}
+            · Faculty matched from department: <strong>{{ profile.department.name }}</strong>
+            {% endif %}
+        </p>
+        <p class="page-subtitle small mb-0" style="opacity:0.95;">This upload applies to every division in the spreadsheet columns (not only one sub-unit).</p>
+    </div>
+    <div class="d-flex flex-wrap gap-2 flex-shrink-0 justify-content-end">
+        <a href="{% url 'core:dept_exam_dr_report_excel' %}" class="btn btn-outline-light btn-sm rounded-pill border-secondary"><i class="fas fa-file-excel me-1"></i> DR report</a>
+        <a href="{% url 'core:dept_exam_dashboard' %}" class="btn btn-outline-light btn-sm rounded-pill border-secondary">All phases</a>
+    </div>
+</div>
+
+{% include 'core/exam_paper/_excel_upload_format_reference.html' with format_kind='supervision' %}
+
+<div class="exam-section-card mb-4 accent-supervision exam-paper-accent supervision-ref">
+    <div class="card-header py-3 d-flex align-items-center gap-2">
+        <span class="duty-format-icon duty-format-icon--supervision"><i class="fas fa-cloud-upload-alt"></i></span>
+        <div>
+            <h6 class="mb-0 fw-semibold">Upload combined supervision Excel</h6>
+            <p class="small mb-0 mt-1 text-white-50">Accepted: .xlsx, .xlsm — one file can list all divisions (e.g. SY_1…SY_4); layout: subject row, date row, time row, then faculty rows.</p>
+        </div>
+    </div>
+    <div class="card-body py-4">
+        <p class="small text-muted mb-3">
+            Each row is stored by division code so sub-unit logins only see their stream; faculty see every slot that matches them across divisions.
+        </p>
+        <form method="post" action="{% url 'core:dept_exam_phase_upload' phase.id %}" enctype="multipart/form-data">
+            {% csrf_token %}
+            <div class="row g-3 align-items-end">
+                <div class="col-lg-8">
+                    <label class="form-label small fw-semibold text-body-secondary"><i class="fas fa-file-upload me-1"></i>Select file</label>
+                    <div class="duty-upload-zone">
+                        <input type="file" name="supervision_file" accept=".xlsx,.xlsm" class="form-control form-control-app border-0 bg-transparent" required>
+                    </div>
+                </div>
+                <div class="col-lg-4">
+                    <button type="submit" class="btn btn-primary-app w-100 rounded-3 fw-semibold py-2 shadow-sm"><i class="fas fa-file-import me-2"></i>Load preview</button>
+                </div>
+            </div>
+        </form>
+        {% if has_unmatched_duties %}
+        <div class="alert alert-warning border-0 rounded-3 mt-3 mb-0 small shadow-sm">
+            Some names did not match this department’s faculty list. Add missing people below—they get a portal login if they don’t have one yet.
+        </div>
+        {% endif %}
+        {% if duties.count %}
+        <hr class="my-3 border-secondary border-opacity-25">
+        <p class="small text-muted mb-2">Delete all rows imported from Excel for this phase (phase name stays; you can upload again).</p>
+        <form method="post" action="{% url 'core:dept_exam_phase_clear_duties' phase.id %}" class="m-0 d-inline" onsubmit="return confirm('Remove all {{ duties.count }} duty row(s) for {{ phase.name }}? This cannot be undone.');">
+            {% csrf_token %}
+            <button type="submit" class="btn btn-outline-danger btn-sm rounded-pill">Delete imported Excel data</button>
+        </form>
+        {% endif %}
+    </div>
+</div>
+
+{% if staging_preview %}
+<div class="duty-draft-banner p-3 mb-4 d-flex flex-wrap align-items-center justify-content-between gap-3">
+    <div class="small">
+        <strong class="text-dark">Draft import</strong> — <span class="text-primary fw-semibold">{{ staging_preview|length }}</span> row(s) in session (not saved).
+        {% if staging_unmatched %}<span class="ms-1 text-warning fw-semibold">{{ staging_unmatched }} not linked to faculty.</span>{% endif %}
+    </div>
+    <div class="d-flex flex-wrap gap-2">
+        <form method="post" action="{% url 'core:dept_exam_phase_commit_import' phase.id %}" class="m-0">
+            {% csrf_token %}
+            <button type="submit" class="btn btn-success btn-sm rounded-pill fw-semibold px-3" onclick="return confirm('Replace all saved duties for this phase with this draft?');">Save to database</button>
+        </form>
+        <form method="post" action="{% url 'core:dept_exam_phase_discard_import' phase.id %}" class="m-0">
+            {% csrf_token %}
+            <button type="submit" class="btn btn-outline-secondary btn-sm rounded-pill">Discard draft</button>
+        </form>
+    </div>
+</div>
+
+<div class="exam-section-card mb-4 accent-supervision">
+    <div class="card-header py-3 d-flex justify-content-between align-items-center flex-wrap gap-2">
+        <h6 class="mb-0 fw-semibold"><i class="fas fa-eye me-2"></i>Preview (draft)</h6>
+        {% if staging_preview %}<span class="badge rounded-pill bg-white bg-opacity-10 text-white border border-white border-opacity-25">{{ staging_preview|length }} row(s)</span>{% endif %}
+    </div>
+    <div class="card-body p-0">
+        <div class="table-responsive" style="max-height: 40vh; overflow-y: auto;">
+            <table class="table table-sm mb-0 exam-table-theme">
+                <thead class="sticky-top">
+                    <tr>
+                        <th>Faculty</th>
+                        <th>Date</th>
+                        <th>Time</th>
+                        <th>Subject</th>
+                        <th>Division</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for d in staging_preview %}
+                    <tr class="{% if not d.faculty %}table-warning{% endif %}">
+                        <td>{% if d.faculty %}{{ d.faculty.full_name }}{% else %}<span title="{{ d.faculty_name }}">{{ d.faculty_name }}</span>{% endif %}</td>
+                        <td>{{ d.supervision_date }}</td>
+                        <td>{{ d.time_slot }}</td>
+                        <td>{{ d.subject_name }}</td>
+                        <td><code>{{ d.division_code }}</code></td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+<div class="exam-section-card mb-4">
+    <div class="card-header py-3 d-flex justify-content-between align-items-center flex-wrap gap-2">
+        <h6 class="mb-0 fw-semibold"><i class="fas fa-database me-2 text-secondary"></i>Saved duties (database)</h6>
+        {% if duties.count %}<span class="badge rounded-pill bg-secondary bg-opacity-25 text-dark border">{{ duties.count }} row(s)</span>{% endif %}
+    </div>
+    <div class="card-body p-0">
+        <div class="table-responsive" style="max-height: 65vh; overflow-y: auto;">
+            <table class="table table-sm mb-0 exam-table-theme">
+                <thead class="sticky-top">
+                    <tr>
+                        <th>Faculty</th>
+                        <th>Original</th>
+                        <th>Proxy</th>
+                        <th>Status</th>
+                        <th>Room / Block</th>
+                        <th>Date</th>
+                        <th>Time</th>
+                        <th>Subject</th>
+                        <th>Division</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for d in duties %}
+                    <tr class="{% if not d.faculty %}table-warning{% endif %}">
+                        <td>{% if d.faculty %}{{ d.faculty.full_name }}{% else %}<span title="{{ d.faculty_name_raw }}">{{ d.faculty_name_raw }}</span>{% endif %}</td>
+                        <td>{% if d.original_faculty %}{{ d.original_faculty.short_name }}{% else %}—{% endif %}</td>
+                        <td>{% if d.is_proxy %}<span class="badge text-bg-warning text-dark">Yes</span>{% else %}—{% endif %}</td>
+                        <td>{% if d.completion_status == 'completed' %}<span class="badge text-bg-success">Done</span>{% else %}<span class="badge text-bg-secondary">Open</span>{% endif %}</td>
+                        <td>{% if d.completion_status == 'completed' %}R {{ d.room_no }} · B {{ d.block_no }}{% else %}—{% endif %}</td>
+                        <td>{{ d.supervision_date }}</td>
+                        <td>{{ d.time_slot }}</td>
+                        <td>{{ d.subject_name }}</td>
+                        <td><code>{{ d.division_code }}</code></td>
+                    </tr>
+                    {% empty %}
+                    <tr><td colspan="9" class="text-muted text-center py-4">Upload a sheet to import duties.</td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+{% if unmatched_groups %}
+<div class="exam-section-card mb-4 accent-warning">
+    <div class="card-header py-3">
+        <h6 class="mb-0 fw-semibold"><i class="fas fa-user-plus me-2"></i>Not matched to attendance faculty — create &amp; assign</h6>
+        <p class="small text-white-50 mb-0 mt-2 fw-normal">
+            {% if is_hub_phase %}
+            Creates a faculty record under the <strong class="text-white">department you select below</strong>, generates portal login if needed, and links all unmatched rows for that sheet name/initial.
+            {% else %}
+            Creates a faculty record in <strong class="text-white">{{ profile.department.name }}</strong>, generates portal username/password if they don’t have one, and links every duty row for that name/initial in this phase.
+            {% endif %}
+        </p>
+    </div>
+    <div class="card-body">
+        {% for g in unmatched_groups %}
+        <div class="border rounded-3 p-3 mb-3 bg-light bg-opacity-50">
+            <div class="row align-items-end g-3">
+                <div class="col-md-12">
+                    <p class="small mb-2"><span class="badge bg-secondary">{{ g.count }} row{{ g.count|pluralize }}</span> Sheet: <strong>{{ g.name_raw }}</strong> — Initial: <code>{{ g.short_raw }}</code></p>
+                </div>
+                <form method="post" action="{% url 'core:dept_exam_phase_create_faculty_assign' phase.id %}" class="row g-3 align-items-end w-100 m-0">
+                    {% csrf_token %}
+                    <input type="hidden" name="match_faculty_name_raw" value="{{ g.name_raw }}">
+                    <input type="hidden" name="match_faculty_short_raw" value="{{ g.short_raw }}">
+                    <div class="col-md-4">
+                        <label class="form-label small">Full name</label>
+                        <input type="text" name="full_name" class="form-control form-control-app" value="{{ g.name_raw }}" required>
+                    </div>
+                    <div class="col-md-2">
+                        <label class="form-label small">Short / initial</label>
+                        <input type="text" name="short_name" class="form-control form-control-app" value="{{ g.short_raw }}" maxlength="30" required>
+                    </div>
+                    <div class="col-md-3">
+                        <label class="form-label small">Email <span class="text-muted">(optional)</span></label>
+                        <input type="email" name="email" class="form-control form-control-app" placeholder="for records">
+                    </div>
+                    {% if is_hub_phase %}
+                    <div class="col-md-12">
+                        <label class="form-label small">Attendance department (new faculty row)</label>
+                        <select name="new_faculty_department_id" class="form-select form-select-app" required>
+                            <option value="" disabled selected>Select department…</option>
+                            {% for d in all_departments %}
+                            <option value="{{ d.pk }}">{{ d.name }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    {% endif %}
+                    <div class="col-md-3">
+                        <button type="submit" class="btn btn-primary-app w-100">Create faculty, login &amp; link duties</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+{% endif %}
+{% endblock %}

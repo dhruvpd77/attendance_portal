@@ -1,0 +1,32 @@
+{% extends 'core/exam_portal_base.html' %}
+{% block title %}Choose attendance department{% endblock %}
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-lg-6">
+        <div class="card card-app">
+            <div class="card-header bg-white border-0 py-3">
+                <h5 class="mb-0 fw-semibold">Link your attendance department</h5>
+            </div>
+            <div class="card-body">
+                <p class="text-muted small mb-4">
+                    Exam section created your coordinator login (e.g. SY / FY) without assigning a department.
+                    Choose the department from the central attendance list (same as Admin → Departments). After this, you can add supervision phases, sub-unit logins, and upload duty Excel sheets.
+                </p>
+                <form method="post" action="{% url 'core:dept_exam_link_department' %}">
+                    {% csrf_token %}
+                    <div class="mb-3">
+                        <label class="form-label">Department</label>
+                        <select name="department_id" class="form-select form-select-app" required>
+                            <option value="" disabled selected>Select department…</option>
+                            {% for d in departments %}
+                            <option value="{{ d.pk }}">{{ d.name }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <button type="submit" class="btn btn-primary-app">Continue</button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

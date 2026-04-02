@@ -1,0 +1,137 @@
+{% extends 'core/exam_portal_base.html' %}
+{% block title %}Edit coordinator — {{ role_obj.user.username }}{% endblock %}
+{% block content %}
+<div class="exam-portal-hero mb-4 align-items-start">
+    <div>
+        <h1 class="page-title">Edit department coordinator</h1>
+        <p class="page-subtitle mb-0">
+            <code class="text-light">{{ role_obj.user.username }}</code>
+            ·
+            {% if coord_profile and coord_profile.institute_semester %}<strong>{{ coord_profile.institute_semester.label }}</strong> ·{% endif %}
+            {% if coord_profile and coord_profile.department %}{{ coord_profile.department.name }}{% elif role_obj.department %}{{ role_obj.department.name }}{% else %}<span class="text-secondary">{% if coord_profile and coord_profile.is_hub_coordinator %}Hub{% else %}Not linked yet{% endif %}</span>{% endif %}
+        </p>
+        <p class="small text-muted mb-0 mt-2">You are editing <strong>one</strong> academic-semester context. Switch below to open another, or add a new period for the same login.</p>
+    </div>
+    <a href="{% url 'core:exam_section_dashboard' %}" class="btn btn-outline-light btn-sm border-secondary">Back to Exam section</a>
+</div>
+
+<div class="row justify-content-center">
+    <div class="col-lg-8">
+        {% if all_parent_profiles %}
+        <div class="card exam-section-card mb-4">
+            <div class="card-header">
+                <h5 class="mb-0 fw-semibold"><i class="fa-regular fa-calendar me-2"></i>Linked academic semesters</h5>
+            </div>
+            <div class="card-body">
+                <ul class="list-group list-group-flush">
+                    {% for p in all_parent_profiles %}
+                    <li class="list-group-item d-flex flex-wrap justify-content-between align-items-center gap-2 px-0">
+                        <div>
+                            <strong>{{ p.institute_semester.label }}</strong>
+                            {% if p.is_hub_coordinator %}
+                            <span class="badge text-bg-secondary ms-1">Hub</span>
+                            {% elif p.department %}
+                            <span class="text-muted ms-1">{{ p.department.name }}</span>
+                            {% endif %}
+                            {% if p.pk == coord_profile.pk %}
+                            <span class="badge text-bg-primary ms-1">Editing</span>
+                            {% endif %}
+                        </div>
+                        {% if p.pk != coord_profile.pk %}
+                        <a href="{% url 'core:exam_section_edit_coordinator' p.pk %}" class="btn btn-sm btn-outline-primary">Open</a>
+                        {% endif %}
+                    </li>
+                    {% endfor %}
+                </ul>
+            </div>
+        </div>
+        {% endif %}
+
+        {% if semesters_to_add %}
+        <div class="card exam-section-card mb-4 border-primary border-opacity-25">
+            <div class="card-header">
+                <h5 class="mb-0 fw-semibold"><i class="fa-solid fa-plus me-2"></i>Add academic semester</h5>
+            </div>
+            <div class="card-body">
+                <p class="small text-muted">Creates another coordinator profile for <code>{{ role_obj.user.username }}</code> in a period that is not linked yet. <strong>Hub:</strong> leave department empty and pick a semester. <strong>Single department:</strong> choose a department (its academic semester must be one you have not linked yet).</p>
+                <form method="post" id="form-add-coord-semester">
+                    {% csrf_token %}
+                    <input type="hidden" name="add_coordinator_semester" value="1">
+                    <div class="mb-3" id="add-coord-hub-semester-wrap">
+                        <label class="form-label">Academic semester <span class="text-muted small">(hub mode)</span></label>
+                        <select name="institute_semester_id" id="add-coord-inst-semester" class="form-select form-select-app">
+                            <option value="">— Select semester —</option>
+                            {% for s in semesters_to_add %}
+                            <option value="{{ s.pk }}">{{ s.label }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Single department <span class="text-muted small">(optional — leave empty for hub)</span></label>
+                        <select name="department_id" id="add-coord-department-id" class="form-select form-select-app">
+                            <option value="">— Hub mode —</option>
+                            {% for d in department_choices_for_add %}
+                            <option value="{{ d.pk }}">{{ d.name }} — {{ d.institute_semester.label }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="mb-3" id="add-coord-reporting-hub-wrap">
+                        <label class="form-label">Reporting hub username <span class="text-muted small">(single-dept only)</span></label>
+                        <input type="text" name="reporting_hub_username" class="form-control form-control-app" placeholder="e.g. examfy" autocomplete="off">
+                    </div>
+                    <button type="submit" class="btn btn-primary-app">Add semester context</button>
+                </form>
+                <script>
+                (function () {
+                    var dept = document.getElementById('add-coord-department-id');
+                    var sem = document.getElementById('add-coord-inst-semester');
+                    var wrapSem = document.getElementById('add-coord-hub-semester-wrap');
+                    var wrapHub = document.getElementById('add-coord-reporting-hub-wrap');
+                    function sync() {
+                        var hub = !dept.value;
+                        sem.required = hub;
+                        if (!hub) { sem.value = ''; }
+                        wrapSem.style.display = hub ? '' : 'none';
+                        wrapHub.style.display = hub ? 'none' : '';
+                    }
+                    dept.addEventListener('change', sync);
+                    sync();
+                })();
+                </script>
+            </div>
+        </div>
+        {% elif all_parent_profiles %}
+        <div class="alert alert-secondary mb-4">
+            <span class="small">Every faculty-active academic semester is already linked for this login. Create new periods under <strong>Admin → Academic semesters</strong> if you need more.</span>
+        </div>
+        {% endif %}
+
+        <div class="card exam-section-card mb-4">
+            <div class="card-header">
+                <h5 class="mb-0 fw-semibold">Credentials — {{ coord_profile.institute_semester.label }}</h5>
+            </div>
+            <div class="card-body">
+                <form method="post">
+                    {% csrf_token %}
+                    <div class="mb-3">
+                        <label class="form-label">New username <span class="text-muted small">(optional)</span></label>
+                        <input type="text" name="username" class="form-control form-control-app" value="{{ role_obj.user.username }}" autocomplete="username">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">New password <span class="text-muted small">(leave blank to keep current)</span></label>
+                        <input type="password" name="password" class="form-control form-control-app" autocomplete="new-password">
+                    </div>
+                    {% if coord_profile and coord_profile.department_id and not coord_profile.is_hub_coordinator %}
+                    <div class="mb-3">
+                        <label class="form-label">Reporting hub username <span class="text-muted small">(optional)</span></label>
+                        <input type="text" name="reporting_hub_username" class="form-control form-control-app" value="{% if coord_profile.invited_by %}{{ coord_profile.invited_by.username }}{% endif %}" placeholder="e.g. examfy" autocomplete="off">
+                        <p class="small text-muted mb-0">Sub-units under this coordinator see combined supervision from this hub. Clear the field to unlink.</p>
+                    </div>
+                    {% endif %}
+                    <button type="submit" class="btn btn-primary-app">Save changes</button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

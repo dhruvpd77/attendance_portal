@@ -15,6 +15,50 @@
         <a href="{% url 'core:subject_add' %}" class="btn btn-primary-app btn-sm"><i class="fas fa-plus me-1"></i> Add</a>
     </div>
 </div>
+{% if show_subject_merge %}
+<div class="card admin-card border-warning mb-4">
+    <div class="card-header bg-warning bg-opacity-10 d-flex align-items-center gap-2">
+        <i class="fas fa-object-group text-warning"></i>
+        <strong>Merge subjects</strong>
+        <span class="badge bg-secondary ms-1">Super admin only</span>
+    </div>
+    <div class="card-body">
+        <p class="text-secondary small mb-3">
+            Moves <strong>all</strong> timetable slots, adjustments, extra lectures, exam phase links, marks, DR cache, and related exam-duty labels
+            from the <em>source</em> subject into the <em>target</em> subject, then deletes the source. Applies to
+            <strong>{{ department.name }}</strong> only (the department selected on the Dashboard).
+        </p>
+        <form method="post" action="{% url 'core:subject_merge' %}" class="row g-3 align-items-end" onsubmit="return confirm('This cannot be undone easily. Merge source into target for {{ department.name }}?');">
+            {% csrf_token %}
+            <div class="col-md-4">
+                <label class="form-label fw-semibold">Source (remove)</label>
+                <select name="merge_from" class="form-select form-select-app" required>
+                    <option value="">Choose subject…</option>
+                    {% for s in subjects %}
+                    <option value="{{ s.name }}">{{ s.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-4">
+                <label class="form-label fw-semibold">Target (keep)</label>
+                <select name="merge_to" class="form-select form-select-app" required>
+                    <option value="">Choose subject…</option>
+                    {% for s in subjects %}
+                    <option value="{{ s.name }}">{{ s.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-4">
+                <label class="form-label fw-semibold">Confirm</label>
+                <input type="text" name="confirm_merge" class="form-control form-control-app" placeholder="Type MERGE" autocomplete="off" required pattern="MERGE" title="Type MERGE exactly">
+            </div>
+            <div class="col-12">
+                <button type="submit" class="btn btn-warning"><i class="fas fa-compress-arrows-alt me-1"></i> Merge subjects</button>
+            </div>
+        </form>
+    </div>
+</div>
+{% endif %}
 <div class="card admin-card overflow-hidden">
     <div class="table-responsive">
         <table class="table table-hover mb-0">

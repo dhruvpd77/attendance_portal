@@ -1,0 +1,93 @@
+{% extends 'core/exam_portal_base.html' %}
+{% block title %}Paper setting — phases{% endblock %}
+{% block content %}
+
+<div class="exam-portal-hero">
+    <h1 class="page-title">Paper setting duty</h1>
+    <p class="page-subtitle mb-2">Upload Excel with columns such as <strong>Date</strong>, <strong>Subject</strong>, <strong>Faculty</strong> (short name), and optional <strong>Notes</strong> / <strong>Deadline</strong>. Rows are matched to faculty in your scope. Open a phase to see a <strong>demo spreadsheet layout</strong> before uploading.</p>
+    {% if institute_scope_active %}
+    <span class="badge badge-scope rounded-pill mt-2">Institute-wide phases</span>
+    {% else %}
+    <span class="badge badge-scope rounded-pill mt-2">Your coordinator scope</span>
+    {% endif %}
+</div>
+
+{% if phases %}
+<div class="card card-app mb-4" style="border-color: rgba(180,83,9,.35);">
+    <div class="card-body py-3">
+        <label class="form-label small fw-semibold mb-2" style="color:#b45309;"><i class="fas fa-upload me-1"></i>Upload by phase</label>
+        <p class="small text-muted mb-2">Choose a phase to open its upload page and duties list.</p>
+        <div class="d-flex flex-wrap gap-2 align-items-center">
+            <select id="paper-setting-phase-jump" class="form-select form-select-app" style="max-width:22rem;" aria-label="Phase for upload">
+                <option value="">Select phase…</option>
+                {% for ph in phases %}
+                <option value="{% url 'core:paper_setting_phase_detail' ph.id %}">{{ ph.name }}{% if ph.institute_scope %} (institute){% endif %}</option>
+                {% endfor %}
+            </select>
+            <button type="button" class="btn btn-warning text-dark rounded-pill" id="paper-setting-phase-jump-go">Go to upload</button>
+        </div>
+    </div>
+</div>
+<script>
+(function () {
+  var s = document.getElementById('paper-setting-phase-jump');
+  var b = document.getElementById('paper-setting-phase-jump-go');
+  if (!s || !b) return;
+  b.addEventListener('click', function () {
+    if (s.value) window.location.href = s.value;
+  });
+})();
+</script>
+{% endif %}
+
+<div class="row g-4">
+    <div class="col-lg-5">
+        <div class="card card-app exam-paper-accent setting h-100">
+            <div class="card-header bg-white border-0 py-3">
+                <h5 class="mb-0 fw-semibold" style="color:#b45309;"><i class="fas fa-pen-fancy me-2"></i>New phase</h5>
+            </div>
+            <div class="card-body">
+                <form method="post" action="{% url 'core:paper_setting_phase_add' %}">
+                    {% csrf_token %}
+                    <label class="form-label">Phase name</label>
+                    <input type="text" name="name" class="form-control form-control-app mb-3" placeholder="T1 setting, Internal papers…" required>
+                    <button type="submit" class="btn btn-primary-app w-100">Add paper setting phase</button>
+                </form>
+            </div>
+        </div>
+    </div>
+    <div class="col-lg-7">
+        <div class="card card-app h-100">
+            <div class="card-header bg-white border-0 py-3 d-flex justify-content-between align-items-center">
+                <h5 class="mb-0 fw-semibold">Phases</h5>
+                <a href="{% url 'core:paper_checking_dashboard' %}" class="btn btn-sm btn-outline-success">Paper checking</a>
+            </div>
+            <div class="card-body">
+                <ul class="list-group list-group-flush">
+                    {% for ph in phases %}
+                    <li class="list-group-item px-0 py-3">
+                        <div class="d-flex flex-wrap align-items-center gap-2 justify-content-between mb-2">
+                            <span class="fw-medium">{{ ph.name }}{% if ph.institute_scope %} <span class="badge text-bg-secondary small">institute</span>{% endif %}</span>
+                            <a href="{% url 'core:paper_setting_phase_detail' ph.id %}" class="btn btn-sm btn-outline-warning text-dark">Open / upload</a>
+                        </div>
+                        <div class="d-flex flex-wrap gap-2 align-items-center">
+                            <form method="post" action="{% url 'core:paper_setting_phase_rename' ph.id %}" class="d-flex flex-wrap gap-1 align-items-center flex-grow-1" style="min-width:220px;">
+                                {% csrf_token %}
+                                <input type="text" name="name" class="form-control form-control-sm" value="{{ ph.name }}" aria-label="Rename phase">
+                                <button type="submit" class="btn btn-sm btn-outline-primary">Rename</button>
+                            </form>
+                            <form method="post" action="{% url 'core:paper_setting_phase_delete' ph.id %}" onsubmit="return confirm('Delete empty phase {{ ph.name }}?');">
+                                {% csrf_token %}
+                                <button type="submit" class="btn btn-sm btn-outline-danger">Delete</button>
+                            </form>
+                        </div>
+                    </li>
+                    {% empty %}
+                    <li class="list-group-item text-muted px-0">No phases yet.</li>
+                    {% endfor %}
+                </ul>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

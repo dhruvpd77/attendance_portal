@@ -1,0 +1,262 @@
+{% extends 'core/exam_portal_base.html' %}
+{% block title %}Exam section{% endblock %}
+{% block content %}
+<div class="exam-portal-hero mb-4 align-items-start">
+    <div class="flex-grow-1" style="min-width: min(100%, 280px);">
+        <p class="mb-2">
+            {% if is_super_admin %}
+            <span class="ea-badge-dept">Institute super admin</span>
+            {% else %}
+            <span class="ea-badge-dept">Exam section</span>
+            {% endif %}
+        </p>
+        <h1 class="page-title">Exam section</h1>
+        <p class="page-subtitle mb-0">
+            {% if is_super_admin %}
+            Operators, coordinators, supervision, paper checking &amp; setting (institute-wide), and daily DR exports.
+            {% else %}
+            Create coordinators, run institute-wide paper duties, and export daily DR — same visual style as the faculty portal.
+            {% endif %}
+        </p>
+    </div>
+    <div class="d-flex flex-wrap gap-2 align-items-start">
+        <a href="{% url 'core:paper_checking_dashboard' %}" class="btn btn-success btn-sm rounded-pill px-3"><i class="fas fa-check-double me-1"></i>Paper checking</a>
+        <a href="{% url 'core:paper_setting_dashboard' %}" class="btn btn-warning text-dark btn-sm rounded-pill px-3"><i class="fas fa-pen-fancy me-1"></i>Paper setting</a>
+        <a href="{% url 'core:exam_section_credit_analytics' %}" class="btn btn-primary-app btn-sm rounded-pill px-3"><i class="fas fa-chart-line me-1"></i>Paper-check credits</a>
+        <a href="{% url 'core:exam_section_supervision_credit_analytics' %}" class="btn btn-outline-light btn-sm rounded-pill px-3 border-secondary"><i class="fas fa-user-check me-1"></i>Supervision credits</a>
+        <a href="{% url 'core:dr_facilities_dashboard' %}" class="btn btn-outline-light btn-sm rounded-pill px-3 border-secondary"><i class="fas fa-table-list me-1"></i>DR facilities</a>
+        <a href="{% url 'core:section_credit_report' %}" class="btn btn-outline-primary btn-sm rounded-pill px-3 border-secondary"><i class="fas fa-file-invoice-dollar me-1"></i>Section credit &amp; pay</a>
+    </div>
+</div>
+
+<div class="row g-3 mb-4">
+    <div class="col-md-6">
+        <div class="card card-app h-100 exam-paper-accent checking overflow-hidden">
+            <div class="card-header card-header-slate py-2">
+                <h6 class="mb-0"><i class="fas fa-file-medical-alt me-2" style="color:#6ee7b7;"></i>Paper checking phases</h6>
+            </div>
+            <div class="card-body">
+                <p class="small text-muted mb-2">Evaluation-duty Excel (SY blocks, totals, initials). Deadlines show as the next day after the exam date for faculty.</p>
+                <ul class="list-unstyled small mb-0">
+                    {% for ph in paper_checking_phases %}
+                    <li class="mb-1"><a href="{% url 'core:paper_checking_phase_detail' ph.id %}">{{ ph.name }}</a></li>
+                    {% empty %}<li class="text-muted">None yet — open Paper checking to add.</li>{% endfor %}
+                </ul>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-6">
+        <div class="card card-app h-100 exam-paper-accent setting overflow-hidden">
+            <div class="card-header card-header-slate py-2">
+                <h6 class="mb-0"><i class="fas fa-file-signature me-2" style="color:#fde68a;"></i>Paper setting phases</h6>
+            </div>
+            <div class="card-body">
+                <p class="small text-muted mb-2">Upload assignments (Date, Subject, Faculty, Notes columns).</p>
+                <ul class="list-unstyled small mb-0">
+                    {% for ph in paper_setting_phases %}
+                    <li class="mb-1"><a href="{% url 'core:paper_setting_phase_detail' ph.id %}">{{ ph.name }}</a></li>
+                    {% empty %}<li class="text-muted">None yet.</li>{% endfor %}
+                </ul>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="card exam-section-card mb-4">
+    <div class="card-header d-flex flex-wrap justify-content-between align-items-center gap-2">
+        <h5 class="mb-0 fw-semibold"><i class="fa-solid fa-file-excel me-2"></i>Daily DR (official Excel layout)</h5>
+        <a href="{% url 'core:dept_exam_dr_report_excel' %}" class="btn btn-primary-app btn-sm flex-shrink-0"><i class="fas fa-file-excel me-1"></i> Supervision DR report (all phases)</a>
+    </div>
+    <div class="card-body">
+        <p class="small text-muted mb-3 mb-md-4">
+            Uses <strong>exam.xlsx</strong> layout. Set <strong>From</strong> for one day, or add <strong>To</strong> for a range (includes days with supervision <em>or</em> approved paper-check completions). Each sheet fills
+            <strong>Supervision during College Exam</strong> (completed duties) and <strong>Answerbook Evaluation</strong> columns <strong>W/X/Y</strong> (T1–T3 / SEE / REM) from approved paper-checking credits, plus activity lines in column <strong>42</strong>.
+            <strong>Total NT Credits</strong> (column 58) sums automatically from the template formula. Department logins can download the same layout restricted to <strong>their faculty list</strong>.
+        </p>
+        <p class="small text-muted mb-3">
+            <strong>Supervision DR report</strong> (button above) is the same <em>supervision-only</em> Excel download hub coordinators (e.g. examsy) use for all divisions — here it includes <strong>every</strong> supervision phase in the system, not only one hub’s phases.
+        </p>
+        {% include 'core/exam_paper/_dr_date_range_form.html' with dr_url='core:exam_section_daily_dr_excel' %}
+    </div>
+</div>
+
+{% if is_super_admin %}
+<div class="row g-4 mb-4">
+    <div class="col-lg-5">
+        <div class="card exam-section-card mb-4 mb-lg-0">
+            <div class="card-header">
+                <h5 class="mb-0 fw-semibold"><i class="fa-solid fa-id-badge me-2"></i>New exam section operator</h5>
+            </div>
+            <div class="card-body">
+                <p class="small text-muted">Separate login (e.g. dedicated exam cell). Same powers as this screen for coordinator creation, but cannot manage other operators.</p>
+                <form method="post" action="{% url 'core:exam_section_create_operator' %}">
+                    {% csrf_token %}
+                    <div class="mb-3">
+                        <label class="form-label">Username</label>
+                        <input type="text" name="username" class="form-control form-control-app" required autocomplete="off" placeholder="e.g. examsection">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Password</label>
+                        <input type="password" name="password" class="form-control form-control-app" required>
+                    </div>
+                    <button type="submit" class="btn btn-primary-app">Create operator</button>
+                </form>
+            </div>
+        </div>
+    </div>
+    <div class="col-lg-7">
+        <div class="card exam-section-card mb-4">
+            <div class="card-header">
+                <h5 class="mb-0 fw-semibold"><i class="fa-solid fa-users-gear me-2"></i>Exam section operators</h5>
+            </div>
+            <div class="card-body p-0">
+                <div class="table-responsive">
+                    <table class="table table-hover mb-0 exam-table-theme">
+                        <thead>
+                            <tr>
+                                <th>Username</th>
+                                <th class="text-end">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for r in exam_section_operators %}
+                            <tr>
+                                <td>{{ r.user.username }}</td>
+                                <td class="text-end">
+                                    <a href="{% url 'core:exam_section_edit_operator' r.user_id %}" class="btn btn-sm btn-outline-primary me-1">Edit</a>
+                                    {% if r.user_id != request.user.id %}
+                                    <form method="post" action="{% url 'core:exam_section_delete_operator' %}" class="d-inline" onsubmit="return confirm('Remove this exam section operator?');">
+                                        {% csrf_token %}
+                                        <input type="hidden" name="user_id" value="{{ r.user_id }}">
+                                        <button type="submit" class="btn btn-sm btn-outline-danger">Remove</button>
+                                    </form>
+                                    {% else %}
+                                    <span class="text-muted small">You</span>
+                                    {% endif %}
+                                </td>
+                            </tr>
+                            {% empty %}
+                            <tr><td colspan="2" class="text-muted py-4 text-center">No operators yet. Create one or use <code>ensure_exam_section_user</code>.</td></tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+<div class="row g-4">
+    <div class="col-lg-5">
+        <div class="card exam-section-card mb-4 mb-lg-0">
+            <div class="card-header">
+                <h5 class="mb-0 fw-semibold"><i class="fa-solid fa-user-plus me-2"></i>New department coordinator</h5>
+            </div>
+            <div class="card-body">
+                <p class="small text-muted"><strong>Hub (no department):</strong> pick an <strong>academic semester</strong> that super admin has marked faculty-portal active — that ties examsy-style logins to e.g. SY EVEN 2026 vs SY ODD 2026. The same username can be “Create”d again with another semester to add a second context. <strong>Single department:</strong> semester comes from that department’s record.</p>
+                <form method="post" action="{% url 'core:exam_section_create_coordinator' %}" id="form-create-coordinator">
+                    {% csrf_token %}
+                    <div class="mb-3">
+                        <label class="form-label">Username</label>
+                        <input type="text" name="username" class="form-control form-control-app" required autocomplete="off" placeholder="e.g. examsy">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Password <span class="text-muted small">(required for new logins; optional if user exists — then updates password only when filled)</span></label>
+                        <input type="password" name="password" class="form-control form-control-app" id="coord-password-input" autocomplete="new-password">
+                    </div>
+                    <div class="mb-3" id="coord-hub-semester-wrap">
+                        <label class="form-label">Academic semester <span class="text-muted small">(hub mode)</span></label>
+                        <select name="institute_semester_id" id="coord-inst-semester" class="form-select form-select-app">
+                            <option value="">— Select semester —</option>
+                            {% for s in active_semesters_for_coordinators %}
+                            <option value="{{ s.pk }}">{{ s.label }}</option>
+                            {% empty %}
+                            <option value="" disabled>No faculty-active semesters — enable under Admin → Academic semesters.</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Single department <span class="text-muted small">(optional)</span></label>
+                        <select name="department_id" id="coord-department-id" class="form-select form-select-app">
+                            <option value="">— Hub mode (recommended for examsy / examfy) —</option>
+                            {% for d in all_department_choices %}
+                            <option value="{{ d.pk }}">{{ d.name }}{% if d.institute_semester %} — {{ d.institute_semester.label }}{% endif %}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Reporting hub username <span class="text-muted small">(optional, single-dept only)</span></label>
+                        <input type="text" name="reporting_hub_username" class="form-control form-control-app" placeholder="e.g. examfy — links sub-units to this hub's institute supervision phases" autocomplete="off">
+                        <p class="small text-muted mb-0">Hub must exist for the <em>same</em> academic semester as this single-dept coordinator.</p>
+                    </div>
+                    <button type="submit" class="btn btn-primary-app">Create coordinator</button>
+                </form>
+                <script>
+                (function () {
+                    var dept = document.getElementById('coord-department-id');
+                    var sem = document.getElementById('coord-inst-semester');
+                    var wrap = document.getElementById('coord-hub-semester-wrap');
+                    function sync() {
+                        var hub = !dept.value;
+                        sem.required = hub;
+                        if (!hub) { sem.value = ''; }
+                        wrap.style.display = hub ? '' : 'none';
+                    }
+                    dept.addEventListener('change', sync);
+                    sync();
+                })();
+                </script>
+            </div>
+        </div>
+    </div>
+    <div class="col-lg-7">
+        <div class="card exam-section-card mb-4">
+            <div class="card-header">
+                <h5 class="mb-0 fw-semibold"><i class="fa-solid fa-users me-2"></i>Department coordinators</h5>
+            </div>
+            <div class="card-body p-0">
+                <div class="table-responsive">
+                    <table class="table table-hover mb-0 exam-table-theme">
+                        <thead>
+                            <tr>
+                                <th>Username</th>
+                                <th>Academic semester</th>
+                                <th>Department</th>
+                                <th class="text-end">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for r in coord_profiles %}
+                            <tr>
+                                <td>{{ r.user.username }}</td>
+                                <td>{{ r.institute_semester.label }}</td>
+                                <td>
+                                    {% if r.is_hub_coordinator %}
+                                    <span class="badge text-bg-secondary">Hub</span>
+                                    {% elif r.department %}
+                                    {{ r.department.name }}
+                                    {% else %}
+                                    <span class="text-muted">Not linked</span>
+                                    {% endif %}
+                                </td>
+                                <td class="text-end text-nowrap">
+                                    <a href="{% url 'core:exam_section_edit_coordinator' r.pk %}" class="btn btn-sm btn-outline-primary me-1">Edit</a>
+                                    <form method="post" action="{% url 'core:exam_section_delete_coordinator' %}" class="d-inline" onsubmit="return confirm('Remove this coordinator context and its sub-units for this academic period? Other semesters for this login are kept.');">
+                                        {% csrf_token %}
+                                        <input type="hidden" name="profile_id" value="{{ r.pk }}">
+                                        <button type="submit" class="btn btn-sm btn-outline-danger">Remove</button>
+                                    </form>
+                                </td>
+                            </tr>
+                            {% empty %}
+                            <tr><td colspan="4" class="text-muted py-4 text-center">No coordinators yet.</td></tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

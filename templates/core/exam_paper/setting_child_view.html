@@ -1,0 +1,128 @@
+{% extends 'core/exam_portal_base.html' %}
+{% block title %}Paper setting — {{ subunit }}{% endblock %}
+{% block content %}
+<style>
+.ps-pending-card { border-radius: 16px; border: 2px solid rgba(245, 158, 11, 0.4); overflow: hidden; }
+.ps-pending-head { background: linear-gradient(90deg, #b45309 0%, #f59e0b 100%); color: #fff; padding: 0.85rem 1.15rem; font-weight: 700; }
+.ps-history-card { border-radius: 16px; border: 1px solid #cbd5e1; overflow: hidden; box-shadow: 0 4px 18px rgba(15,23,42,0.05); }
+.ps-history-head { background: linear-gradient(90deg, #334155 0%, #475569 100%); color: #fff; padding: 0.85rem 1.15rem; font-weight: 700; }
+</style>
+
+<div class="exam-portal-hero">
+    <h1 class="page-title">Paper setting — {{ department_name|default:subunit }}</h1>
+    <p class="page-subtitle mb-0">
+        Sub-unit <strong>{{ subunit }}</strong>. Approve faculty “Completed” requests below. Duties list is read-only reference.
+    </p>
+</div>
+
+<div class="card card-app mb-4" style="border-radius: 16px; border: 1px solid #fde68a;">
+    <div class="card-body">
+        <h6 class="fw-bold mb-3"><i class="fas fa-filter text-warning me-2"></i>Filter by phase</h6>
+        <form method="get" class="row g-3 align-items-end">
+            <div class="col-md-5">
+                <label class="form-label">Phase</label>
+                <select name="phase_id" class="form-select form-select-app" onchange="this.form.submit();">
+                    <option value="">— All phases —</option>
+                    {% for p in phases %}
+                    <option value="{{ p.pk }}" {% if selected_phase_id == p.pk %}selected{% endif %}>{{ p.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-auto">
+                <a href="{% url 'core:paper_setting_dashboard' %}" class="btn btn-outline-secondary">Reset</a>
+            </div>
+        </form>
+        <p class="small text-muted mb-0 mt-2">Pending approvals and history below follow the same phase when one is selected.</p>
+    </div>
+</div>
+
+{% if pending_setting_enriched %}
+<div class="ps-pending-card mb-4">
+    <div class="ps-pending-head"><i class="fas fa-inbox me-2"></i>Pending paper setting ({{ pending_setting_enriched|length }})</div>
+    <div class="table-responsive mb-0">
+        <table class="table table-app mb-0">
+            <thead>
+                <tr>
+                    <th>Faculty</th><th>Phase</th><th>Subject</th><th>Deadline</th><th class="text-end">Credit*</th><th>Submitted</th><th class="text-end">Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for item in pending_setting_enriched %}
+                {% with r=item.r %}
+                <tr>
+                    <td>{{ r.faculty.full_name }} <span class="text-muted small">({{ r.faculty.short_name }})</span></td>
+                    <td><span class="badge text-bg-warning text-dark">{{ r.duty.phase.name }}</span></td>
+                    <td class="fw-semibold">{{ r.duty.subject_name }}</td>
+                    <td class="small">{% if r.duty.deadline_date %}{{ r.duty.deadline_date|date:"M j, Y" }}{% else %}—{% endif %}</td>
+                    <td class="text-end fw-semibold text-success">{{ item.credit|floatformat:2 }}</td>
+                    <td class="small">{{ r.submitted_at|date:"M j, Y H:i" }}</td>
+                    <td class="text-end text-nowrap">
+                        <form method="post" action="{% url 'core:paper_setting_completion_approve' r.pk %}" class="d-inline">{% csrf_token %}<button type="submit" class="btn btn-sm btn-success rounded-pill px-3">Accept</button></form>
+                        <form method="post" action="{% url 'core:paper_setting_completion_dismiss' r.pk %}" class="d-inline" onsubmit="return confirm('Dismiss? Faculty can submit again.');">{% csrf_token %}<button type="submit" class="btn btn-sm btn-outline-secondary rounded-pill">Dismiss</button></form>
+                    </td>
+                </tr>
+                {% endwith %}
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    <p class="small text-muted mb-0 py-2 px-3 border-top bg-light">*Credits follow your department’s rules (phase bucket + optional subject override), edited by the main department / exam-section login under Credit settings.</p>
+</div>
+{% endif %}
+
+{% if history_setting_enriched %}
+<div class="ps-history-card mb-4">
+    <div class="ps-history-head"><i class="fas fa-history me-2"></i>Recent paper setting decisions</div>
+    <div class="table-responsive mb-0">
+        <table class="table table-app mb-0">
+            <thead>
+                <tr><th>Faculty</th><th>Phase</th><th>Subject</th><th>Outcome</th><th class="text-end">Credit</th><th>Decided</th></tr>
+            </thead>
+            <tbody>
+                {% for item in history_setting_enriched %}
+                {% with r=item.r %}
+                <tr>
+                    <td>{{ r.faculty.full_name }}</td>
+                    <td>{{ r.duty.phase.name }}</td>
+                    <td>{{ r.duty.subject_name }}</td>
+                    <td>{% if r.status == 'approved' %}<span class="badge text-bg-success">Approved</span>{% else %}<span class="badge text-bg-secondary">Dismissed</span>{% endif %}</td>
+                    <td class="text-end">{% if item.credit is not None %}{{ item.credit|floatformat:2 }}{% else %}—{% endif %}</td>
+                    <td class="small">{{ r.decided_at|date:"M j, Y H:i" }}</td>
+                </tr>
+                {% endwith %}
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endif %}
+
+<div class="card card-app">
+    <div class="card-header bg-white border-0 py-3">
+        <h5 class="mb-0 fw-semibold">All paper setting duties (your department)</h5>
+    </div>
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table table-app mb-0">
+                <thead>
+                    <tr><th>Phase</th><th>Date</th><th>Deadline</th><th>Subject</th><th>Faculty</th><th>Notes</th></tr>
+                </thead>
+                <tbody>
+                    {% for d in duties %}
+                    <tr>
+                        <td>{{ d.phase.name }}</td>
+                        <td>{% if d.duty_date %}{{ d.duty_date|date:"M j, Y" }}{% else %}—{% endif %}</td>
+                        <td>{% if d.deadline_date %}{{ d.deadline_date|date:"M j, Y" }}{% else %}—{% endif %}</td>
+                        <td>{{ d.subject_name }}</td>
+                        <td>{% if d.faculty %}{{ d.faculty.full_name }}{% else %}{{ d.faculty_short_raw }}{% endif %}</td>
+                        <td class="small">{{ d.notes|truncatechars:60 }}</td>
+                    </tr>
+                    {% empty %}
+                    <tr><td colspan="6" class="text-center text-muted py-4">No matching duties.</td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endblock %}

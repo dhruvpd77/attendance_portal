@@ -1,0 +1,106 @@
+{% extends 'core/exam_portal_base.html' %}
+{% block title %}Paper checking — phases{% endblock %}
+{% block content %}
+<div class="exam-portal-hero">
+    <h1 class="page-title">Paper checking (evaluation duty)</h1>
+    <p class="page-subtitle mb-2">Create a <strong>phase</strong>, import the workbook, then set <strong>subject credits</strong>. For <strong>practical</strong> subjects, enter both online and offline credit per paper — faculty submit <strong>once</strong>; total = papers × (online + offline). Credits show after coordinator approval and in the <strong>Daily DR</strong>.</p>
+    {% if institute_scope_active %}
+    <span class="badge badge-scope rounded-pill mt-2">Institute-wide phases</span>
+    {% else %}
+    <span class="badge badge-scope rounded-pill mt-2">Your coordinator scope</span>
+    {% endif %}
+</div>
+
+{% if phases %}
+<div class="card card-app mb-4 border-success border-opacity-25">
+    <div class="card-body py-3">
+        <label class="form-label small fw-semibold text-success mb-2"><i class="fas fa-upload me-1"></i>Upload by phase</label>
+        <p class="small text-muted mb-2">Pick a phase to open its Excel upload and subject-credit screen (same as choosing a row under Phases).</p>
+        <div class="d-flex flex-wrap gap-2 align-items-center">
+            <select id="paper-checking-phase-jump" class="form-select form-select-app" style="max-width:22rem;" aria-label="Phase for upload">
+                <option value="">Select phase…</option>
+                {% for ph in phases %}
+                <option value="{% url 'core:paper_checking_phase_detail' ph.id %}">{{ ph.name }}{% if ph.institute_scope %} (institute){% endif %}</option>
+                {% endfor %}
+            </select>
+            <button type="button" class="btn btn-success rounded-pill" id="paper-checking-phase-jump-go">Go to upload</button>
+        </div>
+    </div>
+</div>
+<script>
+(function () {
+  var s = document.getElementById('paper-checking-phase-jump');
+  var b = document.getElementById('paper-checking-phase-jump-go');
+  if (!s || !b) return;
+  b.addEventListener('click', function () {
+    if (s.value) window.location.href = s.value;
+  });
+})();
+</script>
+{% endif %}
+
+<div class="exam-teal-banner mb-4">
+    <div class="inner">
+        <div class="icon-side"><i class="fas fa-file-medical-alt"></i></div>
+        <div class="text-side d-flex flex-column justify-content-center">
+            <h3>Excel format</h3>
+            <p>Same layout as your evaluation sheet: header <strong>Date of Exam / Subject</strong>, next row <strong>department codes</strong> (e.g. SY_3, FY_1), then one blank row, then data with block ranges, <strong>Total Students</strong>, <strong>Name of Evaluator</strong> (short name). Open any phase below — each phase page shows a <strong>sample table</strong> that matches the uploader.</p>
+        </div>
+    </div>
+</div>
+
+<div class="row g-4">
+    <div class="col-lg-5">
+        <div class="card card-app exam-paper-accent checking h-100 shadow-sm" style="border-radius: 18px;">
+            <div class="card-header bg-white border-0 py-3">
+                <h5 class="mb-0 fw-semibold text-success"><i class="fas fa-plus-circle me-2"></i>New phase</h5>
+            </div>
+            <div class="card-body">
+                <form method="post" action="{% url 'core:paper_checking_phase_add' %}">
+                    {% csrf_token %}
+                    <label class="form-label">Phase name</label>
+                    <input type="text" name="name" class="form-control form-control-app mb-3 rounded-3" placeholder="T1, T2, SEE…" required>
+                    <button type="submit" class="btn btn-primary-app w-100 rounded-3 fw-semibold py-2">Add paper checking phase</button>
+                </form>
+            </div>
+        </div>
+    </div>
+    <div class="col-lg-7">
+        <div class="card card-app h-100 shadow-sm border-0" style="border-radius: 18px;">
+            <div class="card-header bg-white border-0 py-3 d-flex justify-content-between align-items-center">
+                <h5 class="mb-0 fw-semibold">Phases</h5>
+                <a href="{% url 'core:dept_exam_dashboard' %}" class="btn btn-sm btn-outline-secondary rounded-pill">Supervision hub</a>
+            </div>
+            <div class="card-body">
+                <ul class="list-group list-group-flush">
+                    {% for ph in phases %}
+                    <li class="list-group-item px-0 py-3 border-opacity-10">
+                        <div class="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-2">
+                            <div>
+                                <span class="fw-semibold">{{ ph.name }}</span>
+                                {% if ph.institute_scope %}<span class="badge text-bg-secondary small ms-1">institute</span>{% endif %}
+                                <div class="small text-muted">Upload + subject credits</div>
+                            </div>
+                            <a href="{% url 'core:paper_checking_phase_detail' ph.id %}" class="btn btn-sm btn-success rounded-pill px-3">Open</a>
+                        </div>
+                        <div class="d-flex flex-wrap gap-2 align-items-center">
+                            <form method="post" action="{% url 'core:paper_checking_phase_rename' ph.id %}" class="d-flex flex-wrap gap-1 align-items-center flex-grow-1" style="min-width:220px;">
+                                {% csrf_token %}
+                                <input type="text" name="name" class="form-control form-control-sm" value="{{ ph.name }}" aria-label="Rename phase">
+                                <button type="submit" class="btn btn-sm btn-outline-primary">Rename</button>
+                            </form>
+                            <form method="post" action="{% url 'core:paper_checking_phase_delete' ph.id %}" onsubmit="return confirm('Delete empty phase {{ ph.name }}?');">
+                                {% csrf_token %}
+                                <button type="submit" class="btn btn-sm btn-outline-danger">Delete</button>
+                            </form>
+                        </div>
+                    </li>
+                    {% empty %}
+                    <li class="list-group-item text-muted px-0">No phases yet.</li>
+                    {% endfor %}
+                </ul>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

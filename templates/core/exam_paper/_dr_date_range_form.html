@@ -1,0 +1,14 @@
+{# Reusable: official exam DR download. dr_url = namespaced URL name. Optional: dr_date_from / dr_date_to (date objects) prefill report filters. #}
+<form method="get" action="{% url dr_url %}" class="row g-2 g-md-3 align-items-end flex-wrap">
+    <div class="col-12 col-sm-auto">
+        <label class="form-label small mb-1 text-muted">From</label>
+        <input type="date" name="date_from" class="form-control form-control-app" required value="{% if dr_date_from %}{{ dr_date_from|date:'Y-m-d' }}{% else %}{% now 'Y-m-d' %}{% endif %}">
+    </div>
+    <div class="col-12 col-sm-auto">
+        <label class="form-label small mb-1 text-muted">To <span class="fw-normal">(optional)</span></label>
+        <input type="date" name="date_to" class="form-control form-control-app" title="Leave empty for single day" {% if dr_date_to %}value="{{ dr_date_to|date:'Y-m-d' }}"{% endif %}>
+    </div>
+    <div class="col-12 col-sm-auto">
+        <button type="submit" class="btn btn-primary-app w-100 w-sm-auto"><i class="fa-solid fa-download me-2"></i>Download DR (.xlsx)</button>
+    </div>
+</form>

@@ -175,6 +175,10 @@
         .sidebar-link i { width: 20px; text-align: center; font-size: 1rem; }
         .sidebar-link { cursor: pointer; }
         .app-sidebar { z-index: 10; }
+        .app-sidebar .faculty-dept-switcher label { color: #94a3b8; font-size: 0.75rem; }
+        .app-sidebar .faculty-dept-switcher .form-select {
+            font-size: 0.85rem;
+        }
         @media (max-width: 1199.98px) {
             .sidebar-link { font-size: 0.875rem; padding: 0.55rem 0.85rem; }
         }
@@ -443,7 +447,7 @@
     </style>
     {% block extra_head %}{% endblock %}
 </head>
-<body>
+<body class="{% block body_class %}{% endblock %}">
     <!-- Navbar -->
     <nav class="navbar navbar-expand-lg app-navbar sticky-top">
         <div class="container-fluid px-2 px-sm-3 px-lg-4 d-flex flex-wrap align-items-center">
@@ -456,6 +460,18 @@
                 <img src="{% static 'images/ljiet-logo.png' %}" alt="LJIET" class="navbar-brand-logo flex-shrink-0">
                 <span class="text-truncate">LJIET_Attendance</span>
             </a>
+            {% if user.is_authenticated and faculty_department_choices %}
+            <form method="post" action="{% url 'core:faculty_select_department' %}" class="d-none d-md-flex align-items-center gap-2 me-2 flex-shrink-0">
+                {% csrf_token %}
+                <input type="hidden" name="next" value="{{ request.get_full_path }}">
+                <label class="text-white-50 small mb-0 text-nowrap d-none d-lg-inline" for="navbarFacultyDept">Division</label>
+                <select id="navbarFacultyDept" name="department_id" class="form-select form-select-sm text-dark" style="min-width: 10rem; max-width: 18rem;" title="Switch division (attendance when portal open; exam context always)" onchange="this.form.submit()">
+                    {% for d in faculty_department_choices %}
+                    <option value="{{ d.pk }}" {% if faculty_department_selected and faculty_department_selected.pk == d.pk %}selected{% endif %}>{{ d.name }}{% if d.institute_semester %} — {{ d.institute_semester.label }}{% endif %}{% if d.institute_semester and not d.institute_semester.faculty_portal_active %} (attendance closed){% endif %}</option>
+                    {% endfor %}
+                </select>
+            </form>
+            {% endif %}
             {% if user.is_authenticated %}
             <!-- Compact: dropdown (tablet & phone) -->
             <div class="dropdown d-lg-none ms-1">
@@ -471,6 +487,14 @@
             </div>
             <!-- Full toolbar (desktop) -->
             <div class="navbar-toolbar-desktop d-none d-lg-flex align-items-center gap-2 gap-xl-3 flex-shrink-0">
+                {% if exam_section_working_semesters_nav %}
+                <div class="d-none d-xl-flex align-items-center gap-1 flex-wrap justify-content-end me-1" style="max-width: 26rem;" title="Working academic semesters in scope for reports and duties">
+                    <span class="text-white-50 small text-nowrap">Scope</span>
+                    {% for s in exam_section_working_semesters_nav %}
+                    <span class="badge rounded-pill bg-light bg-opacity-10 text-info border border-info border-opacity-35 fw-normal">{{ s.label }}</span>
+                    {% endfor %}
+                </div>
+                {% endif %}
                 <span class="user-badge" title="{{ user.get_full_name|default:user.username }}">
                     <span class="user-icon"><i class="fas fa-user"></i></span>
                     <span class="user-name text-truncate">{{ user.get_full_name|default:user.username }}</span>
@@ -494,6 +518,18 @@
             <button type="button" class="btn-close btn-close-white" data-bs-dismiss="offcanvas"></button>
         </div>
         <div class="offcanvas-body p-3">
+            {% if faculty_department_choices %}
+            <form method="post" action="{% url 'core:faculty_select_department' %}" class="mb-3 pb-3 border-bottom border-secondary">
+                {% csrf_token %}
+                <input type="hidden" name="next" value="{{ request.get_full_path }}">
+                <label class="form-label text-white-50 small" for="offcanvasFacultyDept">Division</label>
+                <select id="offcanvasFacultyDept" name="department_id" class="form-select form-select-sm" title="Switch division" onchange="this.form.submit()">
+                    {% for d in faculty_department_choices %}
+                    <option value="{{ d.pk }}" {% if faculty_department_selected and faculty_department_selected.pk == d.pk %}selected{% endif %}>{{ d.name }}{% if d.institute_semester %} — {{ d.institute_semester.label }}{% endif %}{% if d.institute_semester and not d.institute_semester.faculty_portal_active %} (att. closed){% endif %}</option>
+                    {% endfor %}
+                </select>
+            </form>
+            {% endif %}
             {% for item in sidebar_links %}
             <a href="{{ item.url }}" class="sidebar-link offcanvas-nav-link d-flex align-items-center gap-3 text-decoration-none rounded-3 py-2 px-3 mb-1 {% if request.resolver_match.url_name == item.active_name %}active{% elif item.active_name_extra and request.resolver_match.url_name in item.active_name_extra %}active{% endif %}" data-bs-dismiss="offcanvas">
                 <i class="fas {{ item.icon }} fa-fw"></i>
@@ -507,6 +543,18 @@
     <div class="d-flex">
         {% if user.is_authenticated and sidebar_links %}
         <aside class="app-sidebar d-none d-lg-block flex-shrink-0">
+            {% if faculty_department_choices %}
+            <form method="post" action="{% url 'core:faculty_select_department' %}" class="faculty-dept-switcher mb-3">
+                {% csrf_token %}
+                <input type="hidden" name="next" value="{{ request.get_full_path }}">
+                <label class="form-label" for="sidebarFacultyDept">Division</label>
+                <select id="sidebarFacultyDept" name="department_id" class="form-select form-select-sm bg-dark text-white border-secondary" title="Switch division" onchange="this.form.submit()">
+                    {% for d in faculty_department_choices %}
+                    <option value="{{ d.pk }}" {% if faculty_department_selected and faculty_department_selected.pk == d.pk %}selected{% endif %}>{{ d.name }}{% if d.institute_semester %} — {{ d.institute_semester.label }}{% endif %}{% if d.institute_semester and not d.institute_semester.faculty_portal_active %} (att. closed){% endif %}</option>
+                    {% endfor %}
+                </select>
+            </form>
+            {% endif %}
             <nav class="d-flex flex-column gap-0">
                 {% for item in sidebar_links %}
                 <a href="{{ item.url }}" class="sidebar-link {% if request.resolver_match.url_name == item.active_name %}active{% elif item.active_name_extra and request.resolver_match.url_name in item.active_name_extra %}active{% endif %}">

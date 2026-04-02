@@ -1,0 +1,158 @@
+{% comment %}
+  format_kind: checking | setting | supervision — matches parsers in core/*_excel.py
+  Uses exam-section-card (same shell as attendance-style filters)
+{% endcomment %}
+{% if format_kind == 'checking' %}
+<div class="exam-section-card mb-4 excel-format-guide accent-success">
+    <div class="card-header py-3 d-flex align-items-center gap-2">
+        <span class="duty-format-icon duty-format-icon--checking"><i class="fas fa-file-excel"></i></span>
+        <h6 class="mb-0 fw-semibold">Excel layout — paper checking (evaluation duty)</h6>
+    </div>
+    <div class="card-body py-3">
+        <p class="small text-muted mb-3">The uploader finds the row where column <strong>A</strong> is exactly <code>Date of Exam</code> and column <strong>B</strong> contains <strong>Subject</strong>. The <strong>next row</strong> must name your department columns (e.g. <code>SY3</code>, <code>SY_1</code>) above block ranges. Data starts <strong>two rows below</strong> that (one blank spacer row is normal). Faculty must match <strong>short names</strong> in column <strong>H</strong>.</p>
+        <div class="table-responsive small">
+            <table class="table table-bordered table-sm mb-0 bg-white excel-demo-table" style="font-family: ui-monospace, monospace, ui-sans-serif, system-ui; min-width: 680px;">
+                <thead>
+                    <tr>
+                        <th scope="col" class="text-white-50 fw-normal" style="width:4.5rem;"></th>
+                        <th>A</th>
+                        <th>B</th>
+                        <th>C</th>
+                        <th>D</th>
+                        <th>E</th>
+                        <th>F</th>
+                        <th>G</th>
+                        <th>H</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr class="table-light"><td class="text-muted">Row 1</td><td>Date of Exam</td><td>Subject</td><td colspan="6"></td></tr>
+                    <tr class="table-light"><td class="text-muted">Row 2</td><td></td><td></td><td>SY_3</td><td>SY_4</td><td>FY_1</td><td>SY_1</td><td class="small text-muted">(dept codes)</td><td></td></tr>
+                    <tr><td class="text-muted">Row 3</td><td colspan="9" class="text-muted fst-italic">Blank row (skipped by parser)</td></tr>
+                    <tr><td class="text-muted">Row 4</td><td>2026-03-15</td><td>FCSP-2</td><td>1–30</td><td></td><td>31–60</td><td></td><td>113</td><td><strong>AKS</strong></td></tr>
+                    <tr class="table-borderless"><td></td><td colspan="9" class="text-muted small pt-2">Columns C–F = block ranges per department header · <strong>G</strong> = Total Students · <strong>H</strong> = evaluator short name</td></tr>
+                </tbody>
+            </table>
+        </div>
+        <ul class="small text-muted mb-0 mt-3 ps-3">
+            <li>Department headers must match attendance department names/codes (e.g. <code>SY_1</code>, <code>SY3</code>).</li>
+            <li>Each non-empty row needs a date (eventually), subject text, at least one block/column, total students, and evaluator initial.</li>
+        </ul>
+    </div>
+</div>
+{% elif format_kind == 'setting' %}
+<div class="exam-section-card mb-4 excel-format-guide accent-warning">
+    <div class="card-header py-3 d-flex align-items-center gap-2">
+        <span class="duty-format-icon duty-format-icon--setting"><i class="fas fa-file-excel"></i></span>
+        <h6 class="mb-0 fw-semibold">Excel layout — paper setting</h6>
+    </div>
+    <div class="card-body py-3">
+        <p class="small text-muted mb-3">The parser scans the first ~40 rows for headers (case-insensitive). It looks for a <strong>Subject</strong> column and a <strong>Faculty</strong> column — accepted faculty headers include: <code>Faculty</code>, <code>Short name</code>, <code>Initial</code>, <code>Evaluator</code>, etc. <strong>Date</strong> may be labeled <code>Date</code>, <code>Date of duty</code>, … Optional: <strong>Notes</strong>, <strong>Deadline / Due date</strong>.</p>
+        <div class="table-responsive small">
+            <table class="table table-bordered table-sm mb-0 bg-white excel-demo-table" style="font-family: ui-monospace, monospace, ui-sans-serif, system-ui; max-width: 42rem;">
+                <thead>
+                    <tr>
+                        <th>A</th>
+                        <th>B</th>
+                        <th>C</th>
+                        <th>D</th>
+                        <th>E</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr class="table-light">
+                        <td><strong>Date</strong></td>
+                        <td><strong>Subject</strong></td>
+                        <td><strong>Faculty</strong></td>
+                        <td><strong>Notes</strong></td>
+                        <td><strong>Deadline</strong> <span class="text-muted fw-normal">(optional)</span></td>
+                    </tr>
+                    <tr><td>2026-03-20</td><td>TOC</td><td><strong>ASP</strong></td><td>Internal</td><td>2026-03-25</td></tr>
+                    <tr><td>2026-03-21</td><td>DM</td><td><strong>AKS</strong></td><td></td><td></td></tr>
+                </tbody>
+            </table>
+        </div>
+        <p class="small text-muted mb-0 mt-3">If no header row is detected, columns are assumed to be <strong>A–D</strong> = Date, Subject, Faculty, Notes.</p>
+    </div>
+</div>
+{% elif format_kind == 'supervision' %}
+<div class="exam-section-card mb-4 excel-format-guide accent-supervision">
+    <div class="card-header py-3 d-flex align-items-center gap-2">
+        <span class="duty-format-icon duty-format-icon--supervision"><i class="fas fa-file-excel"></i></span>
+        <h6 class="mb-0 fw-semibold">Excel layout — combined supervision (LJIET style)</h6>
+    </div>
+    <div class="card-body py-3">
+        <p class="small text-muted mb-3">The uploader finds a row where <strong>any cell</strong> contains the text <code>Name of Faculty</code>. <strong>Three rows directly above</strong> that header must be: (1) <strong>subject</strong> per duty column, (2) <strong>exam date</strong> per column, (3) <strong>time slot</strong> per column. Data rows go <strong>below</strong> the header: faculty <strong>full name</strong> in column <strong>B</strong>, <strong>initial</strong> in column <strong>C</strong>. Under each duty column, put the <strong>division / stream code</strong> (e.g. <code>SY_1</code>, <code>SY_3</code>) when that faculty takes the slot — leave blank if not assigned.</p>
+        <div class="table-responsive small">
+            <table class="table table-bordered table-sm mb-0 bg-white excel-demo-table" style="font-family: ui-monospace, monospace, ui-sans-serif, system-ui; min-width: 760px;">
+                <thead>
+                    <tr>
+                        <th class="text-white-50 fw-normal" style="width:4rem;"></th>
+                        <th>A</th>
+                        <th>B</th>
+                        <th>C</th>
+                        <th>D</th>
+                        <th>E</th>
+                        <th>F</th>
+                        <th>G</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr class="table-light">
+                        <td class="text-muted small">3 rows up</td>
+                        <td></td>
+                        <td></td>
+                        <td></td>
+                        <td><strong>DM</strong></td>
+                        <td><strong>COA</strong></td>
+                        <td><strong>TOC</strong></td>
+                        <td></td>
+                    </tr>
+                    <tr class="table-light">
+                        <td class="text-muted small">2 rows up</td>
+                        <td></td>
+                        <td></td>
+                        <td></td>
+                        <td>2026-03-30</td>
+                        <td>2026-03-30</td>
+                        <td>2026-04-02</td>
+                        <td></td>
+                    </tr>
+                    <tr class="table-light">
+                        <td class="text-muted small">1 row up</td>
+                        <td></td>
+                        <td></td>
+                        <td></td>
+                        <td>10–12</td>
+                        <td>2–4</td>
+                        <td>Morning</td>
+                        <td></td>
+                    </tr>
+                    <tr class="table-dark">
+                        <td class="small text-white-50">Header</td>
+                        <td>Sr</td>
+                        <td>Name of Faculty</td>
+                        <td>Initial</td>
+                        <td colspan="4" class="small text-white-50">Duty columns (same positions as subject row)</td>
+                    </tr>
+                    <tr>
+                        <td class="text-muted small">Data</td>
+                        <td>1</td>
+                        <td>Anil Kapoor</td>
+                        <td><strong>AKS</strong></td>
+                        <td><code>SY_3</code></td>
+                        <td></td>
+                        <td><code>SY_3</code></td>
+                        <td></td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+        <p class="small text-muted mb-0 mt-2">The parser reads <strong>full name</strong> from column <strong>B</strong> and <strong>initial</strong> from column <strong>C</strong> on each data row (column <strong>A</strong> = serial is optional).</p>
+        <ul class="small text-muted mb-0 mt-3 ps-3">
+            <li>Division codes in duty cells are normalised (e.g. <code>SY3</code> → <code>SY_3</code>) to match your sub-units.</li>
+            <li>Rows with “TOTAL” in the name (summary rows) are skipped.</li>
+        </ul>
+    </div>
+</div>
+{% endif %}

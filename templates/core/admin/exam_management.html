@@ -1,0 +1,90 @@
+{% extends 'core/admin/base_admin.html' %}
+{% load static %}
+{% block title %}Exam Management — LJIET_Attendance{% endblock %}
+{% block content %}
+<div class="admin-hero">
+    <div class="d-flex align-items-center gap-3">
+        <img src="{% static 'images/ljiet-logo.png' %}" alt="LJIET" class="admin-logo">
+        <div>
+            <h1 class="page-title mb-1">Exam Management</h1>
+            <p class="page-subtitle mb-0">{% if department %}{{ department.name }} — {% endif %}Super admin shortcuts to exam section, DR, paper duties, and credits (same URLs as before).</p>
+        </div>
+    </div>
+    <a href="{% url 'core:admin_dashboard' %}" class="btn btn-outline-light btn-sm"><i class="fas fa-arrow-left me-1"></i> Dashboard</a>
+</div>
+
+<div class="row g-4">
+    <div class="col-sm-6 col-xl-4">
+        <a href="{% url 'core:exam_section_dashboard' %}" class="card admin-stat-card text-decoration-none text-reset h-100">
+            <div class="card-body">
+                <div class="stat-icon bg-primary bg-opacity-10 text-primary"><i class="fas fa-building-columns"></i></div>
+                <div>
+                    <p class="stat-label mb-1">Exam Section</p>
+                    <p class="stat-value fs-5 mb-0">Coordinators &amp; operators</p>
+                    <small class="text-muted">Accounts, supervision, exam section dashboard.</small>
+                </div>
+            </div>
+        </a>
+    </div>
+    <div class="col-sm-6 col-xl-4">
+        <a href="{% url 'core:dr_facilities_dashboard' %}" class="card admin-stat-card text-decoration-none text-reset h-100">
+            <div class="card-body">
+                <div class="stat-icon bg-info bg-opacity-10 text-info"><i class="fas fa-table-list"></i></div>
+                <div>
+                    <p class="stat-label mb-1">DR facilities</p>
+                    <p class="stat-value fs-5 mb-0">Supervision &amp; exports</p>
+                    <small class="text-muted">Department / faculty DR views and Excel.</small>
+                </div>
+            </div>
+        </a>
+    </div>
+    <div class="col-sm-6 col-xl-4">
+        <a href="{% url 'core:paper_checking_dashboard' %}" class="card admin-stat-card text-decoration-none text-reset h-100">
+            <div class="card-body">
+                <div class="stat-icon bg-success bg-opacity-10 text-success"><i class="fas fa-check-double"></i></div>
+                <div>
+                    <p class="stat-label mb-1">Paper checking</p>
+                    <p class="stat-value fs-5 mb-0">Phases &amp; duties</p>
+                    <small class="text-muted">Upload sheets, allocations, completion requests.</small>
+                </div>
+            </div>
+        </a>
+    </div>
+    <div class="col-sm-6 col-xl-4">
+        <a href="{% url 'core:paper_setting_dashboard' %}" class="card admin-stat-card text-decoration-none text-reset h-100">
+            <div class="card-body">
+                <div class="stat-icon bg-warning bg-opacity-10 text-warning"><i class="fas fa-pen-fancy"></i></div>
+                <div>
+                    <p class="stat-label mb-1">Paper setting</p>
+                    <p class="stat-value fs-5 mb-0">Phases &amp; duties</p>
+                    <small class="text-muted">Setting rounds, uploads, approvals.</small>
+                </div>
+            </div>
+        </a>
+    </div>
+    <div class="col-sm-6 col-xl-4">
+        <a href="{% url 'core:exam_credit_settings' %}" class="card admin-stat-card text-decoration-none text-reset h-100">
+            <div class="card-body">
+                <div class="stat-icon bg-secondary bg-opacity-10 text-dark"><i class="fas fa-sliders-h"></i></div>
+                <div>
+                    <p class="stat-label mb-1">Credit settings</p>
+                    <p class="stat-value fs-5 mb-0">Rules &amp; rates</p>
+                    <small class="text-muted">Department credit rules for exam activities.</small>
+                </div>
+            </div>
+        </a>
+    </div>
+    <div class="col-sm-6 col-xl-4">
+        <a href="{% url 'core:section_credit_report' %}" class="card admin-stat-card text-decoration-none text-reset h-100">
+            <div class="card-body">
+                <div class="stat-icon bg-danger bg-opacity-10 text-danger"><i class="fas fa-file-invoice-dollar"></i></div>
+                <div>
+                    <p class="stat-label mb-1">Section credit report</p>
+                    <p class="stat-value fs-5 mb-0">Remuneration summary</p>
+                    <small class="text-muted">Section-wide credits and Excel export.</small>
+                </div>
+            </div>
+        </a>
+    </div>
+</div>
+{% endblock %}

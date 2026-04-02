@@ -1,41 +1,17 @@
-{% extends 'base.html' %}
+{% extends 'core/exam_portal_base.html' %}
 {% load static %}
 {% block title %}Exam Admin — Mark Analytics{% endblock %}
 {% block extra_head %}
 {{ block.super }}
 <style>
-.sa-hero {
-    background: linear-gradient(135deg, #0f172a 0%, #1e3a5f 50%, #312e81 100%);
-    border-radius: 16px;
-    padding: 1.25rem 1.5rem;
-    margin-bottom: 1.5rem;
-    color: #fff;
-    box-shadow: 0 10px 40px rgba(15, 23, 42, 0.25);
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    justify-content: space-between;
-    gap: 1rem;
-}
-.sa-hero .page-title { color: #fff !important; font-size: 1.5rem; margin-bottom: 0.35rem !important; }
-.sa-hero .page-subtitle { color: #c7d2fe !important; font-size: 0.9rem; margin: 0; }
-.sa-filter-card { border: none; border-radius: 14px; box-shadow: 0 4px 20px rgba(0,0,0,0.08); margin-bottom: 1.5rem; overflow: hidden; border-left: 5px solid #6366f1; }
-.sa-filter-card .card-header { background: linear-gradient(90deg, #1e293b 0%, #3730a3 100%); color: #fff !important; font-weight: 600; padding: 0.9rem 1.25rem; border: none; }
-.sa-table thead th {
-    background: linear-gradient(180deg, #334155 0%, #475569 100%);
-    color: #fff !important; font-weight: 600; font-size: 0.75rem; text-transform: uppercase;
-    padding: 0.85rem 1rem; border: none;
-}
-.sa-table tbody td { padding: 0.85rem 1rem; vertical-align: middle; }
-.sa-table tbody tr:nth-child(even) { background: #f8fafc; }
-.sa-expand-row { background: linear-gradient(135deg, #eef2ff 0%, #f0f9ff 50%, #ecfdf5 100%) !important; border-left: 4px solid #6366f1; }
-.sa-phase-card { background: linear-gradient(145deg, #fff 0%, #f8fafc 100%); border-radius: 12px; padding: 1rem; border: 1px solid #e0e7ff; margin-bottom: 1rem; }
+.sa-expand-row { background: linear-gradient(135deg, #eff6ff 0%, #f0f9ff 50%, #ecfdf5 100%) !important; border-left: 4px solid #3b82f6; }
+.sa-phase-card { background: linear-gradient(145deg, #fff 0%, #f8fafc 100%); border-radius: 12px; padding: 1rem; border: 1px solid #bfdbfe; margin-bottom: 1rem; }
 .sa-phase-card .sa-section-title {
-    background: linear-gradient(135deg, #6366f1 0%, #4f46e5 100%);
+    background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
     color: #fff !important; padding: 0.5rem 0.9rem; border-radius: 10px; font-weight: 600; font-size: 0.85rem; display: inline-flex; align-items: center; gap: 0.4rem; margin-bottom: 0.75rem;
 }
-.sa-toggle { cursor: pointer; color: #6366f1; width: 28px; height: 28px; display: inline-flex; align-items: center; justify-content: center; border-radius: 8px; background: linear-gradient(135deg, #eef2ff 0%, #e0e7ff 100%); }
-.sa-expand-row .sub-table thead th { background: linear-gradient(180deg, #818cf8 0%, #6366f1 100%); color: #fff !important; }
+.sa-toggle { cursor: pointer; color: #2563eb; width: 28px; height: 28px; display: inline-flex; align-items: center; justify-content: center; border-radius: 8px; background: linear-gradient(135deg, #dbeafe 0%, #bfdbfe 100%); }
+.sa-expand-row .sub-table thead th { background: linear-gradient(180deg, #60a5fa 0%, #3b82f6 100%); color: #fff !important; }
 .sa-expand-row .sub-table .sa-marks-low { color: #dc2626; font-weight: 700; }
 .sa-risk-card {
     background: linear-gradient(145deg, #fef2f2 0%, #fff5f5 100%);

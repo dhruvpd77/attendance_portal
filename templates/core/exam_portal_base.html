@@ -1,0 +1,283 @@
+{% extends 'base.html' %}
+{# Shared layout + CSS for all exam-related portals (exam section, hub, sub-units, faculty exam, DR facilities, exam admin hub). Matches Student Analytics / Mentorship navy cards. #}
+{% block extra_head %}
+{{ block.super }}
+<style>
+    /* ——— Page heroes (same language as Student Analytics `.sa-hero`) ——— */
+    .exam-portal-hero,
+    .sa-hero,
+    .fac-exam-hero {
+        background: linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #334155 100%);
+        border-radius: 16px;
+        padding: 1.25rem 1.5rem;
+        margin-bottom: 1.5rem;
+        color: #fff;
+        box-shadow: 0 10px 40px rgba(15, 23, 42, 0.25);
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        justify-content: space-between;
+        gap: 1rem;
+    }
+    .exam-portal-hero .page-title,
+    .sa-hero .page-title,
+    .fac-exam-hero h1 {
+        color: #fff !important;
+        font-size: clamp(1.25rem, 4vw, 1.5rem);
+        margin-bottom: 0.35rem !important;
+        font-weight: 700;
+    }
+    .exam-portal-hero .page-subtitle,
+    .sa-hero .page-subtitle {
+        color: #94a3b8 !important;
+        font-size: 0.9rem;
+        margin: 0;
+    }
+    .fac-exam-hero p { color: #94a3b8 !important; margin: 0; font-size: 0.92rem; }
+    .sa-hero .admin-logo,
+    .exam-portal-hero .admin-logo {
+        height: 44px;
+        width: auto;
+        max-width: 90px;
+        object-fit: contain;
+        filter: drop-shadow(0 2px 8px rgba(0,0,0,0.4));
+    }
+
+    /* Filter / section cards — dark header, blue accent (attendance style) */
+    .exam-section-card,
+    .sa-filter-card {
+        border: none;
+        border-radius: 14px;
+        box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+        margin-bottom: 1.5rem;
+        overflow: hidden;
+        border-left: 5px solid #3b82f6;
+        transition: box-shadow 0.3s ease;
+    }
+    .exam-section-card:hover,
+    .sa-filter-card:hover {
+        box-shadow: 0 8px 30px rgba(59, 130, 246, 0.15);
+    }
+    .exam-section-card.accent-success { border-left-color: #10b981; }
+    .exam-section-card.accent-success:hover {
+        box-shadow: 0 8px 30px rgba(16, 185, 129, 0.12);
+    }
+    .exam-section-card.accent-warning { border-left-color: #f59e0b; }
+    .exam-section-card.accent-supervision { border-left-color: #2563eb; }
+    .exam-section-card.accent-supervision:hover {
+        box-shadow: 0 8px 30px rgba(37, 99, 235, 0.12);
+    }
+
+    /* Duty Excel uploads — same visual language as attendance filter cards */
+    .duty-upload-zone {
+        border: 2px dashed rgba(59, 130, 246, 0.38);
+        border-radius: 14px;
+        padding: 1.15rem 1.25rem;
+        background: linear-gradient(180deg, #eff6ff 0%, #ffffff 55%);
+        transition: border-color 0.2s ease, box-shadow 0.2s ease;
+    }
+    .duty-upload-zone:focus-within {
+        border-color: #3b82f6;
+        box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.12);
+    }
+    .duty-upload-zone--checking {
+        border-color: rgba(16, 185, 129, 0.42);
+        background: linear-gradient(180deg, #ecfdf5 0%, #ffffff 55%);
+    }
+    .duty-upload-zone--checking:focus-within {
+        border-color: #10b981;
+        box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.15);
+    }
+    .duty-upload-zone--setting {
+        border-color: rgba(217, 119, 6, 0.4);
+        background: linear-gradient(180deg, #fffbeb 0%, #ffffff 55%);
+    }
+    .duty-upload-zone--setting:focus-within {
+        border-color: #d97706;
+        box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.18);
+    }
+    .duty-upload-zone input[type="file"] {
+        cursor: pointer;
+    }
+
+    .duty-draft-banner {
+        border-radius: 14px;
+        border: none;
+        border-left: 5px solid #3b82f6;
+        background: linear-gradient(90deg, #eff6ff 0%, #f8fafc 100%);
+        box-shadow: 0 4px 18px rgba(15, 23, 42, 0.07);
+    }
+
+    .duty-format-icon {
+        width: 2rem;
+        height: 2rem;
+        border-radius: 10px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        flex-shrink: 0;
+        font-size: 0.9rem;
+    }
+    .duty-format-icon--checking {
+        background: rgba(16, 185, 129, 0.2);
+        color: #059669;
+    }
+    .duty-format-icon--setting {
+        background: rgba(245, 158, 11, 0.22);
+        color: #b45309;
+    }
+    .duty-format-icon--supervision {
+        background: rgba(59, 130, 246, 0.22);
+        color: #1d4ed8;
+    }
+
+    .excel-format-guide .excel-demo-table thead th {
+        background: linear-gradient(180deg, #475569 0%, #64748b 100%);
+        color: #fff !important;
+        font-size: 0.72rem;
+        font-weight: 600;
+        border-color: #94a3b8;
+    }
+    .excel-format-guide .card-body {
+        background: #f8fafc;
+    }
+    .exam-section-card .card-header,
+    .sa-filter-card .card-header {
+        background: linear-gradient(90deg, #1e293b 0%, #334155 100%);
+        color: #fff !important;
+        font-weight: 600;
+        padding: 0.9rem 1.25rem;
+        border: none;
+    }
+
+    /* Data tables — navy header strip */
+    .exam-table-theme thead th,
+    .sa-table thead th {
+        background: linear-gradient(180deg, #334155 0%, #475569 100%);
+        color: #fff !important;
+        font-weight: 600;
+        font-size: 0.75rem;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        padding: 0.85rem 1rem;
+        border: none;
+    }
+    .exam-table-theme tbody td,
+    .sa-table tbody td {
+        padding: 0.85rem 1rem;
+        vertical-align: middle;
+    }
+    .exam-table-theme tbody tr:nth-child(even),
+    .sa-table tbody tr:nth-child(even) { background: #f8fafc; }
+    .exam-table-theme tbody tr:hover,
+    .sa-table tbody tr:hover { background: #eff6ff !important; }
+    .exam-table-theme thead.sticky-top th {
+        position: sticky;
+        top: 0;
+        z-index: 2;
+        box-shadow: 0 1px 0 rgba(148, 163, 184, 0.35);
+    }
+
+    /* Paper portal accents */
+    .exam-paper-accent {
+        border-radius: 16px;
+        border: none;
+        box-shadow: 0 6px 24px rgba(15, 23, 42, 0.08);
+    }
+    .exam-paper-accent.checking { border-top: 4px solid #10b981; }
+    .exam-paper-accent.setting { border-top: 4px solid #f59e0b; }
+    .exam-paper-accent.supervision-ref { border-top: 4px solid #3b82f6; }
+    /* Dark header inside accent cards (sub-unit / hub tables) */
+    .card-header-slate {
+        background: linear-gradient(90deg, #1e293b 0%, #334155 100%);
+        color: #fff !important;
+        font-weight: 600;
+        border: none;
+        padding: 0.75rem 1.15rem;
+    }
+    .card-header-slate h5,
+    .card-header-slate h6 { opacity: 1; }
+    .exam-portal-hero .badge-scope {
+        background: rgba(59, 130, 246, 0.25);
+        color: #e2e8f0;
+        font-weight: 500;
+    }
+
+    .exam-teal-banner {
+        border-radius: 18px;
+        overflow: hidden;
+        border: none;
+        box-shadow: 0 8px 28px rgba(13, 148, 136, 0.2);
+        background: linear-gradient(135deg, #ecfdf5 0%, #a7f3d0 45%, #5eead4 100%);
+    }
+    .exam-teal-banner .inner { display: flex; align-items: stretch; min-height: 120px; }
+    .exam-teal-banner .icon-side {
+        width: 100px; min-width: 100px;
+        background: linear-gradient(135deg, #0d9488 0%, #0f766e 100%);
+        display: flex; align-items: center; justify-content: center;
+        font-size: 2.25rem; color: rgba(255,255,255,0.95);
+    }
+    .exam-teal-banner .text-side { padding: 1.1rem 1.35rem; flex: 1; }
+    .exam-teal-banner h3 { font-size: 1.05rem; font-weight: 700; color: #134e4a; margin-bottom: 0.25rem; }
+    .exam-teal-banner p { color: #0f766e; font-size: 0.88rem; margin: 0; }
+
+    .fac-exam-wrap { max-width: 1180px; margin: 0 auto; }
+
+    /* Hub / dept “exam admin” cards — blue left bar, slate header (replace old indigo) */
+    .ea-card {
+        border: none;
+        border-radius: 14px;
+        box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+        margin-bottom: 1.25rem;
+        overflow: hidden;
+        border-left: 5px solid #3b82f6;
+    }
+    .ea-card .card-header {
+        background: linear-gradient(90deg, #1e293b 0%, #334155 100%);
+        color: #fff !important;
+        font-weight: 600;
+        padding: 0.85rem 1.15rem;
+        border: none;
+    }
+    .ea-hero {
+        background: linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #334155 100%);
+        border-radius: 16px;
+        padding: 1.25rem 1.5rem;
+        margin-bottom: 1.25rem;
+        color: #fff;
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        justify-content: space-between;
+        gap: 1rem;
+        box-shadow: 0 10px 40px rgba(15, 23, 42, 0.25);
+    }
+    .ea-hero .page-title { color: #fff !important; font-size: 1.35rem; margin-bottom: 0.25rem !important; }
+    .ea-hero .page-subtitle { color: #94a3b8 !important; font-size: 0.875rem; margin: 0; max-width: 40rem; }
+    .ea-badge-dept {
+        background: rgba(255,255,255,0.15);
+        border-radius: 8px;
+        padding: 0.2rem 0.55rem;
+        font-size: 0.8rem;
+        font-weight: 600;
+    }
+
+    @media (max-width: 575.98px) {
+        .exam-portal-hero,
+        .sa-hero,
+        .fac-exam-hero,
+        .ea-hero {
+            flex-direction: column;
+            align-items: stretch;
+        }
+        .exam-portal-hero .d-flex.flex-wrap.gap-2,
+        .sa-hero .d-flex.flex-wrap.gap-2,
+        .ea-hero .d-flex.flex-wrap.gap-2 {
+            width: 100%;
+        }
+        .exam-portal-hero .btn,
+        .sa-hero .btn,
+        .ea-hero .btn { width: 100%; }
+    }
+</style>
+{% endblock %}

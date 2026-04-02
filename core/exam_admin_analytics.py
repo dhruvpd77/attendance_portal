@@ -25,6 +25,7 @@ from .exam_phase_order import (
     sort_exam_phases,
     sorted_phase_names,
 )
+from .student_marks_utils import normalize_student_mark
 
 MARK_LOW_THRESHOLD = 9
 LOW_FILL = PatternFill(start_color='FFCDD2', end_color='FFCDD2', fill_type='solid')
@@ -105,8 +106,10 @@ def parse_department_ids(request):
 
 
 def selected_departments(request):
+    from core.semester_scope import departments_for_institute_semester, get_active_institute_semester
+
     ids = parse_department_ids(request)
-    qs = Department.objects.all().order_by('name')
+    qs = departments_for_institute_semester(get_active_institute_semester(request)).order_by('name')
     if ids is None:
         return list(qs)
     if not ids:
@@ -134,7 +137,9 @@ def build_student_phase_data(students, dept):
     ).select_related('subject', 'exam_phase')
     marks_by_student_phase = defaultdict(lambda: defaultdict(dict))
     for m in marks_qs:
-        marks_by_student_phase[m.student_id][m.exam_phase_id][m.subject.name] = m.marks_obtained
+        marks_by_student_phase[m.student_id][m.exam_phase_id][m.subject.name] = normalize_student_mark(
+            m.marks_obtained
+        )
     result = []
     for s in students:
         phase_wise = []
@@ -143,10 +148,7 @@ def build_student_phase_data(students, dept):
             subject_marks = []
             for eps in subs:
                 marks_val = marks_by_student_phase[s.id][ep.id].get(eps.subject.name)
-                try:
-                    is_low = marks_val is not None and float(marks_val) < MARK_LOW_THRESHOLD
-                except (TypeError, ValueError):
-                    is_low = False
+                is_low = marks_val is not None and marks_val < MARK_LOW_THRESHOLD
                 subject_marks.append({'name': eps.subject.name, 'marks': marks_val, 'is_low': is_low})
             phase_wise.append({'phase_name': ep.name, 'subjects': subject_marks})
         result.append({'student': s, 'phase_wise': phase_wise, 'department': dept})
@@ -173,11 +175,8 @@ def build_risk_from_student_data(student_data, threshold=MARK_LOW_THRESHOLD):
         dname = dept.name if dept else ''
         for phase in item['phase_wise']:
             for s in phase['subjects']:
-                if s.get('marks') is None:
-                    continue
-                try:
-                    v = float(s['marks'])
-                except (TypeError, ValueError):
+                v = normalize_student_mark(s.get('marks'))
+                if v is None:
                     continue
                 if v < threshold:
                     risk_rows.append({
@@ -227,11 +226,9 @@ def student_overall_avg(item):
     vals = []
     for phase in item['phase_wise']:
         for s in phase['subjects']:
-            if s.get('marks') is not None:
-                try:
-                    vals.append(float(s['marks']))
-                except (TypeError, ValueError):
-                    pass
+            v = normalize_student_mark(s.get('marks'))
+            if v is not None:
+                vals.append(v)
     return sum(vals) / len(vals) if vals else None
 
 
@@ -795,11 +792,8 @@ def excel_subject_wise_per_department(depts):
                 StudentMark.objects.filter(subject=subj, student__department=dept, exam_phase__department=dept)
                 .select_related('student', 'student__batch', 'exam_phase')
             ):
-                if m.marks_obtained is None:
-                    continue
-                try:
-                    v = float(m.marks_obtained)
-                except (TypeError, ValueError):
+                v = normalize_student_mark(m.marks_obtained)
+                if v is None:
                     continue
                 marks_rows.append((v, m))
             marks_rows.sort(key=lambda x: -x[0])
@@ -822,11 +816,8 @@ def excel_subject_wise_all_departments(depts):
         student__department__in=depts,
         exam_phase__department__in=depts,
     ).select_related('student', 'student__batch', 'student__department', 'exam_phase', 'subject'):
-        if m.marks_obtained is None:
-            continue
-        try:
-            v = float(m.marks_obtained)
-        except (TypeError, ValueError):
+        v = normalize_student_mark(m.marks_obtained)
+        if v is None:
             continue
         marks_flat.append((m.subject.name, v, m))
     by_subject = defaultdict(list)
@@ -866,11 +857,8 @@ def excel_phase_compile(depts):
         student__department__in=depts,
         exam_phase__department__in=depts,
     ).select_related('student', 'student__batch', 'student__department', 'exam_phase', 'subject'):
-        if m.marks_obtained is None:
-            continue
-        try:
-            v = float(m.marks_obtained)
-        except (TypeError, ValueError):
+        v = normalize_student_mark(m.marks_obtained)
+        if v is None:
             continue
         pname = m.exam_phase.name
         sid = m.student_id

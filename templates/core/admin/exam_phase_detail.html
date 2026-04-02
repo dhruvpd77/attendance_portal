@@ -7,7 +7,7 @@
         <img src="{% static 'images/ljiet-logo.png' %}" alt="LJIET" class="admin-logo">
         <div>
             <h1 class="page-title mb-1">{{ phase.name }} — Subjects & marksheets</h1>
-            <p class="page-subtitle">Add subjects from your department. Upload Excel marksheet per subject. Format: ROLL NO, DIV, BRANCH, Enrollment No, NAME, Mentor, Marks. Maps by enrollment.</p>
+            <p class="page-subtitle">Add subjects from your department. Upload one <strong>.xlsx</strong> marksheet per subject using the <strong>required column format</strong> below the next heading.</p>
         </div>
     </div>
     <a href="{% url 'core:exam_phases_list' %}" class="btn btn-outline-light btn-sm"><i class="fas fa-arrow-left me-1"></i> Back</a>
@@ -47,6 +47,21 @@
 <div class="card admin-card">
     <div class="card-header"><i class="fas fa-table me-2"></i>Subjects in {{ phase.name }}</div>
     <div class="card-body p-0">
+        <div class="px-3 py-3 border-bottom bg-warning bg-opacity-10">
+            <h6 class="fw-bold mb-2 text-dark"><i class="fas fa-file-excel text-success me-1"></i> Marksheet upload — format you must follow</h6>
+            <ul class="small mb-2 ps-3">
+                <li>File type: <strong>.xlsx</strong> (saved from Excel). The <strong>first sheet</strong> is read.</li>
+                <li>Put the <strong>header row</strong> within the <strong>first 30 rows</strong> of that sheet (one header row, then one row per student).</li>
+                <li>Use this <strong>exact header text</strong>, in this column order <strong>A through G</strong>:</li>
+            </ul>
+            <div class="table-responsive small mb-2">
+                <table class="table table-sm table-bordered mb-0 bg-white">
+                    <thead class="table-light"><tr><th>A</th><th>B</th><th>C</th><th>D</th><th>E</th><th>F</th><th>G</th></tr></thead>
+                    <tbody><tr><td><code>ROLL NO</code></td><td><code>DIV</code></td><td><code>BRANCH</code></td><td><code>Enrollment No</code></td><td><code>NAME</code></td><td><code>Mentor</code></td><td><code>Marks</code></td></tr></tbody>
+                </table>
+            </div>
+            <p class="small mb-0"><strong>Important:</strong> Marks are saved only by matching <strong>Enrollment No</strong> to students in this department. Use the same enrollment numbers as in the portal; use <strong>digits only</strong> in that column (no spaces or text). Rows whose enrollment is not found are skipped. Headers must contain the words <strong>enroll</strong> (enrollment) and <strong>mark</strong> (marks) so the file is detected — the names above satisfy that.</p>
+        </div>
         {% if phase_subjects %}
         <div class="table-responsive">
             <table class="table table-hover mb-0">
@@ -172,10 +187,4 @@
     </div>
 </div>
 
-<div class="card admin-card mt-4">
-    <div class="card-body">
-        <h6 class="fw-bold mb-2"><i class="fas fa-info-circle me-1"></i>Excel format (like pas mark.xlsx)</h6>
-        <p class="small text-secondary mb-0">Header row: <strong>ROLL NO., DIV, BRANCH, Enrolllment No:, NAME OF STUDENT, Mentor, Marks(25)</strong>. Data from row below. Enrollment column maps to department students. Marks column (e.g. G) stores the score.</p>
-    </div>
-</div>
 {% endblock %}

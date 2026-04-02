@@ -19,9 +19,11 @@ from django.http import Http404, HttpResponse, JsonResponse
 from django.shortcuts import render, redirect, get_object_or_404
 from django.urls import reverse
 from django.contrib.auth.decorators import login_required
+from django.views.decorators.http import require_POST
 from django.contrib import messages
-from django.http import HttpResponse
-from django.db import OperationalError
+from django.core.exceptions import ValidationError
+from django.core.validators import validate_email
+from django.db import OperationalError, transaction
 from django.db.models import Count, Q, IntegerField
 from django.db.models.functions import Cast
 from django.utils import timezone
@@ -33,7 +35,7 @@ from openpyxl.styles import Font, Alignment, Border, Side, PatternFill
 from openpyxl.utils import get_column_letter
 
 from .models import (
-    Department, Batch, Subject, Faculty, Student,
+    Department, Batch, Subject, Faculty, FacultyDepartmentMembership, Student,
     ScheduleSlot, TermPhase, FacultyAttendance, LectureAdjustment, LectureCancellation, ExtraLecture, PhaseHoliday,
     AttendanceNotificationLog, AttendanceLockSetting, HODWeekLock,
     ExamPhase, ExamPhaseSubject, StudentMark, FacultyDoubtSession,
@@ -41,8 +43,19 @@ from .models import (
 )
 from accounts.models import UserRole
 
+from core.faculty_scope import (
+    faculty_has_department_access,
+    faculty_ids_equivalent_for_portal,
+    faculty_queryset_for_department_listing,
+    get_faculty_working_department,
+    set_faculty_working_department,
+)
+
 from . import exam_admin_analytics
+from .subject_merge import SubjectMergeError, execute_subject_merge
 from .exam_phase_order import exam_phase_name_sort_key, sort_exam_phases
+from .schedule_utils import get_effective_slots_for_date
+from .student_marks_utils import normalize_student_mark
 
 
 # ---------- Error handlers ----------
@@ -141,9 +154,14 @@ def _effective_slots_for_date(dept, date, extra_filters=None):
     return get_effective_slots_for_date(dept, date, extra_filters)
 
 
-def _effective_slots_for_faculty_on_date(faculty, date):
-    """Return list of ScheduleSlot objects for this faculty effective on date."""
-    return _effective_slots_for_date(faculty.department, date, extra_filters={'faculty': faculty})
+def _effective_slots_for_faculty_on_date(faculty, dept, date):
+    """Return list of ScheduleSlot objects for this faculty effective on date in ``dept``."""
+    if not dept or not faculty:
+        return []
+    ids = list(faculty_ids_equivalent_for_portal(faculty))
+    if not ids:
+        return []
+    return _effective_slots_for_date(dept, date, extra_filters={'faculty_id__in': ids})
 
 
 def _effective_day_set_for_dept(dept, date):
@@ -228,6 +246,8 @@ def get_admin_department(request, *, super_admin_session_only=False):
     admin_department_id in session—we do not fall back to the first department (avoids
     editing the wrong dept on e.g. attendance lock).
     """
+    from core.semester_scope import departments_for_institute_semester, get_active_institute_semester
+
     try:
         if request.user.is_authenticated and hasattr(request.user, 'role_profile'):
             rp = request.user.role_profile
@@ -237,10 +257,29 @@ def get_admin_department(request, *, super_admin_session_only=False):
         pass
     dept_id = request.session.get('admin_department_id')
     if dept_id:
-        return Department.objects.filter(pk=dept_id).first()
+        qs = Department.objects.filter(pk=dept_id)
+        if is_super_admin(request):
+            sem = get_active_institute_semester(request)
+            if sem:
+                qs = qs.filter(institute_semester=sem)
+        return qs.first()
     if super_admin_session_only and is_super_admin(request):
         return None
+    if is_super_admin(request):
+        sem = get_active_institute_semester(request)
+        return departments_for_institute_semester(sem).first()
     return Department.objects.first()
+
+
+def get_department_if_in_active_institute_semester(request, pk):
+    """Resolve a department id only if it belongs to the active institute semester (super-admin pickers)."""
+    from core.semester_scope import departments_for_institute_semester, get_active_institute_semester
+
+    try:
+        did = int(pk)
+    except (TypeError, ValueError):
+        return None
+    return departments_for_institute_semester(get_active_institute_semester(request)).filter(pk=did).first()
 
 
 def is_super_admin(request):
@@ -254,6 +293,19 @@ def is_super_admin(request):
         return rp.role == 'admin' and not rp.department_id
     except (UserRole.DoesNotExist, AttributeError):
         return True
+
+
+def can_merge_subjects(request):
+    """Institute super admin only (excludes departmental admins and HOD). Used for dangerous subject merge UI."""
+    if not user_can_admin(request):
+        return False
+    if getattr(request.user, 'is_superuser', False):
+        return True
+    try:
+        rp = request.user.role_profile
+        return rp.role == 'admin' and not rp.department_id
+    except (UserRole.DoesNotExist, AttributeError):
+        return False
 
 
 def get_faculty_user(request):
@@ -294,6 +346,31 @@ def user_can_faculty(request):
         return False
 
 
+def user_can_manage_faculty_portal_settings(request):
+    """
+    Who may edit Faculty portal Management (master + optional menu toggles per department).
+
+    Includes HOD / super admin (admin UI), and faculty accounts that are also Django
+    staff/superuser or departmental admin — so privileged users keep the same controls
+    while using the faculty portal sidebar.
+    """
+    if not request.user.is_authenticated:
+        return False
+    if not user_can_admin(request):
+        return False
+    if is_hod(request) or is_super_admin(request):
+        return True
+    if user_can_faculty(request) and (request.user.is_superuser or request.user.is_staff):
+        return True
+    try:
+        rp = request.user.role_profile
+        if rp.role == 'admin' and rp.department_id and user_can_faculty(request):
+            return True
+    except (UserRole.DoesNotExist, AttributeError):
+        pass
+    return False
+
+
 def user_can_student(request):
     try:
         return request.user.role_profile.role == 'student'
@@ -308,11 +385,32 @@ def user_can_exam_admin(request):
         return False
 
 
-def faculty_portal_feature_allowed(faculty, url_name):
+def faculty_portal_feature_allowed(request, url_name):
     """Per-department toggles for optional faculty menu items (HOD / super admin). Default allow."""
-    if not faculty or not faculty.department:
+    from core.faculty_scope import get_faculty_exam_context_department
+
+    faculty = get_faculty_user(request)
+    if not faculty:
         return True
-    d = faculty.department
+    _exam_urls = frozenset(
+        {
+            'faculty_supervision_duties',
+            'faculty_exam_history_duties',
+            'faculty_supervision_duty_complete',
+            'faculty_paper_checking_completion_request',
+            'faculty_paper_setting_completion_request',
+            'faculty_exam_credits_analytics',
+            'faculty_exam_history_credits_analytics',
+        }
+    )
+    if url_name in _exam_urls:
+        d = get_faculty_exam_context_department(request)
+    else:
+        d = get_faculty_working_department(request)
+    if not d:
+        if url_name in _exam_urls:
+            return False
+        return True
     mapping = {
         'faculty_doubt_solving': d.faculty_show_doubt_solving,
         'faculty_doubt_students_data': d.faculty_show_doubt_solving,
@@ -323,14 +421,21 @@ def faculty_portal_feature_allowed(faculty, url_name):
         'faculty_mark_analytics_report_excel': d.faculty_show_mark_analytics,
         'faculty_marks_report': d.faculty_show_marks_report,
         'faculty_student_marksheet': d.faculty_show_student_marksheet,
+        'faculty_supervision_duties': d.faculty_show_exam_duties,
+        'faculty_exam_history_duties': d.faculty_show_exam_duties,
+        'faculty_supervision_duty_complete': d.faculty_show_exam_duties,
+        'faculty_paper_checking_completion_request': d.faculty_show_exam_duties,
+        'faculty_paper_setting_completion_request': d.faculty_show_exam_duties,
+        'faculty_exam_credits_analytics': d.faculty_show_exam_credits_analytics,
+        'faculty_exam_history_credits_analytics': d.faculty_show_exam_credits_analytics,
+        'faculty_student_analytics': d.faculty_show_student_analytics,
     }
     return mapping.get(url_name, True)
 
 
 def _faculty_portal_guard_redirect(request, url_name):
     """If optional faculty feature is off, redirect to dashboard with message."""
-    faculty = get_faculty_user(request)
-    if not faculty_portal_feature_allowed(faculty, url_name):
+    if not faculty_portal_feature_allowed(request, url_name):
         messages.error(
             request,
             'This section is turned off for your department. Contact your HOD if you need access.',
@@ -359,13 +464,18 @@ def admin_dashboard(request):
         return redirect('accounts:role_redirect')
     dept = get_admin_department(request)
     super_admin = is_super_admin(request)
+    from core.semester_scope import departments_for_admin_request
+
+    from core.semester_scope import get_active_institute_semester
+
     ctx = {
         'department': dept,
-        'departments': Department.objects.all() if super_admin else ([dept] if dept else []),
+        'departments': list(departments_for_admin_request(request)) if super_admin else ([dept] if dept else []),
         'batch_count': Batch.objects.filter(department=dept).count() if dept else 0,
         'faculty_count': Faculty.objects.filter(department=dept).count() if dept else 0,
         'student_count': Student.objects.filter(department=dept).count() if dept else 0,
         'is_super_admin': super_admin,
+        'active_institute_semester': get_active_institute_semester(request) if super_admin else None,
     }
     return render(request, 'core/admin/dashboard.html', ctx)
 
@@ -389,12 +499,14 @@ def attendance_lock_setting(request):
     if not dept:
         if is_super_admin(request):
             minute_options = list(range(0, 60, 5))
+            from core.semester_scope import departments_for_admin_request
+
             return render(request, 'core/admin/attendance_lock_setting.html', {
                 'department': None,
                 'lock_setting': None,
                 'minute_options': minute_options,
                 'is_super_admin': True,
-                'all_departments': Department.objects.all().order_by('name'),
+                'all_departments': departments_for_admin_request(request).order_by('name'),
             })
         messages.error(request, 'No department in context. Open the Dashboard and select a department first.')
         return redirect('core:admin_dashboard')
@@ -419,12 +531,14 @@ def attendance_lock_setting(request):
         messages.success(request, 'Lock time saved.')
         return redirect('core:attendance_lock_setting')
     minute_options = list(range(0, 60, 5))  # 0, 5, 10, ..., 55
+    from core.semester_scope import departments_for_admin_request
+
     ctx = {
         'lock_setting': lock_setting,
         'minute_options': minute_options,
         'department': dept,
         'is_super_admin': is_super_admin(request),
-        'all_departments': Department.objects.all().order_by('name') if is_super_admin(request) else [],
+        'all_departments': departments_for_admin_request(request).order_by('name') if is_super_admin(request) else [],
     }
     return render(request, 'core/admin/attendance_lock_setting.html', ctx)
 
@@ -574,7 +688,7 @@ def extra_lecture(request):
 
     batches = list(Batch.objects.filter(department=dept).order_by('name'))
     subjects = list(Subject.objects.filter(department=dept).order_by('name'))
-    faculties = list(Faculty.objects.filter(department=dept).order_by('full_name'))
+    faculties = list(faculty_queryset_for_department_listing(dept))
     time_slots = _time_slots_for_department(dept)
     if not time_slots:
         time_slots = ['Lec 1', 'Lec 2', 'Lec 3', 'Lec 4', 'Lec 5', 'Lec 6', 'Lec 7', 'Lec 8']
@@ -596,7 +710,9 @@ def extra_lecture(request):
             return redirect('core:extra_lecture')
         batch = Batch.objects.filter(pk=batch_id, department=dept).first()
         subject = Subject.objects.filter(pk=subject_id, department=dept).first()
-        faculty = Faculty.objects.filter(pk=faculty_id, department=dept).first()
+        faculty = Faculty.objects.filter(pk=faculty_id).first()
+        if not faculty or not faculty_has_department_access(faculty, dept):
+            faculty = None
         if not batch or not subject or not faculty:
             messages.error(request, 'Invalid batch, subject, or faculty.')
             return redirect('core:extra_lecture')
@@ -696,31 +812,126 @@ def admin_performance_students(request):
 
 
 @login_required
-def admin_faculty_portal_management(request):
-    """HOD / super admin: toggle optional faculty sidebar features for the current department."""
-    if not user_can_admin(request):
-        return redirect('accounts:role_redirect')
-    if not (is_hod(request) or is_super_admin(request)):
-        messages.error(request, 'Only HOD or super admin can open Management.')
+def admin_exam_management(request):
+    """Super admin hub: exam section, DR facilities, paper duties, and credit reports."""
+    if not is_super_admin(request):
+        messages.error(request, 'Access denied.')
         return redirect('core:admin_dashboard')
     dept = get_admin_department(request)
+    return render(request, 'core/admin/exam_management.html', {'department': dept})
+
+
+@login_required
+def admin_faculty_portal_management(request):
+    """Toggle faculty portal options per department (HOD / super admin / privileged faculty)."""
+    from core.faculty_scope import (
+        faculty_accessible_departments_qs,
+        get_faculty_working_department,
+    )
+    from core.semester_scope import departments_for_admin_request
+
+    if not user_can_manage_faculty_portal_settings(request):
+        messages.error(request, 'You do not have access to Faculty portal Management.')
+        return redirect('accounts:role_redirect')
+
+    fac = get_faculty_user(request)
+    if is_super_admin(request) and not user_can_faculty(request):
+        management_department_choices = list(departments_for_admin_request(request))
+    elif user_can_faculty(request) and fac:
+        management_department_choices = list(faculty_accessible_departments_qs(fac))
+    else:
+        management_department_choices = list(departments_for_admin_request(request))
+    allowed_management_ids = {d.pk for d in management_department_choices}
+
+    # Switch department via ?department_id= (validated against allowed list)
+    if request.method == 'GET':
+        raw_did = request.GET.get('department_id')
+        if raw_did:
+            switch_dept = get_department_if_in_active_institute_semester(request, raw_did)
+            if (
+                switch_dept
+                and switch_dept.pk in allowed_management_ids
+            ):
+                request.session['admin_department_id'] = str(switch_dept.pk)
+                messages.info(
+                    request,
+                    f'Managing faculty portal settings for "{switch_dept.name}".',
+                )
+            elif switch_dept:
+                messages.error(request, 'You cannot manage portal settings for that department.')
+            else:
+                messages.error(request, 'Invalid department for the active academic semester.')
+            return redirect('core:admin_faculty_portal_management')
+
+    # Faculty / dept admin: keep admin session aligned with working department when unset
+    if (
+        user_can_faculty(request)
+        and fac
+        and not request.session.get('admin_department_id')
+    ):
+        wd = get_faculty_working_department(request)
+        if wd and wd.pk in allowed_management_ids:
+            request.session['admin_department_id'] = str(wd.pk)
+
+    dept = get_admin_department(request)
+    if dept and dept.pk not in allowed_management_ids:
+        dept = None
+
     if not dept:
-        messages.error(request, 'Select a department first.')
-        return redirect('core:admin_dashboard')
+        if management_department_choices:
+            return render(
+                request,
+                'core/admin/faculty_portal_management.html',
+                {
+                    'department': None,
+                    'management_department_choices': management_department_choices,
+                    'show_management_department_selector': True,
+                    'show_pick_department_only': True,
+                },
+            )
+        messages.error(
+            request,
+            'No departments available to manage. Check the active academic semester, or that your account can access at least one division.',
+        )
+        return redirect('core:faculty_dashboard' if user_can_faculty(request) else 'core:admin_dashboard')
     toggle_fields = (
         'faculty_show_doubt_solving',
         'faculty_show_dr_weekly_load',
         'faculty_show_mark_analytics',
         'faculty_show_marks_report',
         'faculty_show_student_marksheet',
+        'faculty_show_exam_duties',
+        'faculty_show_exam_credits_analytics',
+        'faculty_show_student_analytics',
     )
     if request.method == 'POST':
+        if dept.pk not in allowed_management_ids:
+            messages.error(request, 'You cannot change settings for that department.')
+            return redirect('core:admin_faculty_portal_management')
+        post_dept_id = request.POST.get('manage_department_id')
+        if post_dept_id and str(dept.pk) != str(post_dept_id):
+            messages.error(request, 'Department mismatch; reload the page and try again.')
+            return redirect('core:admin_faculty_portal_management')
         for fn in toggle_fields:
             setattr(dept, fn, request.POST.get(fn) == 'on')
-        dept.save(update_fields=list(toggle_fields))
-        messages.success(request, 'Faculty portal options saved.')
+        dept.faculty_portal_enabled = request.POST.get('faculty_portal_enabled') == 'on'
+        update_fields = list(toggle_fields) + ['faculty_portal_enabled']
+        dept.save(update_fields=update_fields)
+        messages.success(
+            request,
+            f'Faculty portal options for "{dept.name}" saved.',
+        )
         return redirect('core:admin_faculty_portal_management')
-    return render(request, 'core/admin/faculty_portal_management.html', {'department': dept})
+    return render(
+        request,
+        'core/admin/faculty_portal_management.html',
+        {
+            'department': dept,
+            'management_department_choices': management_department_choices,
+            'show_management_department_selector': len(management_department_choices) > 0,
+            'show_pick_department_only': False,
+        },
+    )
 
 
 @login_required
@@ -868,10 +1079,7 @@ def exam_phase_upload_marks(request):
         if not enroll_str or not enroll_str.isdigit():
             continue
         marks_val = row[marks_col] if marks_col < len(row) else None
-        try:
-            marks_decimal = float(marks_val) if marks_val is not None else None
-        except (TypeError, ValueError):
-            marks_decimal = None
+        marks_decimal = normalize_student_mark(marks_val)
 
         student = students_by_enrollment.get(enroll_str)
         if not student:
@@ -902,7 +1110,11 @@ def faculty_student_marksheet(request):
     faculty = get_faculty_user(request)
     if not faculty:
         return redirect('accounts:logout')
-    dept = faculty.department
+    dept = get_faculty_working_department(request)
+    if not dept:
+        messages.error(request, 'Select a department from the header (or your access may be turned off).')
+        return redirect('core:faculty_dashboard')
+    m_ids = list(faculty_ids_equivalent_for_portal(faculty))
     phases = sort_exam_phases(ExamPhase.objects.filter(department=dept))
     phase_subjects_map = {}
     for p in phases:
@@ -910,7 +1122,7 @@ def faculty_student_marksheet(request):
         phase_subjects_map[p.id] = subs
 
     mentorship_students = list(
-        Student.objects.filter(mentor=faculty, department=dept)
+        Student.objects.filter(mentor_id__in=m_ids, department=dept)
         .select_related('batch', 'mentor')
     )
     mentorship_students.sort(key=lambda s: (s.batch.name if s.batch else '', _roll_sort_key(s)))
@@ -923,7 +1135,7 @@ def faculty_student_marksheet(request):
         ).select_related('exam_phase', 'subject', 'student')
         marks_map = defaultdict(lambda: defaultdict(dict))  # student_id -> phase_id -> {subject_id: marks}
         for m in marks_qs:
-            marks_map[m.student_id][m.exam_phase_id][m.subject_id] = m.marks_obtained
+            marks_map[m.student_id][m.exam_phase_id][m.subject_id] = normalize_student_mark(m.marks_obtained)
 
     for student in mentorship_students:
         row = {
@@ -959,32 +1171,61 @@ def faculty_dashboard(request):
     if not faculty:
         messages.error(request, 'No faculty profile linked.')
         return redirect('accounts:logout')
+    dept = get_faculty_working_department(request)
+    fac_ids = list(faculty_ids_equivalent_for_portal(faculty)) if dept else []
     from datetime import date
     today = date.today()
     weekday = today.strftime('%A')
-    today_slots = sorted(
-        [s for s in _effective_slots_for_faculty_on_date(faculty, today) if s.day == weekday],
-        key=lambda s: s.time_slot or ''
-    )
-    extra_today = [
-        {'time_slot': ex.time_slot, 'batch': ex.batch, 'subject': ex.subject}
-        for ex in ExtraLecture.objects.filter(date=today, faculty=faculty).select_related('batch', 'subject')
-    ]
-    for ex in extra_today:
-        today_slots.append(type('Slot', (), {'time_slot': ex['time_slot'], 'batch': ex['batch'], 'subject': ex['subject']})())
-    today_slots.sort(key=lambda s: s.time_slot or '')
-    # Batches where this faculty teaches (from schedule)
+    today_slots = []
+    if dept:
+        today_slots = sorted(
+            [s for s in _effective_slots_for_faculty_on_date(faculty, dept, today) if s.day == weekday],
+            key=lambda s: s.time_slot or ''
+        )
+        extra_today = [
+            {'time_slot': ex.time_slot, 'batch': ex.batch, 'subject': ex.subject}
+            for ex in ExtraLecture.objects.filter(
+                date=today, faculty_id__in=fac_ids, batch__department=dept
+            ).select_related('batch', 'subject')
+        ]
+        for ex in extra_today:
+            today_slots.append(type('Slot', (), {'time_slot': ex['time_slot'], 'batch': ex['batch'], 'subject': ex['subject']})())
+        today_slots.sort(key=lambda s: s.time_slot or '')
     faculty_batches = list(
-        Batch.objects.filter(scheduleslot__faculty=faculty)
+        Batch.objects.filter(scheduleslot__faculty_id__in=fac_ids, department=dept)
         .distinct().order_by('name')
-    )
+    ) if dept else []
     ctx = {
         'faculty': faculty,
+        'faculty_working_department': dept,
         'today_slots': today_slots,
         'today': today,
         'faculty_batches': faculty_batches,
     }
     return render(request, 'core/faculty/dashboard.html', ctx)
+
+
+@login_required
+def faculty_select_department(request):
+    """Faculty: switch working department (session) when assigned to more than one."""
+    if request.method != 'POST' or not user_can_faculty(request):
+        return redirect('accounts:role_redirect')
+    fac = get_faculty_user(request)
+    if not fac:
+        return redirect('accounts:logout')
+    nxt = (request.POST.get('next') or '').strip()
+    try:
+        did = int(request.POST.get('department_id'))
+    except (TypeError, ValueError):
+        messages.error(request, 'Invalid department.')
+        return redirect('core:faculty_dashboard')
+    if set_faculty_working_department(request, did):
+        messages.success(request, 'Department context updated.')
+    else:
+        messages.error(request, 'You cannot use that department.')
+    if nxt and nxt.startswith('/') and not nxt.startswith('//'):
+        return redirect(nxt)
+    return redirect('core:faculty_dashboard')
 
 
 @login_required
@@ -1024,12 +1265,19 @@ def department_list(request):
     if is_super_admin(request) and request.method == 'POST' and request.POST.get('set_department'):
         request.session['admin_department_id'] = request.POST.get('department_id')
         return redirect('core:admin_dashboard')
+    from core.semester_scope import departments_for_admin_request
+
     dept = get_admin_department(request)
-    departments = Department.objects.all() if is_super_admin(request) else ([dept] if dept else [])
+    departments = (
+        list(departments_for_admin_request(request)) if is_super_admin(request) else ([dept] if dept else [])
+    )
+    from core.semester_scope import get_active_institute_semester
+
     ctx = {
         'departments': departments,
         'department': dept,
         'is_super_admin': is_super_admin(request),
+        'active_institute_semester': get_active_institute_semester(request) if is_super_admin(request) else None,
     }
     return render(request, 'core/admin/department_list.html', ctx)
 
@@ -1041,17 +1289,27 @@ def department_add(request):
     if not is_super_admin(request):
         messages.error(request, 'Only super admin can create departments.')
         return redirect('core:admin_dashboard')
+    from core.semester_scope import get_active_institute_semester
+
     if request.method == 'POST':
         name = request.POST.get('name', '').strip()
-        semester = request.POST.get('semester', '').strip()
+        dr_lbl = request.POST.get('dr_export_semester_label', '').strip()
         include_x = request.POST.get('include_extra_lectures_in_attendance') == 'on'
+        portal_en = request.POST.get('faculty_portal_enabled') == 'on'
+        sem = get_active_institute_semester(request)
         if name:
-            Department.objects.create(
-                name=name, semester=semester,
-                include_extra_lectures_in_attendance=include_x,
-            )
-            messages.success(request, 'Department added.')
-            return redirect('core:department_list')
+            if not sem:
+                messages.error(request, 'Create an academic semester first (Admin → Academic semesters).')
+            else:
+                Department.objects.create(
+                    name=name,
+                    institute_semester=sem,
+                    dr_export_semester_label=dr_lbl,
+                    include_extra_lectures_in_attendance=include_x,
+                    faculty_portal_enabled=portal_en,
+                )
+                messages.success(request, 'Department added.')
+                return redirect('core:department_list')
     return render(request, 'core/admin/department_form.html', {'form_type': 'add'})
 
 
@@ -1060,13 +1318,21 @@ def department_edit(request, pk):
     if not user_can_admin(request):
         return redirect('accounts:role_redirect')
     obj = get_object_or_404(Department, pk=pk)
+    if is_super_admin(request):
+        from core.semester_scope import get_active_institute_semester
+
+        sem = get_active_institute_semester(request)
+        if sem and obj.institute_semester_id != sem.pk:
+            messages.error(request, 'That department belongs to another academic semester.')
+            return redirect('core:department_list')
     if not is_super_admin(request) and get_admin_department(request) != obj:
         messages.error(request, 'You can only edit your own department.')
         return redirect('core:department_list')
     if request.method == 'POST':
         obj.name = request.POST.get('name', '').strip() or obj.name
-        obj.semester = request.POST.get('semester', '').strip()
+        obj.dr_export_semester_label = request.POST.get('dr_export_semester_label', '').strip()
         obj.include_extra_lectures_in_attendance = request.POST.get('include_extra_lectures_in_attendance') == 'on'
+        obj.faculty_portal_enabled = request.POST.get('faculty_portal_enabled') == 'on'
         obj.save()
         messages.success(request, 'Department updated.')
         return redirect('core:department_list')
@@ -1079,10 +1345,89 @@ def department_delete(request, pk):
         messages.error(request, 'Only super admin can delete departments.')
         return redirect('core:department_list')
     obj = get_object_or_404(Department, pk=pk)
+    from core.semester_scope import get_active_institute_semester
+
+    sem = get_active_institute_semester(request)
+    if sem and obj.institute_semester_id != sem.pk:
+        messages.error(request, 'That department belongs to another academic semester.')
+        return redirect('core:department_list')
     name = obj.name
     obj.delete()
     messages.success(request, f'Department "{name}" deleted.')
     return redirect('core:department_list')
+
+
+@login_required
+def admin_institute_semester_list(request):
+    """Super admin: switch active academic semester or create a new one."""
+    if not user_can_admin(request):
+        return redirect('accounts:role_redirect')
+    if not is_super_admin(request):
+        messages.error(request, 'Only super admin can manage academic semesters.')
+        return redirect('core:admin_dashboard')
+
+    from django.utils.text import slugify
+
+    from core.models import InstituteSemester
+    from core.semester_scope import get_active_institute_semester, set_active_institute_semester
+
+    if request.method == 'POST':
+        if request.POST.get('set_active'):
+            sid = request.POST.get('semester_id')
+            try:
+                sem = InstituteSemester.objects.filter(pk=int(sid)).first()
+            except (TypeError, ValueError):
+                sem = None
+            if sem:
+                set_active_institute_semester(request, sem)
+                messages.success(request, f'Active academic semester is now: {sem.label}')
+            else:
+                messages.error(request, 'Invalid academic semester.')
+            return redirect('core:admin_semester_list')
+        if request.POST.get('create_semester'):
+            label = (request.POST.get('label') or '').strip()
+            code_raw = (request.POST.get('code') or '').strip()
+            try:
+                sort_order = int(request.POST.get('sort_order') or 0)
+            except (TypeError, ValueError):
+                sort_order = 0
+            code = slugify(code_raw) if code_raw else slugify(label.replace(' ', '_'))
+            if not label:
+                messages.error(request, 'Label is required.')
+            elif not code:
+                messages.error(
+                    request,
+                    'Enter a short code (e.g. SY_EVEN_2026), or use a label with letters/numbers so a code can be generated.',
+                )
+            elif InstituteSemester.objects.filter(code=code).exists():
+                messages.error(request, 'That code is already in use.')
+            else:
+                sem = InstituteSemester.objects.create(code=code, label=label, sort_order=sort_order)
+                set_active_institute_semester(request, sem)
+                messages.success(request, f'Created academic semester "{sem.label}". It is now active.')
+            return redirect('core:admin_semester_list')
+        if request.POST.get('toggle_faculty_portal'):
+            sid = request.POST.get('semester_id')
+            try:
+                sem = InstituteSemester.objects.filter(pk=int(sid)).first()
+            except (TypeError, ValueError):
+                sem = None
+            if sem:
+                sem.faculty_portal_active = request.POST.get('faculty_portal_active') == 'on'
+                sem.save(update_fields=['faculty_portal_active'])
+                messages.success(
+                    request,
+                    f'Faculty portal for "{sem.label}" is now {"open" if sem.faculty_portal_active else "closed"}.',
+                )
+            return redirect('core:admin_semester_list')
+
+    semesters = list(InstituteSemester.objects.order_by('-sort_order', '-pk'))
+    active = get_active_institute_semester(request)
+    return render(
+        request,
+        'core/admin/institute_semester_list.html',
+        {'semesters': semesters, 'active_institute_semester': active},
+    )
 
 
 @login_required
@@ -1122,7 +1467,9 @@ def departmental_admin_create(request):
         elif not department_id:
             messages.error(request, 'Please select a department.')
         else:
-            dept = Department.objects.filter(pk=department_id).first()
+            from core.semester_scope import departments_for_admin_request
+
+            dept = departments_for_admin_request(request).filter(pk=department_id).first()
             if not dept:
                 messages.error(request, 'Invalid department.')
             else:
@@ -1130,7 +1477,9 @@ def departmental_admin_create(request):
                 UserRole.objects.create(user=user, role='admin', department=dept)
                 messages.success(request, f'Departmental admin "{username}" created for {dept.name}.')
                 return redirect('core:departmental_admin_list')
-    ctx = {'departments': Department.objects.order_by('name')}
+    from core.semester_scope import departments_for_admin_request
+
+    ctx = {'departments': departments_for_admin_request(request).order_by('name')}
     return render(request, 'core/admin/departmental_admin_form.html', ctx)
 
 
@@ -1176,7 +1525,9 @@ def departmental_hod_create(request):
         elif not department_id:
             messages.error(request, 'Please select a department.')
         else:
-            dept = Department.objects.filter(pk=department_id).first()
+            from core.semester_scope import departments_for_admin_request
+
+            dept = departments_for_admin_request(request).filter(pk=department_id).first()
             if not dept:
                 messages.error(request, 'Invalid department.')
             else:
@@ -1184,7 +1535,9 @@ def departmental_hod_create(request):
                 UserRole.objects.create(user=user, role='hod', department=dept)
                 messages.success(request, f'HOD "{username}" created for {dept.name}.')
                 return redirect('core:departmental_hod_list')
-    ctx = {'departments': Department.objects.order_by('name')}
+    from core.semester_scope import departments_for_admin_request
+
+    ctx = {'departments': departments_for_admin_request(request).order_by('name')}
     return render(request, 'core/admin/departmental_hod_form.html', ctx)
 
 
@@ -1320,7 +1673,11 @@ def subject_list(request):
         return redirect('accounts:role_redirect')
     dept = get_admin_department(request)
     subjects = Subject.objects.filter(department=dept) if dept else []
-    ctx = {'subjects': subjects, 'department': dept}
+    ctx = {
+        'subjects': subjects,
+        'department': dept,
+        'show_subject_merge': bool(dept and can_merge_subjects(request)),
+    }
     return render(request, 'core/admin/subject_list.html', ctx)
 
 
@@ -1375,6 +1732,35 @@ def subject_delete(request, pk):
     return redirect('core:subject_list')
 
 
+@login_required
+@require_POST
+def subject_merge(request):
+    """Institute super admin: merge one subject into another for the active department (session)."""
+    if not can_merge_subjects(request):
+        messages.error(request, 'Only institute super admin can merge subjects.')
+        return redirect('core:subject_list')
+    dept = get_admin_department(request)
+    if not dept:
+        messages.error(request, 'Select a department first.')
+        return redirect('core:admin_dashboard')
+    from_name = (request.POST.get('merge_from') or '').strip()
+    to_name = (request.POST.get('merge_to') or '').strip()
+    if (request.POST.get('confirm_merge') or '').strip() != 'MERGE':
+        messages.error(request, 'Type MERGE in the confirmation box to proceed.')
+        return redirect('core:subject_list')
+    try:
+        stats = execute_subject_merge(dept, from_name, to_name)
+    except SubjectMergeError as exc:
+        messages.error(request, str(exc))
+        return redirect('core:subject_list')
+    summary = '; '.join(f'{k}: {v}' for k, v in sorted(stats.items()) if v)
+    messages.success(
+        request,
+        f'Merged "{from_name}" into "{to_name}" in {dept.name}. {summary}',
+    )
+    return redirect('core:subject_list')
+
+
 # ---------- Admin: Faculty ----------
 
 @login_required
@@ -1382,7 +1768,7 @@ def faculty_list(request):
     if not user_can_admin(request):
         return redirect('accounts:role_redirect')
     dept = get_admin_department(request)
-    faculties = Faculty.objects.filter(department=dept) if dept else []
+    faculties = faculty_queryset_for_department_listing(dept) if dept else Faculty.objects.none()
     ctx = {'faculties': faculties, 'department': dept}
     return render(request, 'core/admin/faculty_list.html', ctx)
 
@@ -1415,17 +1801,75 @@ def faculty_edit(request, pk):
         return redirect('accounts:role_redirect')
     obj = get_object_or_404(Faculty, pk=pk)
     dept = get_admin_department(request)
-    if dept and obj.department != dept:
+    if dept and obj.department != dept and not faculty_has_department_access(obj, dept):
         messages.error(request, 'You can only edit faculty in your department.')
         return redirect('core:faculty_list')
+    sem = obj.department.institute_semester if obj.department_id else None
+    extra_depts = (
+        Department.objects.filter(institute_semester=sem).exclude(pk=obj.department_id).order_by('name')
+        if sem and is_super_admin(request)
+        else Department.objects.none()
+    )
+    current_extra_ids = set(
+        FacultyDepartmentMembership.objects.filter(faculty=obj)
+        .exclude(department_id=obj.department_id)
+        .values_list('department_id', flat=True)
+    )
+    show_portal_merge = is_super_admin(request) and not obj.user_id
+    portal_merge_candidates = (
+        list(
+            Faculty.objects.exclude(pk=obj.pk)
+            .filter(portal_canonical__isnull=True)
+            .select_related('department')
+            .order_by('department__name', 'full_name')
+        )
+        if show_portal_merge
+        else []
+    )
     if request.method == 'POST':
         obj.full_name = request.POST.get('full_name', '').strip() or obj.full_name
         obj.short_name = request.POST.get('short_name', '').strip() or obj.short_name
         obj.email = request.POST.get('email', '').strip()
+        if is_super_admin(request):
+            if obj.user_id:
+                obj.portal_canonical = None
+            else:
+                raw_pc = (request.POST.get('portal_canonical_id') or '').strip()
+                if raw_pc.isdigit():
+                    cid = int(raw_pc)
+                    tgt = Faculty.objects.filter(pk=cid).exclude(pk=obj.pk).first()
+                    if tgt and not tgt.portal_canonical_id:
+                        obj.portal_canonical = tgt
+                    else:
+                        obj.portal_canonical = None
+                else:
+                    obj.portal_canonical = None
         obj.save()
+        if is_super_admin(request) and sem:
+            raw_ids = [x for x in request.POST.getlist('extra_department_ids') if str(x).strip().isdigit()]
+            want = {int(x) for x in raw_ids if int(x) != obj.department_id}
+            valid = set(extra_depts.values_list('pk', flat=True))
+            want &= valid
+            FacultyDepartmentMembership.objects.filter(faculty=obj).exclude(
+                department_id=obj.department_id
+            ).delete()
+            for eid in want:
+                FacultyDepartmentMembership.objects.get_or_create(faculty=obj, department_id=eid)
         messages.success(request, 'Faculty updated.')
         return redirect('core:faculty_list')
-    return render(request, 'core/admin/faculty_form.html', {'obj': obj, 'form_type': 'edit'})
+    return render(
+        request,
+        'core/admin/faculty_form.html',
+        {
+            'obj': obj,
+            'form_type': 'edit',
+            'extra_departments': extra_depts,
+            'current_extra_department_ids': current_extra_ids,
+            'show_extra_departments': extra_depts.exists(),
+            'show_portal_merge': show_portal_merge,
+            'portal_merge_candidates': portal_merge_candidates,
+        },
+    )
 
 
 @login_required
@@ -1434,13 +1878,173 @@ def faculty_delete(request, pk):
         return redirect('accounts:role_redirect')
     obj = get_object_or_404(Faculty, pk=pk)
     dept = get_admin_department(request)
-    if dept and obj.department != dept:
+    if dept and obj.department != dept and not faculty_has_department_access(obj, dept):
         messages.error(request, 'You can only manage faculties in your department.')
         return redirect('core:faculty_list')
     name = obj.full_name
     obj.delete()
     messages.success(request, f'Faculty "{name}" deleted.')
     return redirect('core:faculty_list')
+
+
+def _faculty_excel_normalize_header(val):
+    if val is None:
+        return ''
+    return str(val).strip().lower().replace(' ', '_').replace('-', '_')
+
+
+def _faculty_excel_column_indices(header_row):
+    """Map Excel header row to (i_full_name, i_short_name, i_email). Required: full + short."""
+    headers = [_faculty_excel_normalize_header(c) for c in (header_row or [])]
+    i_full = i_short = i_email = None
+    for i, h in enumerate(headers):
+        if h in ('short_name', 'shortname', 'initials', 'faculty_short', 'initial', 'code'):
+            i_short = i
+        elif h in ('email', 'e_mail', 'email_id', 'mail'):
+            i_email = i
+        elif h in ('full_name', 'fullname', 'faculty_name', 'name_of_faculty', 'professor_name'):
+            i_full = i
+        elif h == 'name' and i_full is None:
+            i_full = i
+    return i_full, i_short, i_email
+
+
+@login_required
+def faculty_upload_excel_template(request):
+    """Small .xlsx with header row for bulk faculty import."""
+    if not user_can_admin(request):
+        return redirect('accounts:role_redirect')
+    if not get_admin_department(request):
+        messages.error(request, 'Select a department first.')
+        return redirect('core:admin_dashboard')
+    wb = Workbook()
+    ws = wb.active
+    ws.title = 'Faculties'
+    ws.append(['full_name', 'short_name', 'email'])
+    ws.append(['Example: Dr. A. B. Sample', 'ABS', ''])
+    buf = BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    resp = HttpResponse(
+        buf.read(),
+        content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    )
+    resp['Content-Disposition'] = 'attachment; filename="faculty_upload_template.xlsx"'
+    return resp
+
+
+@login_required
+def faculty_upload_excel(request):
+    """Bulk create or update faculty rows for the current admin department from .xlsx."""
+    if not user_can_admin(request):
+        return redirect('accounts:role_redirect')
+    dept = get_admin_department(request)
+    if not dept:
+        messages.error(request, 'Select a department first.')
+        return redirect('core:admin_dashboard')
+
+    if request.method == 'POST':
+        uploaded = request.FILES.get('excel_file')
+        if not uploaded:
+            messages.error(request, 'Select an Excel file.')
+            return redirect('core:faculty_upload_excel')
+        if not uploaded.name.lower().endswith('.xlsx'):
+            messages.error(request, 'Upload an Excel file in .xlsx format.')
+            return redirect('core:faculty_upload_excel')
+        try:
+            wb = openpyxl.load_workbook(uploaded, read_only=True, data_only=True)
+            ws = wb.active
+            rows_iter = ws.iter_rows(values_only=True)
+            header = next(rows_iter, None)
+            i_full, i_short, i_email = _faculty_excel_column_indices(header)
+            if i_short is None:
+                messages.error(
+                    request,
+                    'Missing a short-name column. Use a header such as: short_name, initials, or code.',
+                )
+                wb.close()
+                return redirect('core:faculty_upload_excel')
+            if i_full is None:
+                messages.error(
+                    request,
+                    'Missing a full-name column. Use: full_name, faculty_name, or name.',
+                )
+                wb.close()
+                return redirect('core:faculty_upload_excel')
+
+            created = updated = skipped = 0
+            row_messages = []
+            sn_max = Faculty._meta.get_field('short_name').max_length
+            fn_max = Faculty._meta.get_field('full_name').max_length
+
+            def cell(row, idx):
+                if idx is None or idx >= len(row):
+                    return ''
+                v = row[idx]
+                if v is None:
+                    return ''
+                return str(v).strip()
+
+            with transaction.atomic():
+                for row_num, row in enumerate(rows_iter, start=2):
+                    if not row:
+                        continue
+                    sn = cell(row, i_short)[:sn_max]
+                    fn = cell(row, i_full)[:fn_max]
+                    em_raw = cell(row, i_email) if i_email is not None else ''
+                    if not sn and not fn:
+                        continue
+                    if not sn:
+                        skipped += 1
+                        row_messages.append(f'Row {row_num}: missing short name, skipped.')
+                        continue
+                    if not fn:
+                        skipped += 1
+                        row_messages.append(f'Row {row_num}: missing full name for "{sn}", skipped.')
+                        continue
+                    email_val = ''
+                    if em_raw:
+                        try:
+                            validate_email(em_raw)
+                            email_val = em_raw
+                        except ValidationError:
+                            row_messages.append(f'Row {row_num}: invalid email for "{sn}", left unchanged.')
+
+                    obj, is_new = Faculty.objects.get_or_create(
+                        department=dept,
+                        short_name=sn,
+                        defaults={'full_name': fn, 'email': email_val},
+                    )
+                    if is_new:
+                        created += 1
+                    else:
+                        changed = False
+                        if fn and obj.full_name != fn:
+                            obj.full_name = fn
+                            changed = True
+                        if email_val and obj.email != email_val:
+                            obj.email = email_val
+                            changed = True
+                        if changed:
+                            obj.save(update_fields=['full_name', 'email'])
+                            updated += 1
+            wb.close()
+            msg = f'Import finished: {created} added, {updated} updated.'
+            if skipped:
+                msg += f' {skipped} row(s) skipped.'
+            messages.success(request, msg)
+            for line in row_messages[:12]:
+                messages.warning(request, line)
+            if len(row_messages) > 12:
+                messages.warning(
+                    request,
+                    f'…and {len(row_messages) - 12} more row messages (see recent warnings).',
+                )
+        except Exception as e:
+            messages.error(request, f'Could not read the Excel file: {e}')
+        return redirect('core:faculty_list')
+
+    return render(request, 'core/admin/faculty_upload_excel.html', {'department': dept})
 
 
 @login_required
@@ -2183,7 +2787,9 @@ def schedule_add(request):
         day = request.POST.get('day', '').strip()
         time_slot = request.POST.get('time_slot', '').strip()
         if faculty_id and subject_id and batch_id and day and time_slot:
-            faculty = Faculty.objects.filter(pk=faculty_id, department=dept).first()
+            faculty = Faculty.objects.filter(pk=faculty_id).first()
+            if faculty and not faculty_has_department_access(faculty, dept):
+                faculty = None
             subject = Subject.objects.filter(pk=subject_id, department=dept).first()
             batch = Batch.objects.filter(pk=batch_id, department=dept).first()
             if faculty and subject and batch:
@@ -2194,7 +2800,7 @@ def schedule_add(request):
                 )
                 messages.success(request, 'Schedule slot added.')
                 return redirect('core:schedule_list')
-    faculties = Faculty.objects.filter(department=dept)
+    faculties = faculty_queryset_for_department_listing(dept)
     subjects = Subject.objects.filter(department=dept)
     batches = Batch.objects.filter(department=dept)
     days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
@@ -2238,7 +2844,9 @@ def schedule_edit(request, pk):
         day = request.POST.get('day', '').strip()
         time_slot = request.POST.get('time_slot', '').strip()
         if faculty_id and subject_id and batch_id and day and time_slot:
-            faculty = Faculty.objects.filter(pk=faculty_id, department=dept).first()
+            faculty = Faculty.objects.filter(pk=faculty_id).first()
+            if faculty and not faculty_has_department_access(faculty, dept):
+                faculty = None
             subject = Subject.objects.filter(pk=subject_id, department=dept).first()
             batch = Batch.objects.filter(pk=batch_id, department=dept).first()
             if faculty and subject and batch:
@@ -2250,7 +2858,7 @@ def schedule_edit(request, pk):
                 slot.save()
                 messages.success(request, 'Schedule slot updated.')
                 return redirect('core:schedule_list')
-    faculties = Faculty.objects.filter(department=dept)
+    faculties = faculty_queryset_for_department_listing(dept)
     subjects = Subject.objects.filter(department=dept)
     batches = Batch.objects.filter(department=dept)
     days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
@@ -2530,10 +3138,10 @@ def _dr_normalize_semester(value):
 
 
 def _dr_semester_for_department(dept):
-    """Display semester for DR exports (from Department.semester)."""
+    """Display semester for DR exports (from Department.dr_export_semester_label)."""
     if not dept:
         return '—'
-    raw = (getattr(dept, 'semester', None) or '').strip()
+    raw = (getattr(dept, 'dr_export_semester_label', None) or '').strip()
     if not raw:
         return '—'
     norm = _dr_normalize_semester(raw)
@@ -2688,7 +3296,14 @@ def _dr_collect_rows_for_date(dept, d):
                 proxy = adj.original_faculty.short_name if adj else ''
                 lecture_type = 'PTL' if adj else 'TL'
             tot = strength.get(batch.id, 0)
-            att = FacultyAttendance.objects.filter(date=d, batch=batch, lecture_slot=ts, faculty=fac).first()
+            fac_eq = faculty_ids_equivalent_for_portal(fac)
+            att = (
+                FacultyAttendance.objects.filter(
+                    date=d, batch=batch, lecture_slot=ts, faculty_id__in=fac_eq
+                ).first()
+                if fac_eq
+                else None
+            )
             if not att:
                 att = FacultyAttendance.objects.filter(date=d, batch=batch, lecture_slot=ts).first()
             attendance_filled = att is not None
@@ -3182,6 +3797,8 @@ def _build_daily_report_workbook(dept, phase, week_index, week_dates, global_wee
 @login_required
 def daily_report_export(request):
     """HOD / Super Admin: page to download phase/week Daily Report Excel."""
+    from core.semester_scope import departments_for_admin_request
+
     if not _user_can_daily_report(request):
         messages.error(request, 'Only HOD or Super Admin can download the Daily Report.')
         return redirect('core:admin_dashboard')
@@ -3192,7 +3809,7 @@ def daily_report_export(request):
     if is_super_admin(request):
         dept_override = request.GET.get('department_id')
         if dept_override:
-            alt = Department.objects.filter(pk=dept_override).first()
+            alt = get_department_if_in_active_institute_semester(request, dept_override)
             if alt:
                 dept = alt
     phases = ['T1', 'T2', 'T3', 'T4']
@@ -3213,7 +3830,7 @@ def daily_report_export(request):
         'phase_weeks_list': phase_weeks_list,
         'week_map_json': json.dumps(week_map_serial),
         'phase_week_offsets_json': json.dumps(phase_week_offsets),
-        'departments': Department.objects.order_by('name') if is_super_admin(request) else [],
+        'departments': list(departments_for_admin_request(request)) if is_super_admin(request) else [],
         'is_super_admin': is_super_admin(request),
     }
     return render(request, 'core/admin/daily_report_export.html', ctx)
@@ -3231,7 +3848,7 @@ def daily_report_excel(request):
     if is_super_admin(request):
         dept_override = request.GET.get('department_id')
         if dept_override:
-            alt = Department.objects.filter(pk=dept_override).first()
+            alt = get_department_if_in_active_institute_semester(request, dept_override)
             if alt:
                 dept = alt
 
@@ -3466,7 +4083,9 @@ def upload_timetable(request):
             'per_batch': per_batch,
         }
         messages.success(request, 'Timetable imported successfully. See summary below.')
-        departments = Department.objects.all()
+        from core.semester_scope import departments_for_admin_request
+
+        departments = list(departments_for_admin_request(request))
         ctx = {
             'department': dept,
             'departments': departments,
@@ -3475,7 +4094,9 @@ def upload_timetable(request):
         }
         return render(request, 'core/admin/upload_timetable.html', ctx)
 
-    departments = Department.objects.all()
+    from core.semester_scope import departments_for_admin_request
+
+    departments = list(departments_for_admin_request(request))
     ctx = {
         'department': dept,
         'departments': departments,
@@ -5515,6 +6136,8 @@ def _student_analytics_build_data_by_roll_search(dept, phase, week_idx, roll_sea
 @login_required
 def student_analytics(request):
     """Admin & Faculty: Student-wise, batch-wise, phase/week analytics. Filter by batch, search by roll no."""
+    from core.semester_scope import departments_for_admin_request, departments_for_institute_semester, get_active_institute_semester
+
     dept = None
     is_admin = user_can_admin(request)
     if is_admin:
@@ -5532,9 +6155,13 @@ def student_analytics(request):
     elif user_can_faculty(request):
         faculty = get_faculty_user(request)
         if faculty:
-            dept = faculty.department
+            dept = get_faculty_working_department(request)
         if not dept:
-            return redirect('accounts:role_redirect')
+            messages.error(request, 'No department context. Use the department switcher in the header or contact admin.')
+            return redirect('core:faculty_dashboard')
+        blocked = _faculty_portal_guard_redirect(request, 'faculty_student_analytics')
+        if blocked:
+            return blocked
     else:
         return redirect('accounts:role_redirect')
     phases = ['T1', 'T2', 'T3', 'T4']
@@ -5559,8 +6186,16 @@ def student_analytics(request):
     batches = list(Batch.objects.filter(department=dept).select_related('department').order_by('name'))
     batches_from_all_depts = False
     if not batches:
-        # Fallback: show batches from ALL departments so dropdown is never empty
-        batches = list(Batch.objects.select_related('department').order_by('department__name', 'name'))
+        if is_admin and is_super_admin(request):
+            sem = get_active_institute_semester(request)
+            d_ids = departments_for_institute_semester(sem).values_list('pk', flat=True)
+            batches = list(
+                Batch.objects.filter(department_id__in=d_ids)
+                .select_related('department')
+                .order_by('department__name', 'name')
+            )
+        else:
+            batches = list(Batch.objects.select_related('department').order_by('department__name', 'name'))
         batches_from_all_depts = bool(batches)
     if weeks_list:
         if roll_search and not batch_id:
@@ -5578,7 +6213,7 @@ def student_analytics(request):
     week_offset = phase_week_offsets.get(phase, 0)
     global_week_num = week_offset + week_idx + 1 if weeks_list else 0
     week_options = [(i, week_offset + i + 1) for i in week_range]
-    departments = list(Department.objects.all()) if is_admin and is_super_admin(request) else []
+    departments = list(departments_for_admin_request(request)) if is_admin and is_super_admin(request) else []
     ctx = {
         'department': dept,
         'departments': departments,
@@ -5615,7 +6250,9 @@ def _mark_analytics_build_data_from_students(students, dept):
     ).select_related('subject', 'exam_phase')
     marks_by_student_phase = defaultdict(lambda: defaultdict(dict))
     for m in marks_qs:
-        marks_by_student_phase[m.student_id][m.exam_phase_id][m.subject.name] = m.marks_obtained
+        marks_by_student_phase[m.student_id][m.exam_phase_id][m.subject.name] = normalize_student_mark(
+            m.marks_obtained
+        )
     result = []
     for s in students:
         phase_wise = []
@@ -5624,10 +6261,7 @@ def _mark_analytics_build_data_from_students(students, dept):
             subject_marks = []
             for eps in subs:
                 marks_val = marks_by_student_phase[s.id][ep.id].get(eps.subject.name)
-                try:
-                    is_low = marks_val is not None and float(marks_val) < 9
-                except (TypeError, ValueError):
-                    is_low = False
+                is_low = marks_val is not None and marks_val < 9
                 subject_marks.append({'name': eps.subject.name, 'marks': marks_val, 'is_low': is_low})
             phase_wise.append({'phase_name': ep.name, 'subjects': subject_marks})
         result.append({'student': s, 'phase_wise': phase_wise})
@@ -5657,14 +6291,15 @@ def _mark_analytics_build_risk_data(student_data, threshold=9):
     for item in student_data:
         for phase in item['phase_wise']:
             for s in phase['subjects']:
-                if s.get('marks') is not None and float(s['marks']) < threshold:
+                v = normalize_student_mark(s.get('marks'))
+                if v is not None and v < threshold:
                     subj_name = s['name']
                     if subj_name not in subject_map:
                         subject_map[subj_name] = {'subject_name': subj_name, 'at_risk': []}
                     subject_map[subj_name]['at_risk'].append({
                         'student': item['student'],
                         'phase_name': phase['phase_name'],
-                        'marks': s['marks'],
+                        'marks': v,
                     })
     for subj_name in sorted(subject_map.keys()):
         entries = subject_map[subj_name]['at_risk']
@@ -5755,11 +6390,15 @@ def faculty_mark_analytics(request):
     faculty = get_faculty_user(request)
     if not faculty:
         return redirect('accounts:logout')
-    dept = faculty.department
+    dept = get_faculty_working_department(request)
+    if not dept:
+        messages.error(request, 'No department context. Use the header switcher or contact admin.')
+        return redirect('core:faculty_dashboard')
+    m_ids = list(faculty_ids_equivalent_for_portal(faculty))
     batch_id = request.GET.get('batch_id')
     roll_search = request.GET.get('roll_search', '').strip()
     selected_phase = request.GET.get('phase', '').strip()
-    qs = Student.objects.filter(mentor=faculty, department=dept).select_related('batch')
+    qs = Student.objects.filter(mentor_id__in=m_ids, department=dept).select_related('batch')
     if batch_id and batch_id != 'all':
         qs = qs.filter(batch_id=batch_id)
     if roll_search:
@@ -5769,7 +6408,7 @@ def faculty_mark_analytics(request):
     students.sort(key=lambda s: (s.batch.name if s.batch else '', _roll_sort_key(s)))
     student_data = _mark_analytics_build_data_from_students(students, dept)
     batches = list(Batch.objects.filter(
-        id__in=Student.objects.filter(mentor=faculty, department=dept).values_list('batch_id', flat=True).distinct()
+        id__in=Student.objects.filter(mentor_id__in=m_ids, department=dept).values_list('batch_id', flat=True).distinct()
     ).order_by('name'))
     risk_data = _mark_analytics_build_risk_data(student_data)
     risk_student_data = []
@@ -5784,7 +6423,7 @@ def faculty_mark_analytics(request):
         risk_data = _risk_filtered
         for item in student_data:
             has_low = any(
-                s.get('marks') is not None and float(s['marks']) < 9
+                (v := normalize_student_mark(s.get('marks'))) is not None and v < 9
                 for p in item['phase_wise'] for s in p['subjects']
             )
             if has_low:
@@ -5792,7 +6431,7 @@ def faculty_mark_analytics(request):
     else:
         for item in student_data:
             has_low = any(
-                s.get('marks') is not None and float(s['marks']) < 9
+                (v := normalize_student_mark(s.get('marks'))) is not None and v < 9
                 for p in item['phase_wise'] for s in p['subjects']
             )
             if has_low:
@@ -5814,12 +6453,46 @@ def faculty_mark_analytics(request):
     return render(request, 'core/admin/mark_analytics.html', ctx)
 
 
+def _faculty_full_name_from_timetable(dept, batch_name, subject_name):
+    """Primary teacher from active ScheduleSlot rows for this batch × subject (today's timetable version)."""
+    if not dept or not batch_name or batch_name == '—' or not subject_name:
+        return ''
+    batch = Batch.objects.filter(department=dept, name=batch_name).first()
+    subj = Subject.objects.filter(department=dept, name=subject_name).first()
+    if not batch or not subj:
+        return ''
+    ref_date = timezone.localdate()
+    slots = get_effective_slots_for_date(dept, ref_date, extra_filters={'batch': batch})
+    faculties = [s.faculty for s in slots if s.subject_id == subj.id]
+    if not faculties:
+        return ''
+    if len(faculties) == 1:
+        f = faculties[0]
+        return (f.full_name or f.short_name or '').strip()
+    top_id = Counter(f.id for f in faculties).most_common(1)[0][0]
+    f = next(x for x in faculties if x.id == top_id)
+    return (f.full_name or f.short_name or '').strip()
+
+
+def _faculty_display_for_batch_subject_row(dept, batch_name, subject_name, fallback_short=''):
+    """Excel row: full name from timetable; else resolve fallback_short to Faculty.full_name; else initials."""
+    name = _faculty_full_name_from_timetable(dept, batch_name, subject_name)
+    if name:
+        return name
+    if fallback_short:
+        fb = Faculty.objects.filter(department=dept, short_name__iexact=fallback_short.strip()).first()
+        if fb and (fb.full_name or '').strip():
+            return fb.full_name.strip()
+    return (fallback_short or '').strip()
+
+
 def _build_detailed_mark_analytics(dept, phase_id=None, subject_id=None, batch_id=None):
-    """Build detailed mark analytics: top 10, highest, avg, batch-wise avg per phase×subject."""
+    """Build detailed mark analytics: top 10, highest, avg, batch-wise avg, batch pass/fail/absent per phase×subject."""
+    pass_marks = 9.0
     qs = StudentMark.objects.filter(
         student__department=dept,
         exam_phase__department=dept
-    ).select_related('student', 'student__batch', 'exam_phase', 'subject')
+    ).select_related('student', 'student__batch', 'student__mentor', 'exam_phase', 'subject')
     if phase_id:
         qs = qs.filter(exam_phase_id=phase_id)
     if subject_id:
@@ -5829,20 +6502,19 @@ def _build_detailed_mark_analytics(dept, phase_id=None, subject_id=None, batch_i
     marks_list = list(qs)
     phase_subject_data = defaultdict(lambda: defaultdict(list))
     for m in marks_list:
-        if m.marks_obtained is not None:
-            try:
-                val = float(m.marks_obtained)
-            except (TypeError, ValueError):
-                continue
-            phase_subject_data[m.exam_phase.name][m.subject.name].append({
-                'student': m.student,
-                'marks': val,
-                'batch_name': m.student.batch.name if m.student.batch else '',
-            })
+        val = normalize_student_mark(m.marks_obtained)
+        mentor = getattr(m.student, 'mentor', None)
+        phase_subject_data[m.exam_phase.name][m.subject.name].append({
+            'student': m.student,
+            'marks': val,
+            'batch_name': m.student.batch.name if m.student.batch else '',
+            'mentor_short': (mentor.short_name if mentor else '') or '',
+        })
     result = []
     for phase_name in sorted(phase_subject_data.keys(), key=exam_phase_name_sort_key):
         for subj_name in sorted(phase_subject_data[phase_name].keys()):
-            entries = phase_subject_data[phase_name][subj_name]
+            bucket = phase_subject_data[phase_name][subj_name]
+            entries = [e for e in bucket if e['marks'] is not None]
             entries_sorted = sorted(entries, key=lambda x: (-x['marks'], x['batch_name'], _roll_sort_key(x['student'])))
             top_10 = entries_sorted[:10]
             vals = [e['marks'] for e in entries]
@@ -5853,6 +6525,60 @@ def _build_detailed_mark_analytics(dept, phase_id=None, subject_id=None, batch_i
                 batch_totals[e['batch_name']].append(e['marks'])
             batch_avg = {b: sum(v) / len(v) for b, v in batch_totals.items()}
             batch_avg_sorted = sorted(batch_avg.items(), key=lambda x: (-x[1], x[0]))
+
+            by_batch = defaultdict(lambda: {
+                'total': 0, 'pass': 0, 'fail': 0, 'absent': 0, 'marks_vals': [], 'mentor_shorts': [],
+            })
+            for e in bucket:
+                bname = e['batch_name'] if e['batch_name'] else '—'
+                rec = by_batch[bname]
+                rec['total'] += 1
+                if e['marks'] is None:
+                    rec['absent'] += 1
+                else:
+                    rec['marks_vals'].append(e['marks'])
+                    if e['marks'] >= pass_marks:
+                        rec['pass'] += 1
+                    else:
+                        rec['fail'] += 1
+                    if e['mentor_short']:
+                        rec['mentor_shorts'].append(e['mentor_short'])
+            batch_pass_fail = []
+            for bname in sorted(by_batch.keys(), key=lambda x: (x == '—', x)):
+                rec = by_batch[bname]
+                fac_short = ''
+                if rec['mentor_shorts']:
+                    fac_short = Counter(rec['mentor_shorts']).most_common(1)[0][0]
+                fac_display = _faculty_display_for_batch_subject_row(dept, bname, subj_name, fac_short)
+                appeared = rec['pass'] + rec['fail']
+                pct = (100.0 * rec['pass'] / appeared) if appeared else 0.0
+                bavg = sum(rec['marks_vals']) / len(rec['marks_vals']) if rec['marks_vals'] else None
+                batch_pass_fail.append({
+                    'batch': bname,
+                    'total': rec['total'],
+                    'pass': rec['pass'],
+                    'fail': rec['fail'],
+                    'absent': rec['absent'],
+                    'faculty': fac_display,
+                    'pct_result': pct,
+                    'avg_marks': bavg,
+                })
+            t_pass = sum(r['pass'] for r in batch_pass_fail)
+            t_fail = sum(r['fail'] for r in batch_pass_fail)
+            t_absent = sum(r['absent'] for r in batch_pass_fail)
+            t_total = sum(r['total'] for r in batch_pass_fail)
+            t_appeared = t_pass + t_fail
+            total_pct = (100.0 * t_pass / t_appeared) if t_appeared else 0.0
+            total_avg = avg
+            batch_pass_fail_totals = {
+                'total': t_total,
+                'pass': t_pass,
+                'fail': t_fail,
+                'absent': t_absent,
+                'pct_result': total_pct,
+                'avg_marks': total_avg,
+            }
+
             result.append({
                 'phase_name': phase_name,
                 'subject_name': subj_name,
@@ -5861,6 +6587,8 @@ def _build_detailed_mark_analytics(dept, phase_id=None, subject_id=None, batch_i
                 'avg': avg,
                 'count': len(entries),
                 'batch_avg': batch_avg_sorted,
+                'batch_pass_fail': batch_pass_fail,
+                'batch_pass_fail_totals': batch_pass_fail_totals,
             })
     return result
 
@@ -5928,48 +6656,178 @@ def detailed_mark_analytics_excel(request):
     analytics = _build_detailed_mark_analytics(dept, phase_id, subject_id, batch_id)
     wb = Workbook()
     thin_border = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
-    header_fill = PatternFill(start_color='1e293b', end_color='1e293b', fill_type='solid')
-    header_font = Font(bold=True, color='FFFFFF')
-    sub_header_fill = PatternFill(start_color='334155', end_color='334155', fill_type='solid')
+    header_font_white = Font(bold=True, color='FFFFFF', size=11)
+    header_bottom = Border(
+        left=Side(style='thin'),
+        right=Side(style='thin'),
+        top=Side(style='thin'),
+        bottom=Side(style='medium', color='1E293B'),
+    )
+    center_align = Alignment(horizontal='center', vertical='center', wrap_text=True)
+    peach_fill = PatternFill(start_color='F8CBAD', end_color='F8CBAD', fill_type='solid')
+    yellow_fill = PatternFill(start_color='FFE699', end_color='FFE699', fill_type='solid')
+    zebra_a = PatternFill(start_color='E2E8F0', end_color='E2E8F0', fill_type='solid')
+    zebra_b = PatternFill(start_color='FFFFFF', end_color='FFFFFF', fill_type='solid')
+    summary_label_fill = PatternFill(start_color='EEF2FF', end_color='EEF2FF', fill_type='solid')
+    summary_value_fill = PatternFill(start_color='F8FAFC', end_color='F8FAFC', fill_type='solid')
+    summary_label_font = Font(bold=True, color='3730A3', size=11)
+    summary_value_font = Font(color='0F172A', size=11)
+    top10_header_styles = [
+        ('047857', 'Rank'),
+        ('1D4ED8', 'Roll No'),
+        ('6D28D9', 'Name'),
+        ('C2410C', 'Batch'),
+        ('0E7490', 'Marks'),
+    ]
+    top10_data_fill_a = PatternFill(start_color='F1F5F9', end_color='F1F5F9', fill_type='solid')
+    top10_data_fill_b = PatternFill(start_color='FAFBFC', end_color='FAFBFC', fill_type='solid')
+    batch_avg_header_fills = [
+        PatternFill(start_color='0369A1', end_color='0369A1', fill_type='solid'),
+        PatternFill(start_color='0F766E', end_color='0F766E', fill_type='solid'),
+    ]
+    pf_header_colors = (
+        'CA8A04', 'EA580C', 'DC2626', '9333EA', '4F46E5', '059669', '2563EB', 'BE185D',
+    )
     for idx, block in enumerate(analytics):
         sheet_title = (block['phase_name'] + '_' + block['subject_name']).replace('/', '-')[:31]
         ws = wb.active if idx == 0 else wb.create_sheet(title=sheet_title)
         if idx == 0:
             ws.title = sheet_title
         row = 1
-        for h, v in [('Phase', block['phase_name']), ('Subject', block['subject_name']),
-                     ('Highest', block['highest']), ('Avg', f"{block['avg']:.2f}" if block['avg'] is not None else '-'),
-                     ('Count', block['count'])]:
-            ws.cell(row, 1, h)
-            ws.cell(row, 2, str(v) if v is not None else '-')
+        hi = block['highest']
+        summary_rows = [
+            ('Phase', block['phase_name']),
+            ('Subject', block['subject_name']),
+            ('Highest', f'{hi:.2f}' if hi is not None else '-'),
+            ('Avg', f"{block['avg']:.2f}" if block['avg'] is not None else '-'),
+            ('Count', block['count']),
+        ]
+        for h, v in summary_rows:
+            c1 = ws.cell(row, 1, h)
+            c1.fill = summary_label_fill
+            c1.font = summary_label_font
+            c1.border = thin_border
+            c1.alignment = center_align
+            c2 = ws.cell(row, 2, str(v) if v is not None else '-')
+            c2.fill = summary_value_fill
+            c2.font = summary_value_font
+            c2.border = thin_border
+            c2.alignment = center_align
             row += 1
         row += 1
-        headers = ['Rank', 'Roll No', 'Name', 'Enrollment', 'Batch', 'Marks']
-        for c, h in enumerate(headers, 1):
-            cell = ws.cell(row, c, h)
-            cell.font = header_font
-            cell.fill = header_fill
-            cell.border = thin_border
+        for c, (hex_color, hdr_label) in enumerate(top10_header_styles, 1):
+            cell = ws.cell(row, c, hdr_label)
+            cell.font = header_font_white
+            cell.fill = PatternFill(start_color=hex_color, end_color=hex_color, fill_type='solid')
+            cell.border = header_bottom
+            cell.alignment = center_align
         row += 1
         for i, e in enumerate(block['top_10'], 1):
             s = e['student']
-            enroll = getattr(s, 'enrollment_no', '') or ''
-            for c, v in enumerate([i, s.roll_no, s.name, enroll, e['batch_name'], e['marks']], 1):
-                cell = ws.cell(row, c, str(v) if v is not None else '')
+            values = [i, s.roll_no, s.name, e['batch_name'], e['marks']]
+            data_fill = top10_data_fill_a if i % 2 == 1 else top10_data_fill_b
+            for c, v in enumerate(values, 1):
+                cell = ws.cell(row, c, v)
                 cell.border = thin_border
+                cell.fill = data_fill
+                if c == 5 and v is not None:
+                    cell.value = float(v)
+                    cell.number_format = '0.00'
+                cell.alignment = center_align
             row += 1
         row += 1
         for c, h in enumerate(['Batch', 'Avg Marks'], 1):
             cell = ws.cell(row, c, h)
-            cell.font = header_font
-            cell.fill = sub_header_fill
-            cell.border = thin_border
+            cell.font = header_font_white
+            cell.fill = batch_avg_header_fills[c - 1]
+            cell.border = header_bottom
+            cell.alignment = center_align
         row += 1
-        for b, avg in block['batch_avg']:
-            for c, v in enumerate([b, f"{avg:.2f}"], 1):
-                cell = ws.cell(row, c, str(v) if v is not None else '')
-                cell.border = thin_border
+        for r_i, (b, avg) in enumerate(block['batch_avg']):
+            row_fill = zebra_a if r_i % 2 == 0 else zebra_b
+            cell_b = ws.cell(row, 1, b)
+            cell_b.border = thin_border
+            cell_b.fill = row_fill
+            cell_a = ws.cell(row, 2, float(avg))
+            cell_a.number_format = '0.00'
+            cell_a.border = thin_border
+            cell_a.fill = row_fill
+            cell_b.alignment = center_align
+            cell_a.alignment = center_align
             row += 1
+
+        row += 1
+        pf_cols = 8
+        ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=pf_cols)
+        title_cell = ws.cell(row, 1, f"SUBJECT: {block['subject_name']} {block['phase_name']}")
+        title_cell.font = Font(bold=True, size=12, color='7C2D12')
+        title_cell.fill = PatternFill(start_color='FDBA74', end_color='FDBA74', fill_type='solid')
+        title_cell.alignment = center_align
+        title_cell.border = thin_border
+        row += 1
+        pf_headers = [
+            'Batch', 'Total Students', 'Pass', 'Fail', 'Absent', 'Faculty', '% Result', 'Average Marks',
+        ]
+        for c, h in enumerate(pf_headers, 1):
+            cell = ws.cell(row, c, h)
+            cell.font = header_font_white
+            cell.border = header_bottom
+            cell.alignment = center_align
+            hc = pf_header_colors[c - 1]
+            cell.fill = PatternFill(start_color=hc, end_color=hc, fill_type='solid')
+        row += 1
+        for r_i, br in enumerate(block.get('batch_pass_fail') or []):
+            row_fill = zebra_a if r_i % 2 == 0 else zebra_b
+            vals = [
+                br['batch'],
+                br['total'],
+                br['pass'],
+                br['fail'],
+                br['absent'],
+                br['faculty'],
+                br['pct_result'],
+                br['avg_marks'] if br['avg_marks'] is not None else '-',
+            ]
+            for c, v in enumerate(vals, 1):
+                cell = ws.cell(row, c, v)
+                cell.border = thin_border
+                cell.fill = row_fill
+                cell.alignment = center_align
+                if c in (7,) and isinstance(v, (int, float)):
+                    cell.number_format = '0.00'
+                if c == 8 and isinstance(v, (int, float)):
+                    cell.number_format = '0.00'
+            row += 1
+        tot = block.get('batch_pass_fail_totals') or {}
+        total_vals = [
+            'Total',
+            tot.get('total', 0),
+            tot.get('pass', 0),
+            tot.get('fail', 0),
+            tot.get('absent', 0),
+            '',
+            tot.get('pct_result', 0),
+            tot.get('avg_marks') if tot.get('avg_marks') is not None else '-',
+        ]
+        for c, v in enumerate(total_vals, 1):
+            cell = ws.cell(row, c, v)
+            cell.font = Font(bold=True)
+            cell.fill = peach_fill
+            cell.border = thin_border
+            cell.alignment = center_align
+            if c == 7 and isinstance(v, (int, float)):
+                cell.number_format = '0.00'
+            if c == 8 and isinstance(v, (int, float)):
+                cell.number_format = '0.00'
+        row += 1
+        ws.column_dimensions['A'].width = 10
+        ws.column_dimensions['B'].width = 12
+        ws.column_dimensions['C'].width = 40
+        ws.column_dimensions['D'].width = 10
+        ws.column_dimensions['E'].width = 12
+        ws.column_dimensions['F'].width = 40
+        ws.column_dimensions['G'].width = 12
+        ws.column_dimensions['H'].width = 14
     if not analytics:
         ws = wb.active
         ws.title = 'No Data'
@@ -6007,11 +6865,15 @@ def faculty_marks_report(request):
     faculty = get_faculty_user(request)
     if not faculty:
         return redirect('accounts:logout')
-    dept = faculty.department
+    dept = get_faculty_working_department(request)
+    if not dept:
+        messages.error(request, 'No department context. Use the header switcher or contact admin.')
+        return redirect('core:faculty_dashboard')
+    m_ids = list(faculty_ids_equivalent_for_portal(faculty))
     exam_phases = sort_exam_phases(ExamPhase.objects.filter(department=dept))
     all_subjects = list(Subject.objects.filter(department=dept).order_by('name'))
     batches = list(Batch.objects.filter(
-        id__in=Student.objects.filter(mentor=faculty, department=dept).values_list('batch_id', flat=True).distinct()
+        id__in=Student.objects.filter(mentor_id__in=m_ids, department=dept).values_list('batch_id', flat=True).distinct()
     ).order_by('name'))
     ctx = {'faculty': faculty, 'department': dept, 'exam_phases': exam_phases, 'all_subjects': all_subjects, 'batches': batches, 'is_admin': False}
     return render(request, 'core/admin/marks_report.html', ctx)
@@ -6060,7 +6922,8 @@ def mark_analytics_risk_excel(request):
             for c, val in enumerate(vals, 1):
                 cell = ws.cell(row, c, str(val) if val is not None else '')
                 cell.border = thin_border
-                if c == 7 and val is not None and str(val) != '' and float(val) < 9:
+                mv = normalize_student_mark(val) if c == 7 else None
+                if mv is not None and mv < 9:
                     cell.fill = red_fill
             row += 1
     resp = HttpResponse(content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
@@ -6089,8 +6952,9 @@ def mark_analytics_risk_all_excel(request):
     for item in student_data:
         for ph in item['phase_wise']:
             for s in ph['subjects']:
-                if s.get('marks') is not None:
-                    marks_by_student_phase_subj[item['student'].id][ph['phase_name']][s['name']] = float(s['marks'])
+                mv = normalize_student_mark(s.get('marks'))
+                if mv is not None:
+                    marks_by_student_phase_subj[item['student'].id][ph['phase_name']][s['name']] = mv
     at_risk_ids = set()
     for r in risk_data:
         for entry in r['at_risk']:
@@ -6140,7 +7004,7 @@ def mark_analytics_risk_all_excel(request):
         for ep in selected_phases:
             for subj in phase_subjects.get(ep.name, []):
                 m = marks_by_student_phase_subj[s.id].get(ep.name, {}).get(subj)
-                if m is not None and float(m) < 9:
+                if m is not None and m < 9:
                     cols.append(str(m))
                 else:
                     cols.append('-')
@@ -6148,11 +7012,9 @@ def mark_analytics_risk_all_excel(request):
             cell = ws.cell(row, c, val)
             cell.border = thin_border
             if c >= 6 and val != '-' and val:
-                try:
-                    if float(val) < 9:
-                        cell.fill = red_fill
-                except ValueError:
-                    pass
+                cv = normalize_student_mark(val)
+                if cv is not None and cv < 9:
+                    cell.fill = red_fill
         row += 1
     resp = HttpResponse(content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
     resp['Content-Disposition'] = f'attachment; filename="all_batches_all_students_at_risk_{phase_param or "all"}.xlsx"'
@@ -6171,10 +7033,14 @@ def faculty_mark_analytics_risk_excel(request):
     faculty = get_faculty_user(request)
     if not faculty:
         return redirect('accounts:logout')
-    dept = faculty.department
+    dept = get_faculty_working_department(request)
+    if not dept:
+        messages.error(request, 'No department context.')
+        return redirect('core:faculty_dashboard')
+    m_ids = list(faculty_ids_equivalent_for_portal(faculty))
     subject_name = request.GET.get('subject', '').strip()
     batch_id = request.GET.get('batch_id', 'all')
-    qs = Student.objects.filter(mentor=faculty, department=dept).select_related('batch', 'mentor')
+    qs = Student.objects.filter(mentor_id__in=m_ids, department=dept).select_related('batch', 'mentor')
     if batch_id and batch_id != 'all':
         qs = qs.filter(batch_id=batch_id)
     students = list(qs)
@@ -6207,7 +7073,8 @@ def faculty_mark_analytics_risk_excel(request):
             for c, val in enumerate(vals, 1):
                 cell = ws.cell(row, c, str(val) if val is not None else '')
                 cell.border = thin_border
-                if c == 7 and val is not None and str(val) != '' and float(val) < 9:
+                mv = normalize_student_mark(val) if c == 7 else None
+                if mv is not None and mv < 9:
                     cell.fill = red_fill
             row += 1
     resp = HttpResponse(content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
@@ -6227,9 +7094,13 @@ def faculty_mark_analytics_risk_all_excel(request):
     faculty = get_faculty_user(request)
     if not faculty:
         return redirect('accounts:logout')
-    dept = faculty.department
+    dept = get_faculty_working_department(request)
+    if not dept:
+        messages.error(request, 'No department context.')
+        return redirect('core:faculty_dashboard')
+    m_ids = list(faculty_ids_equivalent_for_portal(faculty))
     phase_param = request.GET.get('phase', 'all')
-    students = list(Student.objects.filter(mentor=faculty, department=dept).select_related('batch', 'mentor'))
+    students = list(Student.objects.filter(mentor_id__in=m_ids, department=dept).select_related('batch', 'mentor'))
     students.sort(key=lambda s: (s.batch.name if s.batch else '', _roll_sort_key(s)))
     student_data = _mark_analytics_build_data_from_students(students, dept)
     risk_data = _mark_analytics_build_risk_data(student_data)
@@ -6240,8 +7111,9 @@ def faculty_mark_analytics_risk_all_excel(request):
     for item in student_data:
         for ph in item['phase_wise']:
             for s in ph['subjects']:
-                if s.get('marks') is not None:
-                    marks_by_student_phase_subj[item['student'].id][ph['phase_name']][s['name']] = float(s['marks'])
+                mv = normalize_student_mark(s.get('marks'))
+                if mv is not None:
+                    marks_by_student_phase_subj[item['student'].id][ph['phase_name']][s['name']] = mv
     at_risk_ids = set()
     for r in risk_data:
         for entry in r['at_risk']:
@@ -6291,7 +7163,7 @@ def faculty_mark_analytics_risk_all_excel(request):
         for ep in selected_phases:
             for subj in phase_subjects.get(ep.name, []):
                 m = marks_by_student_phase_subj[s.id].get(ep.name, {}).get(subj)
-                if m is not None and float(m) < 9:
+                if m is not None and m < 9:
                     cols.append(str(m))
                 else:
                     cols.append('-')
@@ -6299,11 +7171,9 @@ def faculty_mark_analytics_risk_all_excel(request):
             cell = ws.cell(row, c, val)
             cell.border = thin_border
             if c >= 6 and val != '-' and val:
-                try:
-                    if float(val) < 9:
-                        cell.fill = red_fill
-                except ValueError:
-                    pass
+                cv = normalize_student_mark(val)
+                if cv is not None and cv < 9:
+                    cell.fill = red_fill
         row += 1
     resp = HttpResponse(content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
     resp['Content-Disposition'] = f'attachment; filename="all_mentorship_at_risk_{phase_param or "all"}.xlsx"'
@@ -6329,8 +7199,12 @@ def _mark_analytics_report_excel_impl(request, is_admin):
         faculty = get_faculty_user(request)
         if not faculty:
             return redirect('accounts:logout')
-        dept = faculty.department
-        students = Student.objects.filter(mentor=faculty, department=dept).select_related('batch', 'mentor')
+        dept = get_faculty_working_department(request)
+        if not dept:
+            messages.error(request, 'No department context.')
+            return redirect('core:faculty_marks_report')
+        m_ids = list(faculty_ids_equivalent_for_portal(faculty))
+        students = Student.objects.filter(mentor_id__in=m_ids, department=dept).select_related('batch', 'mentor')
     batch_id = request.GET.get('batch_id', 'all')
     if batch_id and batch_id != 'all':
         students = students.filter(batch_id=batch_id)
@@ -6420,7 +7294,7 @@ def _mark_analytics_report_excel_impl(request, is_admin):
                 val = str(m) if m is not None else ''
                 cell = ws.cell(data_row, col, val)
                 cell.border = thin_border
-                if m is not None and float(m) < 9:
+                if m is not None and m < 9:
                     cell.fill = red_fill
                 col += 1
         data_row += 1
@@ -6884,14 +7758,21 @@ def faculty_attendance_entry(request):
     faculty = get_faculty_user(request)
     if not faculty:
         return redirect('accounts:logout')
-    dept = faculty.department
+    dept = get_faculty_working_department(request)
+    if not dept:
+        messages.error(
+            request,
+            'No department is available for your account (period may be closed or access turned off). Contact your HOD or super admin.',
+        )
+        return redirect('core:faculty_dashboard')
     tp = TermPhase.objects.filter(department=dept).first()
+    portal_faculty_ids = list(faculty_ids_equivalent_for_portal(faculty))
 
     def dates_for_faculty():
         if not tp:
             return []
         holidays = get_all_holiday_dates(dept)
-        entries = _effective_slots_for_faculty_on_date(faculty, datetime.now().date())
+        entries = _effective_slots_for_faculty_on_date(faculty, dept, datetime.now().date())
         day_set = {e.day.lower() for e in entries if e.day}
         out = []
         for i in range(1, 5):
@@ -6905,7 +7786,9 @@ def faculty_attendance_entry(request):
                     out.append(cur)
                 cur += timedelta(days=1)
         # Include dates where this faculty is substitute (LectureAdjustment.new_faculty), but not holidays
-        adj_dates = LectureAdjustment.objects.filter(new_faculty=faculty).values_list('date', flat=True).distinct()
+        adj_dates = LectureAdjustment.objects.filter(
+            new_faculty_id__in=portal_faculty_ids
+        ).values_list('date', flat=True).distinct()
         for d in adj_dates:
             if d in holidays:
                 continue
@@ -6916,7 +7799,9 @@ def faculty_attendance_entry(request):
                     out.append(d)
                     break
         # Include dates where this faculty has extra lectures
-        extra_dates = ExtraLecture.objects.filter(faculty=faculty).values_list('date', flat=True).distinct()
+        extra_dates = ExtraLecture.objects.filter(
+            faculty_id__in=portal_faculty_ids
+        ).values_list('date', flat=True).distinct()
         for d in extra_dates:
             if d in holidays:
                 continue
@@ -6955,9 +7840,11 @@ def faculty_attendance_entry(request):
         weekday = selected_date.strftime('%A')
         # Exclude slots where this faculty was original but lecture was adjusted to another faculty
         excluded_by_adj = set(
-            LectureAdjustment.objects.filter(date=selected_date, original_faculty=faculty).values_list('batch_id', 'time_slot')
+            LectureAdjustment.objects.filter(
+                date=selected_date, original_faculty_id__in=portal_faculty_ids
+            ).values_list('batch_id', 'time_slot')
         )
-        faculty_slots = [s for s in _effective_slots_for_faculty_on_date(faculty, selected_date) if s.day == weekday]
+        faculty_slots = [s for s in _effective_slots_for_faculty_on_date(faculty, dept, selected_date) if s.day == weekday]
         for s in sorted(faculty_slots, key=lambda x: x.time_slot or ''):
             if (s.batch_id, s.time_slot) in excluded_by_adj:
                 continue
@@ -6966,7 +7853,9 @@ def faculty_attendance_entry(request):
             slots_by_batch[s.batch].append(s)
         # Add slots where this faculty is substitute (LectureAdjustment) for this date
         existing_pairs = {(b, sl.time_slot) for b, slots in slots_by_batch.items() for sl in slots}
-        for adj in LectureAdjustment.objects.filter(date=selected_date, new_faculty=faculty).select_related('batch', 'new_subject', 'new_faculty'):
+        for adj in LectureAdjustment.objects.filter(
+            date=selected_date, new_faculty_id__in=portal_faculty_ids
+        ).select_related('batch', 'new_subject', 'new_faculty'):
             if (adj.batch, adj.time_slot) in existing_pairs:
                 continue
             if (selected_date, adj.batch_id, adj.time_slot) in cancelled_set:
@@ -6978,7 +7867,9 @@ def faculty_attendance_entry(request):
             })()
             slots_by_batch[adj.batch].append(virtual)
         # Add slots where this faculty has extra lectures
-        for ex in ExtraLecture.objects.filter(date=selected_date, faculty=faculty).select_related('batch', 'subject', 'faculty'):
+        for ex in ExtraLecture.objects.filter(
+            date=selected_date, faculty_id__in=portal_faculty_ids
+        ).select_related('batch', 'subject', 'faculty'):
             if (ex.batch, ex.time_slot) in existing_pairs:
                 continue
             if (selected_date, ex.batch_id, ex.time_slot) in cancelled_set:
@@ -7002,7 +7893,9 @@ def faculty_attendance_entry(request):
     attendance_reasons = defaultdict(lambda: defaultdict(dict))  # batch_id -> lecture_slot -> {roll_no: reason}
     attendance_updated_at = {}  # (batch_id, lecture_slot) -> updated_at
     if selected_date:
-        for a in FacultyAttendance.objects.filter(faculty=faculty, date=selected_date):
+        for a in FacultyAttendance.objects.filter(
+            faculty_id__in=portal_faculty_ids, date=selected_date
+        ):
             attendance_prefill[a.batch.id][a.lecture_slot] = [x.strip() for x in (a.absent_roll_numbers or '').split(',') if x.strip()]
             attendance_updated_at[(a.batch.id, a.lecture_slot)] = a.updated_at
             try:
@@ -7027,11 +7920,11 @@ def faculty_attendance_entry(request):
                 slot.display_subject_name = subj.name if subj else (slot.subject.name if slot.subject else 'N/A')
                 slot.display_faculty_name = fac.short_name if fac else (slot.faculty.short_name if slot.faculty else '—')
 
-    attendance_locked = selected_date and _is_attendance_locked_for_date(selected_date, faculty.department)
+    attendance_locked = selected_date and _is_attendance_locked_for_date(selected_date, dept)
     lock_time_warning = None
     if selected_date and not attendance_locked:
         try:
-            lock = AttendanceLockSetting.objects.filter(department=faculty.department).first()
+            lock = AttendanceLockSetting.objects.filter(department=dept).first()
             if lock and lock.enabled:
                 lock_time_warning = f'{lock.lock_hour:02d}:{lock.lock_minute:02d} IST'
         except OperationalError:
@@ -7064,7 +7957,11 @@ def faculty_attendance_save(request):
     except Exception:
         messages.error(request, 'Invalid date.')
         return redirect('core:faculty_attendance_entry')
-    if _is_attendance_locked_for_date(selected_date, faculty.department):
+    dept = get_faculty_working_department(request)
+    if not dept:
+        messages.error(request, 'No active department context.')
+        return redirect('core:faculty_dashboard')
+    if _is_attendance_locked_for_date(selected_date, dept):
         messages.error(request, 'Attendance is locked for this date. Contact admin to update via Manual Attendance.')
         url = reverse('core:faculty_attendance_entry') + f'?date={date_str}'
         return redirect(url)
@@ -7074,7 +7971,7 @@ def faculty_attendance_save(request):
     if not batch_id:
         messages.error(request, 'Missing data.')
         return redirect('core:faculty_attendance_entry')
-    batch = Batch.objects.filter(pk=batch_id, department=faculty.department).first()
+    batch = Batch.objects.filter(pk=batch_id, department=dept).first()
     if not batch:
         messages.error(request, 'Invalid batch.')
         return redirect('core:faculty_attendance_entry')
@@ -7096,7 +7993,7 @@ def faculty_attendance_save(request):
         }
     )
     sync_faculty_combine_cache_for_attendance(
-        faculty.department, faculty, selected_date, batch, lecture_slot,
+        dept, faculty, selected_date, batch, lecture_slot,
     )
     messages.success(request, 'Attendance saved.')
     url = reverse('core:faculty_attendance_entry') + f'?date={date_str}'
@@ -7206,13 +8103,14 @@ def _faculty_teaching_on_date(dept, faculty, d):
     """Scheduled teaching (incl. adjustments & extra) for this faculty on date; returns (hours, row dicts)."""
     total = 0.0
     rows = []
+    fac_ids = faculty_ids_equivalent_for_portal(faculty)
     for batch in Batch.objects.filter(department=dept).order_by('name'):
         for slot_obj in _dr_slots_for_batch_on_date(dept, batch, d):
             ts = (slot_obj.time_slot or '').strip()
             if not ts:
                 continue
             fac, subj = get_faculty_subject_for_slot(d, batch, ts)
-            if not fac or fac.id != faculty.id:
+            if not fac or fac.id not in fac_ids:
                 continue
             h = _time_slot_duration_hours(ts)
             total += h
@@ -7232,7 +8130,8 @@ def _user_can_faculty_load_report(request):
 def _dr_lecture_count_for_faculty_on_date(dept, faculty, d):
     """Number of real (non-blank) Daily Report lecture rows for this faculty on date."""
     rows = _dr_collect_rows_for_date(dept, d)
-    return sum(1 for r in rows if r['faculty'].id == faculty.id and not r.get('is_blank'))
+    fac_ids = faculty_ids_equivalent_for_portal(faculty)
+    return sum(1 for r in rows if r['faculty'].id in fac_ids and not r.get('is_blank'))
 
 
 def _dates_cumulative_upto_phase_week(dept, end_phase, end_week_1based):
@@ -7272,11 +8171,15 @@ def sync_faculty_combine_cache_for_attendance(dept, faculty, day, batch, lecture
     if (day, batch.id, slot) in cancelled:
         return
     rf, rs = get_faculty_subject_for_slot(day, batch, slot)
-    if not rf or not rs or rf.id != faculty.id:
+    fac_ids = faculty_ids_equivalent_for_portal(faculty)
+    if not rf or not rs or rf.id not in fac_ids:
         return
-    att = FacultyAttendance.objects.filter(
-        date=day, batch=batch, lecture_slot=slot, faculty=faculty,
-    ).first() or FacultyAttendance.objects.filter(date=day, batch=batch, lecture_slot=slot).first()
+    att = (
+        FacultyAttendance.objects.filter(
+            date=day, batch=batch, lecture_slot=slot, faculty_id__in=fac_ids
+        ).first()
+        or FacultyAttendance.objects.filter(date=day, batch=batch, lecture_slot=slot).first()
+    )
     if not att:
         return
     tot = Student.objects.filter(batch=batch).count()
@@ -7289,7 +8192,11 @@ def sync_faculty_combine_cache_for_attendance(dept, faculty, day, batch, lecture
         date=day,
         batch=batch,
         lecture_slot=slot,
-        defaults={'department': dept, 'subject': rs, 'effective_load': eff},
+        defaults={
+            'department': batch.department,
+            'subject': rs,
+            'effective_load': eff,
+        },
     )
 
 
@@ -7304,9 +8211,23 @@ def rebuild_faculty_combine_cache_dept(dept):
 
 
 def _ensure_combine_dr_cache_populated(dept):
-    if FacultyCombineDrCache.objects.filter(department=dept).exists():
+    """Backfill FacultyCombineDrCache when empty or clearly under-filled vs attendance.
+
+    Stale installs often had a few cache rows from sporadic saves while most
+    attendance never synced — the old ``exists()`` guard skipped full rebuild forever.
+    """
+    att_qs = FacultyAttendance.objects.filter(batch__department=dept)
+    if not att_qs.exists():
         return
-    if FacultyAttendance.objects.filter(batch__department=dept).exists():
+    att_count = att_qs.count()
+    cache_count = FacultyCombineDrCache.objects.filter(department=dept).count()
+    if cache_count == 0:
+        rebuild_faculty_combine_cache_dept(dept)
+        return
+    gap = att_count - cache_count
+    # Allow small gaps (cancellations, timetable/attendance mismatch). Rebuild when under-fill is large.
+    threshold = max(5, att_count // 50)
+    if gap >= threshold:
         rebuild_faculty_combine_cache_dept(dept)
 
 
@@ -7360,14 +8281,35 @@ def _build_faculty_dr_weekly_combine_upto(dept, faculty, end_phase, end_week_1ba
 
     _ensure_combine_dr_cache_populated(dept)
 
+    fac_ids = list(faculty_ids_equivalent_for_portal(faculty))
+    if not fac_ids:
+        fac_ids = [faculty.pk]
+
+    # Scope by batch's department (teaching context). Same person may have multiple Faculty PKs
+    # (portal equivalents); cache rows may sit under any of those PKs. Stale cache.department
+    # would drop rows if we filtered only on department=dept.
+    cache_qs = (
+        FacultyCombineDrCache.objects.filter(
+            faculty_id__in=fac_ids,
+            batch__department=dept,
+            date__in=cum_dates_set,
+        )
+        .select_related('batch', 'subject')
+        .order_by('pk')
+    )
+    slot_rows = {}
+    for row in cache_qs:
+        key = (row.date, row.batch_id, row.lecture_slot)
+        if key in slot_rows:
+            continue
+        slot_rows[key] = row
+
     week_trip_counts = defaultdict(lambda: defaultdict(int))
     week_eff_sum = defaultdict(float)
     date_batch_counts = defaultdict(Counter)
     date_totals = defaultdict(int)
 
-    for row in FacultyCombineDrCache.objects.filter(
-        department=dept, faculty=faculty, date__in=cum_dates_set,
-    ).select_related('batch', 'subject'):
+    for row in slot_rows.values():
         wk = date_to_week.get(row.date)
         if wk is None:
             continue
@@ -7438,17 +8380,20 @@ def faculty_doubt_students_data(request):
     faculty = get_faculty_user(request)
     if not faculty:
         return JsonResponse({'error': 'Forbidden'}, status=403)
-    if not faculty_portal_feature_allowed(faculty, 'faculty_doubt_students_data'):
+    if not faculty_portal_feature_allowed(request, 'faculty_doubt_students_data'):
         return JsonResponse({'error': 'Forbidden'}, status=403)
+    dept = get_faculty_working_department(request)
+    if not dept:
+        return JsonResponse({'students': [], 'valid_batch_ids': []})
     batch_ids = [x for x in request.GET.getlist('batch_id') if str(x).strip().isdigit()]
     if not batch_ids:
         return JsonResponse({'students': []})
-    batch_qs = Batch.objects.filter(pk__in=batch_ids, department=faculty.department).order_by('name')
+    batch_qs = Batch.objects.filter(pk__in=batch_ids, department=dept).order_by('name')
     found_ids = set(batch_qs.values_list('pk', flat=True))
     data = []
     for batch in batch_qs:
         studs = (
-            Student.objects.filter(batch=batch, department=faculty.department)
+            Student.objects.filter(batch=batch, department=dept)
             .annotate(roll_no_int=Cast('roll_no', IntegerField()))
             .order_by('roll_no_int', 'roll_no')
         )
@@ -7474,7 +8419,10 @@ def faculty_doubt_solving(request):
     faculty = get_faculty_user(request)
     if not faculty:
         return redirect('accounts:logout')
-    dept = faculty.department
+    dept = get_faculty_working_department(request)
+    if not dept:
+        messages.error(request, 'No department context. Use the header switcher or contact admin.')
+        return redirect('core:faculty_dashboard')
     batches = list(Batch.objects.filter(department=dept).order_by('name'))
 
     if request.method == 'POST':
@@ -7531,8 +8479,9 @@ def faculty_doubt_solving(request):
     batch_ids_get = [x for x in request.GET.getlist('batch_id') if str(x).strip().isdigit()]
     selected_batches = list(Batch.objects.filter(pk__in=batch_ids_get, department=dept).order_by('name'))
 
+    pf_ids = list(faculty_ids_equivalent_for_portal(faculty))
     requests_qs = (
-        FacultyDoubtRequest.objects.filter(faculty=faculty)
+        FacultyDoubtRequest.objects.filter(faculty_id__in=pf_ids)
         .select_related('batch')
         .prefetch_related('batches', 'student_lines__student')
         .order_by('-date', '-start_time', '-pk')
@@ -7564,7 +8513,10 @@ def faculty_dr_load(request):
     faculty = get_faculty_user(request)
     if not faculty:
         return redirect('accounts:logout')
-    dept = faculty.department
+    dept = get_faculty_working_department(request)
+    if not dept:
+        messages.error(request, 'No department context. Use the header switcher or contact admin.')
+        return redirect('core:faculty_dashboard')
     choices = _faculty_upto_week_choices(dept)
     sel_phase, sel_w = 'T1', 1
     upto = (request.GET.get('upto') or '').strip()
@@ -7633,7 +8585,12 @@ def admin_faculty_teaching_ds_load(request):
     if not dept:
         messages.error(request, 'Select a department first.')
         return redirect('core:admin_dashboard')
-    faculties = list(Faculty.objects.filter(department=dept).order_by('full_name'))
+    slot_faculty_pks = ScheduleSlot.objects.filter(department=dept).values_list('faculty_id', flat=True)
+    faculties = list(
+        Faculty.objects.filter(Q(department=dept) | Q(pk__in=slot_faculty_pks))
+        .distinct()
+        .order_by('full_name')
+    )
     selected = None
     raw_fid = request.GET.get('faculty_id')
     if raw_fid and str(raw_fid).isdigit():
@@ -8045,6 +9002,9 @@ def faculty_report_excel(request):
     faculty = get_faculty_user(request)
     if not faculty:
         return redirect('accounts:logout')
+    dept = get_faculty_working_department(request)
+    if not dept:
+        return redirect('core:faculty_dashboard')
     date_str = request.GET.get('date')
     batch_id = request.GET.get('batch_id')
     if not date_str or not batch_id:
@@ -8054,17 +9014,20 @@ def faculty_report_excel(request):
         selected_date = datetime.strptime(date_str, '%Y-%m-%d').date()
     except Exception:
         return redirect('core:faculty_attendance_entry')
-    batch = Batch.objects.filter(pk=batch_id, department=faculty.department).first()
+    batch = Batch.objects.filter(pk=batch_id, department=dept).first()
     if not batch:
         return redirect('core:faculty_attendance_entry')
     weekday = selected_date.strftime('%A')
-    cancelled_set = get_cancelled_lectures_set(faculty.department)
-    all_slots = [s for s in _effective_slots_for_faculty_on_date(faculty, selected_date) if s.batch_id == batch.id and s.day == weekday]
+    cancelled_set = get_cancelled_lectures_set(dept)
+    all_slots = [s for s in _effective_slots_for_faculty_on_date(faculty, dept, selected_date) if s.batch_id == batch.id and s.day == weekday]
     all_slots = sorted(all_slots, key=lambda s: s.time_slot or '')
     slots = [s for s in all_slots if (selected_date, batch.id, s.time_slot) not in cancelled_set]
-    atts = FacultyAttendance.objects.filter(faculty=faculty, date=selected_date, batch=batch).order_by('lecture_slot')
+    pf_ids = faculty_ids_equivalent_for_portal(faculty)
+    atts = FacultyAttendance.objects.filter(
+        faculty_id__in=pf_ids, date=selected_date, batch=batch
+    ).order_by('lecture_slot')
     att_map = {a.lecture_slot: set(x.strip() for x in (a.absent_roll_numbers or '').split(',') if x.strip()) for a in atts}
-    students = list(Student.objects.filter(department=faculty.department, batch=batch).annotate(roll_no_int=Cast('roll_no', IntegerField())).order_by('roll_no_int', 'roll_no'))
+    students = list(Student.objects.filter(department=dept, batch=batch).annotate(roll_no_int=Cast('roll_no', IntegerField())).order_by('roll_no_int', 'roll_no'))
 
     wb = Workbook()
     ws = wb.active
@@ -8105,7 +9068,7 @@ def faculty_report_excel(request):
     for i, slot in enumerate(slots, start=1):
         fac, subj = get_faculty_subject_for_slot(selected_date, batch, slot.time_slot)
         subj_name = subj.name if subj else (slot.subject.name if slot.subject else 'N/A')
-        lect_label = _lecture_label_for_slot(faculty.department, batch, selected_date, slot.time_slot, i)
+        lect_label = _lecture_label_for_slot(dept, batch, selected_date, slot.time_slot, i)
         cell = ws.cell(row=2, column=2 + i, value=f'{lect_label}\n{subj_name}')
         cell.alignment = lect_align
         cell.fill = lect_fill
@@ -8148,22 +9111,26 @@ def faculty_batchwise_attendance_excel(request):
     faculty = get_faculty_user(request)
     if not faculty:
         return redirect('accounts:logout')
+    dept = get_faculty_working_department(request)
+    if not dept:
+        return redirect('core:faculty_dashboard')
     batch_id = request.GET.get('batch')
     if not batch_id:
         messages.error(request, 'Select a batch.')
         return redirect('core:faculty_dashboard')
-    batch = Batch.objects.filter(pk=batch_id, department=faculty.department).first()
+    batch = Batch.objects.filter(pk=batch_id, department=dept).first()
     if not batch:
         messages.error(request, 'Invalid batch.')
         return redirect('core:faculty_dashboard')
+    pf_ids = list(faculty_ids_equivalent_for_portal(faculty))
     # Verify faculty teaches this batch
-    if not ScheduleSlot.objects.filter(faculty=faculty, batch=batch).exists():
+    if not ScheduleSlot.objects.filter(faculty_id__in=pf_ids, batch=batch).exists():
         messages.error(request, 'You do not teach this batch.')
         return redirect('core:faculty_dashboard')
     from datetime import date as date_type
     today = date_type.today()
     atts = FacultyAttendance.objects.filter(
-        faculty=faculty, batch=batch, date__lte=today
+        faculty_id__in=pf_ids, batch=batch, date__lte=today
     ).order_by('date', 'lecture_slot')
     if not atts.exists():
         messages.error(request, f'No attendance marked yet for batch {batch.name}.')
@@ -8187,7 +9154,7 @@ def faculty_batchwise_attendance_excel(request):
         key = (a.date, a.lecture_slot)
         att_map[key] = set(x.strip() for x in (a.absent_roll_numbers or '').split(',') if x.strip())
     students = list(
-        Student.objects.filter(department=faculty.department, batch=batch)
+        Student.objects.filter(department=dept, batch=batch)
         .select_related('mentor')
         .annotate(roll_no_int=Cast('roll_no', IntegerField()))
         .order_by('roll_no_int', 'roll_no')
@@ -8206,7 +9173,7 @@ def faculty_batchwise_attendance_excel(request):
     lect_font = Font(bold=True, color='FFFFFF')
     lect_align = Alignment(horizontal='center', vertical='center', wrap_text=True)
     week_fill = PatternFill(start_color='27AE60', end_color='27AE60', fill_type='solid')  # green for week row
-    date_to_week = _build_date_to_week_map(faculty.department)
+    date_to_week = _build_date_to_week_map(dept)
     wb = Workbook()
     ws = wb.active
     ws.title = (f'{batch.name} Attendance')[:31]
@@ -8263,7 +9230,7 @@ def faculty_batchwise_attendance_excel(request):
     for d, slots, start_col, end_col in col_ranges:
         for i, (slot, subj_name) in enumerate(slots):
             c = start_col + i
-            lect_label = _lecture_label_for_slot(faculty.department, batch, d, slot, i + 1)
+            lect_label = _lecture_label_for_slot(dept, batch, d, slot, i + 1)
             cell = ws.cell(row=3, column=c, value=f'{lect_label}\n{subj_name}')
             cell.alignment = lect_align
             cell.fill = lect_fill
@@ -8625,21 +9592,26 @@ def admin_manual_attendance(request):
                     selected_faculty = faculties_for_date.first() if faculties_for_date else None
 
     faculty = selected_faculty
+    portal_faculty_ids = list(faculty_ids_equivalent_for_portal(faculty)) if faculty else []
     slots_by_batch = defaultdict(list)
     if selected_date and faculty:
         cancelled_set = get_cancelled_lectures_set(dept)
         weekday = selected_date.strftime('%A')
         excluded_by_adj = set(
-            LectureAdjustment.objects.filter(date=selected_date, original_faculty=faculty).values_list('batch_id', 'time_slot')
+            LectureAdjustment.objects.filter(
+                date=selected_date, original_faculty_id__in=portal_faculty_ids
+            ).values_list('batch_id', 'time_slot')
         )
-        faculty_slots = [s for s in _effective_slots_for_faculty_on_date(faculty, selected_date) if s.day == weekday]
+        faculty_slots = [s for s in _effective_slots_for_faculty_on_date(faculty, dept, selected_date) if s.day == weekday]
         for s in sorted(faculty_slots, key=lambda x: x.time_slot or ''):
             if (s.batch_id, s.time_slot) in excluded_by_adj:
                 continue
             if (selected_date, s.batch_id, s.time_slot) in cancelled_set:
                 continue
             slots_by_batch[s.batch].append(s)
-        for adj in LectureAdjustment.objects.filter(date=selected_date, new_faculty=faculty).select_related('batch', 'new_subject', 'new_faculty'):
+        for adj in LectureAdjustment.objects.filter(
+            date=selected_date, new_faculty_id__in=portal_faculty_ids
+        ).select_related('batch', 'new_subject', 'new_faculty'):
             existing_pairs = {(b, sl.time_slot) for b, slots in slots_by_batch.items() for sl in slots}
             if (adj.batch, adj.time_slot) in existing_pairs:
                 continue
@@ -8650,7 +9622,9 @@ def admin_manual_attendance(request):
                 'subject': adj.new_subject, 'faculty': adj.new_faculty,
             })()
             slots_by_batch[adj.batch].append(virtual)
-        for ex in ExtraLecture.objects.filter(date=selected_date, faculty=faculty).select_related('batch', 'subject', 'faculty'):
+        for ex in ExtraLecture.objects.filter(
+            date=selected_date, faculty_id__in=portal_faculty_ids
+        ).select_related('batch', 'subject', 'faculty'):
             existing_pairs = {(b, sl.time_slot) for b, slots in slots_by_batch.items() for sl in slots}
             if (ex.batch, ex.time_slot) in existing_pairs:
                 continue
@@ -8673,7 +9647,9 @@ def admin_manual_attendance(request):
     attendance_reasons = {}  # (batch_id, lecture_slot) -> {roll_no: reason}
     attendance_updated_at = {}
     if selected_date and faculty:
-        for a in FacultyAttendance.objects.filter(faculty=faculty, date=selected_date):
+        for a in FacultyAttendance.objects.filter(
+            faculty_id__in=portal_faculty_ids, date=selected_date
+        ):
             attendance_prefill[a.batch.id][a.lecture_slot] = [x.strip() for x in (a.absent_roll_numbers or '').split(',') if x.strip()]
             attendance_updated_at[(a.batch.id, a.lecture_slot)] = a.updated_at
             try:
@@ -8752,8 +9728,8 @@ def admin_manual_attendance_save(request):
     if not faculty_id or not batch_id or not date_str:
         messages.error(request, 'Missing data.')
         return redirect('core:admin_manual_attendance')
-    faculty = Faculty.objects.filter(pk=faculty_id, department=dept).first()
-    if not faculty:
+    faculty = Faculty.objects.filter(pk=faculty_id).first()
+    if not faculty or not faculty_has_department_access(faculty, dept):
         messages.error(request, 'Invalid faculty.')
         return redirect('core:admin_manual_attendance')
     try:
@@ -8804,8 +9780,8 @@ def admin_manual_attendance_excel(request):
     if not date_str or not batch_id or not faculty_id:
         messages.error(request, 'Select date, faculty and batch.')
         return redirect('core:admin_manual_attendance')
-    faculty = Faculty.objects.filter(pk=faculty_id, department=dept).first()
-    if not faculty:
+    faculty = Faculty.objects.filter(pk=faculty_id).first()
+    if not faculty or not faculty_has_department_access(faculty, dept):
         return redirect('core:admin_manual_attendance')
     try:
         selected_date = datetime.strptime(date_str, '%Y-%m-%d').date()
@@ -8823,9 +9799,12 @@ def admin_manual_attendance_excel(request):
         return redirect('core:admin_manual_attendance')
     weekday = selected_date.strftime('%A')
     cancelled_set = get_cancelled_lectures_set(dept)
-    all_slots = [s for s in _effective_slots_for_faculty_on_date(faculty, selected_date) if s.batch_id == batch.id and s.day == weekday]
+    all_slots = [s for s in _effective_slots_for_faculty_on_date(faculty, dept, selected_date) if s.batch_id == batch.id and s.day == weekday]
     seen_slots = {s.time_slot for s in all_slots if s.time_slot}
-    for ex in ExtraLecture.objects.filter(date=selected_date, faculty=faculty, batch=batch).select_related('subject', 'faculty'):
+    adm_pf = list(faculty_ids_equivalent_for_portal(faculty))
+    for ex in ExtraLecture.objects.filter(
+        date=selected_date, faculty_id__in=adm_pf, batch=batch
+    ).select_related('subject', 'faculty'):
         if (selected_date, batch.id, ex.time_slot) in cancelled_set or ex.time_slot in seen_slots:
             continue
         seen_slots.add(ex.time_slot)
@@ -8833,7 +9812,9 @@ def admin_manual_attendance_excel(request):
         all_slots.append(virtual)
     all_slots = sorted(all_slots, key=lambda s: s.time_slot or '')
     slots = [s for s in all_slots if (selected_date, batch.id, s.time_slot) not in cancelled_set]
-    atts = FacultyAttendance.objects.filter(faculty=faculty, date=selected_date, batch=batch).order_by('lecture_slot')
+    atts = FacultyAttendance.objects.filter(
+        faculty_id__in=adm_pf, date=selected_date, batch=batch
+    ).order_by('lecture_slot')
     att_map = {a.lecture_slot: set(x.strip() for x in (a.absent_roll_numbers or '').split(',') if x.strip()) for a in atts}
     students = list(Student.objects.filter(department=dept, batch=batch).annotate(roll_no_int=Cast('roll_no', IntegerField())).order_by('roll_no_int', 'roll_no'))
 
@@ -8907,9 +9888,13 @@ def faculty_mentorship(request):
     faculty = get_faculty_user(request)
     if not faculty:
         return redirect('accounts:logout')
-    dept = faculty.department
+    dept = get_faculty_working_department(request)
+    if not dept:
+        messages.error(request, 'No department context. Use the header switcher or contact admin.')
+        return redirect('core:faculty_dashboard')
+    m_ids = list(faculty_ids_equivalent_for_portal(faculty))
     mentorship_students = list(
-        Student.objects.filter(mentor=faculty, department=dept)
+        Student.objects.filter(mentor_id__in=m_ids, department=dept)
         .select_related('batch')
         .annotate(roll_no_int=Cast('roll_no', IntegerField()))
         .order_by('batch__name', 'roll_no_int', 'roll_no')
@@ -9293,12 +10278,15 @@ def _exam_admin_require(request):
 
 def _exam_admin_manage_department(request):
     """Department for exam-admin marks / phases UI; stored in session when chosen."""
+    from core.semester_scope import departments_for_institute_semester, get_active_institute_semester
+
     if not user_can_exam_admin(request):
         return None
+    allowed = departments_for_institute_semester(get_active_institute_semester(request))
     raw = request.GET.get('dept_id') or request.POST.get('dept_id')
     if raw:
         try:
-            d = Department.objects.filter(pk=int(raw)).first()
+            d = allowed.filter(pk=int(raw)).first()
             if d:
                 request.session['exam_admin_manage_dept_id'] = d.id
                 return d
@@ -9306,7 +10294,7 @@ def _exam_admin_manage_department(request):
             pass
     sid = request.session.get('exam_admin_manage_dept_id')
     if sid:
-        return Department.objects.filter(pk=sid).first()
+        return allowed.filter(pk=sid).first()
     return None
 
 
@@ -9315,7 +10303,11 @@ def exam_admin_exam_phases_list(request):
     """Exam admin: list/add/delete exam phases for one selected department (dept-wise)."""
     if not user_can_exam_admin(request):
         return redirect('accounts:role_redirect')
-    all_departments = list(Department.objects.all().order_by('name'))
+    from core.semester_scope import departments_for_institute_semester, get_active_institute_semester
+
+    all_departments = list(
+        departments_for_institute_semester(get_active_institute_semester(request)).order_by('name')
+    )
     dept = _exam_admin_manage_department(request)
 
     if request.method == 'POST' and request.POST.get('action') == 'add_phase':
@@ -9439,8 +10431,11 @@ def exam_admin_exam_phase_upload_marks(request):
     if request.method != 'POST' or not user_can_exam_admin(request):
         return redirect('core:exam_admin_exam_phases_list')
     dept_id = request.POST.get('dept_id')
+    from core.semester_scope import departments_for_institute_semester, get_active_institute_semester
+
+    allowed = departments_for_institute_semester(get_active_institute_semester(request))
     try:
-        dept = Department.objects.filter(pk=int(dept_id)).first() if dept_id else None
+        dept = allowed.filter(pk=int(dept_id)).first() if dept_id else None
     except (TypeError, ValueError):
         dept = None
     if not dept:
@@ -9508,10 +10503,7 @@ def exam_admin_exam_phase_upload_marks(request):
         if not enroll_str or not enroll_str.isdigit():
             continue
         marks_val = row[marks_col] if marks_col < len(row) else None
-        try:
-            marks_decimal = float(marks_val) if marks_val is not None else None
-        except (TypeError, ValueError):
-            marks_decimal = None
+        marks_decimal = normalize_student_mark(marks_val)
 
         student = students_by_enrollment.get(enroll_str)
         if not student:
@@ -9536,7 +10528,11 @@ def exam_admin_dashboard(request):
     if not user_can_exam_admin(request):
         messages.error(request, 'Access denied.')
         return redirect('accounts:role_redirect')
-    all_departments = list(Department.objects.all().order_by('name'))
+    from core.semester_scope import departments_for_institute_semester, get_active_institute_semester
+
+    all_departments = list(
+        departments_for_institute_semester(get_active_institute_semester(request)).order_by('name')
+    )
     depts = exam_admin_analytics.selected_departments(request)
     ids_param = exam_admin_analytics.parse_department_ids(request)
     if ids_param is None:
@@ -9594,7 +10590,11 @@ def exam_admin_mark_analytics(request):
     batches = exam_admin_analytics.batches_for_departments(depts)
     phase_names = exam_admin_analytics.all_phase_names(depts)
     excel_q = exam_admin_analytics.dept_ids_query_param(depts)
-    all_departments = list(Department.objects.all().order_by('name'))
+    from core.semester_scope import departments_for_institute_semester, get_active_institute_semester
+
+    all_departments = list(
+        departments_for_institute_semester(get_active_institute_semester(request)).order_by('name')
+    )
     ids_param = exam_admin_analytics.parse_department_ids(request)
     if ids_param is None:
         selected_id_set = {d.id for d in all_departments}

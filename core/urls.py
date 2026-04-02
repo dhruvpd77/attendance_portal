@@ -1,4 +1,8 @@
 from django.urls import path
+from . import dr_facilities_views
+from . import exam_coordination_views
+from . import paper_duty_views
+from . import section_credit_views
 from . import views
 
 app_name = 'core'
@@ -11,6 +15,7 @@ urlpatterns = [
     path('admin-dashboard/', views.admin_dashboard, name='admin_dashboard'),
     path('admin/analytics/', views.admin_analytics_dashboard, name='admin_analytics_dashboard'),
     path('admin/analytics/at-risk-excel/', views.admin_analytics_at_risk_excel, name='admin_analytics_at_risk_excel'),
+    path('admin/institute-semesters/', views.admin_institute_semester_list, name='admin_semester_list'),
     path('admin/departments/', views.department_list, name='department_list'),
     path('admin/departments/add/', views.department_add, name='department_add'),
     path('admin/departments/<int:pk>/edit/', views.department_edit, name='department_edit'),
@@ -35,8 +40,15 @@ urlpatterns = [
     path('admin/subjects/add/', views.subject_add, name='subject_add'),
     path('admin/subjects/<int:pk>/edit/', views.subject_edit, name='subject_edit'),
     path('admin/subjects/<int:pk>/delete/', views.subject_delete, name='subject_delete'),
+    path('admin/subjects/merge/', views.subject_merge, name='subject_merge'),
     path('admin/faculties/', views.faculty_list, name='faculty_list'),
     path('admin/faculties/add/', views.faculty_add, name='faculty_add'),
+    path('admin/faculties/upload-excel/', views.faculty_upload_excel, name='faculty_upload_excel'),
+    path(
+        'admin/faculties/upload-excel/template/',
+        views.faculty_upload_excel_template,
+        name='faculty_upload_excel_template',
+    ),
     path('admin/faculties/<int:pk>/edit/', views.faculty_edit, name='faculty_edit'),
     path('admin/faculties/<int:pk>/delete/', views.faculty_delete, name='faculty_delete'),
     path('admin/generate-credentials/', views.generate_credentials_choice, name='generate_credentials_choice'),
@@ -85,6 +97,7 @@ urlpatterns = [
     path('admin/batchwise-attendance/excel/', views.admin_batchwise_attendance_excel, name='admin_batchwise_attendance_excel'),
     path('admin/notifications/', views.admin_notifications, name='admin_notifications'),
     path('admin/performance-students/', views.admin_performance_students, name='admin_performance_students'),
+    path('admin/exam-management/', views.admin_exam_management, name='admin_exam_management'),
     path('admin/faculty-portal-management/', views.admin_faculty_portal_management, name='admin_faculty_portal_management'),
     path('admin/student-analytics/', views.student_analytics, name='admin_student_analytics'),
     path('admin/mark-analytics/', views.mark_analytics, name='admin_mark_analytics'),
@@ -112,8 +125,277 @@ urlpatterns = [
     path('exam-admin/excel/risk/', views.exam_admin_excel_risk, name='exam_admin_excel_risk'),
     path('exam-admin/excel/top10/', views.exam_admin_excel_top10, name='exam_admin_excel_top10'),
 
+    # Exam section & department supervision coordination
+    path('exam-section/', exam_coordination_views.exam_section_dashboard, name='exam_section_dashboard'),
+    path(
+        'exam-section/working-semesters/',
+        exam_coordination_views.exam_section_working_semesters,
+        name='exam_section_working_semesters',
+    ),
+    path('exam-section/create-coordinator/', exam_coordination_views.exam_section_create_coordinator, name='exam_section_create_coordinator'),
+    path('exam-section/create-operator/', exam_coordination_views.exam_section_create_operator, name='exam_section_create_operator'),
+    path('exam-section/delete-coordinator/', exam_coordination_views.exam_section_delete_coordinator, name='exam_section_delete_coordinator'),
+    path('exam-section/delete-operator/', exam_coordination_views.exam_section_delete_operator, name='exam_section_delete_operator'),
+    path(
+        'exam-section/coordinators/profile/<int:profile_id>/edit/',
+        exam_coordination_views.exam_section_edit_coordinator,
+        name='exam_section_edit_coordinator',
+    ),
+    path('exam-section/operators/<int:user_id>/edit/', exam_coordination_views.exam_section_edit_operator, name='exam_section_edit_operator'),
+    path(
+        'exam-section/daily-dr.xlsx',
+        exam_coordination_views.exam_section_daily_dr_excel,
+        name='exam_section_daily_dr_excel',
+    ),
+    path(
+        'exam-section/credit-analytics/',
+        exam_coordination_views.exam_section_credit_analytics,
+        name='exam_section_credit_analytics',
+    ),
+    path(
+        'exam-section/credit-analytics.xlsx',
+        exam_coordination_views.exam_section_credit_analytics_excel,
+        name='exam_section_credit_analytics_excel',
+    ),
+    path(
+        'exam-section/supervision-credits/',
+        exam_coordination_views.exam_section_supervision_credit_analytics,
+        name='exam_section_supervision_credit_analytics',
+    ),
+    path(
+        'exam-section/supervision-credits.xlsx',
+        exam_coordination_views.exam_section_supervision_credit_analytics_excel,
+        name='exam_section_supervision_credit_analytics_excel',
+    ),
+    path('exam-dr/facilities/', dr_facilities_views.dr_facilities_dashboard, name='dr_facilities_dashboard'),
+    path(
+        'exam-dr/facilities/export/dept.xlsx',
+        dr_facilities_views.dr_facilities_export_department,
+        name='dr_facilities_export_department',
+    ),
+    path(
+        'exam-dr/facilities/export/faculty.xlsx',
+        dr_facilities_views.dr_facilities_export_faculty,
+        name='dr_facilities_export_faculty',
+    ),
+    path('exam-dr/paper-checking/', paper_duty_views.paper_checking_dashboard, name='paper_checking_dashboard'),
+    path('exam-dr/paper-checking/phases/add/', paper_duty_views.paper_checking_phase_add, name='paper_checking_phase_add'),
+    path(
+        'exam-dr/paper-checking/phases/<int:phase_id>/rename/',
+        paper_duty_views.paper_checking_phase_rename,
+        name='paper_checking_phase_rename',
+    ),
+    path(
+        'exam-dr/paper-checking/phases/<int:phase_id>/delete/',
+        paper_duty_views.paper_checking_phase_delete,
+        name='paper_checking_phase_delete',
+    ),
+    path(
+        'exam-dr/paper-checking/phases/<int:phase_id>/',
+        paper_duty_views.paper_checking_phase_detail,
+        name='paper_checking_phase_detail',
+    ),
+    path(
+        'exam-dr/paper-checking/phases/<int:phase_id>/upload/',
+        paper_duty_views.paper_checking_phase_upload,
+        name='paper_checking_phase_upload',
+    ),
+    path(
+        'exam-dr/paper-checking/phases/<int:phase_id>/commit/',
+        paper_duty_views.paper_checking_phase_commit,
+        name='paper_checking_phase_commit',
+    ),
+    path(
+        'exam-dr/paper-checking/phases/<int:phase_id>/discard-staging/',
+        paper_duty_views.paper_checking_phase_discard_staging,
+        name='paper_checking_phase_discard_staging',
+    ),
+    path(
+        'exam-dr/paper-checking/phases/<int:phase_id>/clear/',
+        paper_duty_views.paper_checking_phase_clear,
+        name='paper_checking_phase_clear',
+    ),
+    path(
+        'exam-dr/paper-checking/completion/<int:pk>/approve/',
+        paper_duty_views.paper_checking_child_approve_completion,
+        name='paper_checking_child_approve_completion',
+    ),
+    path(
+        'exam-dr/paper-checking/completion/<int:pk>/dismiss/',
+        paper_duty_views.paper_checking_child_dismiss_completion,
+        name='paper_checking_child_dismiss_completion',
+    ),
+    path(
+        'exam-dr/paper-checking/adjustment/save/',
+        paper_duty_views.paper_checking_child_save_adjustment,
+        name='paper_checking_child_save_adjustment',
+    ),
+    path(
+        'exam-dr/paper-checking/phases/<int:phase_id>/subject-credits/',
+        paper_duty_views.paper_checking_phase_subject_credits_save,
+        name='paper_checking_phase_subject_credits_save',
+    ),
+    path('exam-dr/paper-setting/', paper_duty_views.paper_setting_dashboard, name='paper_setting_dashboard'),
+    path('exam-dr/paper-setting/phases/add/', paper_duty_views.paper_setting_phase_add, name='paper_setting_phase_add'),
+    path(
+        'exam-dr/paper-setting/phases/<int:phase_id>/rename/',
+        paper_duty_views.paper_setting_phase_rename,
+        name='paper_setting_phase_rename',
+    ),
+    path(
+        'exam-dr/paper-setting/phases/<int:phase_id>/delete/',
+        paper_duty_views.paper_setting_phase_delete,
+        name='paper_setting_phase_delete',
+    ),
+    path(
+        'exam-dr/paper-setting/phases/<int:phase_id>/',
+        paper_duty_views.paper_setting_phase_detail,
+        name='paper_setting_phase_detail',
+    ),
+    path(
+        'exam-dr/paper-setting/phases/<int:phase_id>/upload/',
+        paper_duty_views.paper_setting_phase_upload,
+        name='paper_setting_phase_upload',
+    ),
+    path(
+        'exam-dr/paper-setting/phases/<int:phase_id>/commit/',
+        paper_duty_views.paper_setting_phase_commit,
+        name='paper_setting_phase_commit',
+    ),
+    path(
+        'exam-dr/paper-setting/phases/<int:phase_id>/discard-staging/',
+        paper_duty_views.paper_setting_phase_discard_staging,
+        name='paper_setting_phase_discard_staging',
+    ),
+    path(
+        'exam-dr/paper-setting/phases/<int:phase_id>/clear/',
+        paper_duty_views.paper_setting_phase_clear,
+        name='paper_setting_phase_clear',
+    ),
+    path(
+        'exam-dr/paper-setting/completion/<int:pk>/approve/',
+        paper_duty_views.paper_setting_completion_approve,
+        name='paper_setting_completion_approve',
+    ),
+    path(
+        'exam-dr/paper-setting/completion/<int:pk>/dismiss/',
+        paper_duty_views.paper_setting_completion_dismiss,
+        name='paper_setting_completion_dismiss',
+    ),
+    path(
+        'exam-dr/credit-settings/',
+        paper_duty_views.exam_credit_settings,
+        name='exam_credit_settings',
+    ),
+    path(
+        'exam-dr/section-credit-report/',
+        section_credit_views.section_credit_report,
+        name='section_credit_report',
+    ),
+    path(
+        'exam-dr/section-credit-report/export.xlsx',
+        section_credit_views.section_credit_report_excel,
+        name='section_credit_report_excel',
+    ),
+    path(
+        'exam-dr/overall-faculty-report/',
+        section_credit_views.overall_faculty_report,
+        name='overall_faculty_report',
+    ),
+    path(
+        'exam-dr/overall-faculty-report/export.xlsx',
+        section_credit_views.overall_faculty_report_excel,
+        name='overall_faculty_report_excel',
+    ),
+    path(
+        'exam-dept/select-context/',
+        exam_coordination_views.dept_exam_select_context,
+        name='dept_exam_select_context',
+    ),
+    path(
+        'exam-dept/select-child-context/',
+        exam_coordination_views.dept_exam_child_select_context,
+        name='dept_exam_child_select_context',
+    ),
+    path('exam-dept/', exam_coordination_views.dept_exam_dashboard, name='dept_exam_dashboard'),
+    path('exam-dept/link-department/', exam_coordination_views.dept_exam_link_department, name='dept_exam_link_department'),
+    path('exam-dept/phases/add/', exam_coordination_views.dept_exam_phase_add, name='dept_exam_phase_add'),
+    path(
+        'exam-dept/phases/<int:phase_id>/rename/',
+        exam_coordination_views.dept_exam_phase_rename,
+        name='dept_exam_phase_rename',
+    ),
+    path(
+        'exam-dept/phases/<int:phase_id>/delete/',
+        exam_coordination_views.dept_exam_phase_delete,
+        name='dept_exam_phase_delete',
+    ),
+    path('exam-dept/phases/<int:phase_id>/', exam_coordination_views.dept_exam_phase_detail, name='dept_exam_phase_detail'),
+    path('exam-dept/phases/<int:phase_id>/upload/', exam_coordination_views.dept_exam_phase_upload, name='dept_exam_phase_upload'),
+    path(
+        'exam-dept/phases/<int:phase_id>/commit-import/',
+        exam_coordination_views.dept_exam_phase_commit_import,
+        name='dept_exam_phase_commit_import',
+    ),
+    path(
+        'exam-dept/phases/<int:phase_id>/discard-import/',
+        exam_coordination_views.dept_exam_phase_discard_import,
+        name='dept_exam_phase_discard_import',
+    ),
+    path(
+        'exam-dept/phases/<int:phase_id>/create-faculty-assign/',
+        exam_coordination_views.dept_exam_phase_create_faculty_assign,
+        name='dept_exam_phase_create_faculty_assign',
+    ),
+    path(
+        'exam-dept/phases/<int:phase_id>/clear-duties/',
+        exam_coordination_views.dept_exam_phase_clear_duties,
+        name='dept_exam_phase_clear_duties',
+    ),
+    path('exam-dept/child-accounts/add/', exam_coordination_views.dept_exam_child_create, name='dept_exam_child_create'),
+    path(
+        'exam-dept/hub/invite-coordinator/',
+        exam_coordination_views.dept_exam_hub_invite_coordinator,
+        name='dept_exam_hub_invite_coordinator',
+    ),
+    path('exam-dept/child-accounts/<int:child_profile_id>/edit/', exam_coordination_views.dept_exam_child_edit, name='dept_exam_child_edit'),
+    path('exam-dept/child-accounts/<int:child_profile_id>/delete/', exam_coordination_views.dept_exam_child_delete, name='dept_exam_child_delete'),
+    path('exam-dept/dr-report.xlsx', exam_coordination_views.dept_exam_dr_report_excel, name='dept_exam_dr_report_excel'),
+    path(
+        'exam-dept/daily-dr-exam.xlsx',
+        exam_coordination_views.dept_exam_daily_dr_excel,
+        name='dept_exam_daily_dr_excel',
+    ),
+    path(
+        'exam-dept/credit-analytics/',
+        exam_coordination_views.dept_exam_credit_analytics,
+        name='dept_exam_credit_analytics',
+    ),
+    path(
+        'exam-dept/credit-analytics.xlsx',
+        exam_coordination_views.dept_exam_credit_analytics_excel,
+        name='dept_exam_credit_analytics_excel',
+    ),
+    path(
+        'exam-dept/supervision-credits/',
+        exam_coordination_views.dept_exam_supervision_credit_analytics,
+        name='dept_exam_supervision_credit_analytics',
+    ),
+    path(
+        'exam-dept/supervision-credits.xlsx',
+        exam_coordination_views.dept_exam_supervision_credit_analytics_excel,
+        name='dept_exam_supervision_credit_analytics_excel',
+    ),
+    path('exam-dept/proxy-supervision/', exam_coordination_views.dept_exam_proxy_supervision, name='dept_exam_proxy_supervision'),
+    path(
+        'exam-dept/bulk-complete-all/',
+        exam_coordination_views.dept_exam_child_bulk_complete_all,
+        name='dept_exam_child_bulk_complete_all',
+    ),
+
     # Faculty
     path('faculty-dashboard/', views.faculty_dashboard, name='faculty_dashboard'),
+    path('faculty/select-department/', views.faculty_select_department, name='faculty_select_department'),
     path('faculty/attendance/', views.faculty_attendance_entry, name='faculty_attendance_entry'),
     path('faculty/doubt-solving/', views.faculty_doubt_solving, name='faculty_doubt_solving'),
     path('faculty/dr-load/', views.faculty_dr_load, name='faculty_dr_load'),
@@ -129,6 +411,37 @@ urlpatterns = [
     path('faculty/mark-analytics/risk-all-excel/', views.faculty_mark_analytics_risk_all_excel, name='faculty_mark_analytics_risk_all_excel'),
     path('faculty/mark-analytics/report-excel/', views.faculty_mark_analytics_report_excel, name='faculty_mark_analytics_report_excel'),
     path('faculty/student-marksheet/', views.faculty_student_marksheet, name='faculty_student_marksheet'),
+    path('faculty/supervision-duties/', exam_coordination_views.faculty_supervision_duties, name='faculty_supervision_duties'),
+    path(
+        'faculty/supervision-duties/history/',
+        exam_coordination_views.faculty_exam_history_duties,
+        name='faculty_exam_history_duties',
+    ),
+    path(
+        'faculty/exam-credits/',
+        exam_coordination_views.faculty_exam_credits_analytics,
+        name='faculty_exam_credits_analytics',
+    ),
+    path(
+        'faculty/exam-credits/history/',
+        exam_coordination_views.faculty_exam_history_credits_analytics,
+        name='faculty_exam_history_credits_analytics',
+    ),
+    path(
+        'faculty/supervision-duties/complete/',
+        exam_coordination_views.faculty_supervision_duty_complete,
+        name='faculty_supervision_duty_complete',
+    ),
+    path(
+        'faculty/paper-checking/completion-request/',
+        exam_coordination_views.faculty_paper_checking_completion_request,
+        name='faculty_paper_checking_completion_request',
+    ),
+    path(
+        'faculty/paper-setting/completion-request/',
+        exam_coordination_views.faculty_paper_setting_completion_request,
+        name='faculty_paper_setting_completion_request',
+    ),
 
     # Student
     path('student-dashboard/', views.student_dashboard, name='student_dashboard'),

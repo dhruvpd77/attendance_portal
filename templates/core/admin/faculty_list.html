@@ -13,6 +13,9 @@
     <div class="d-flex gap-2 flex-wrap">
         <a href="{% url 'core:admin_dashboard' %}" class="btn btn-outline-light btn-sm"><i class="fas fa-arrow-left me-1"></i> Dashboard</a>
         <a href="{% url 'core:generate_credentials_choice' %}" class="btn btn-success btn-sm"><i class="fas fa-key me-1"></i> Generate credentials</a>
+        {% if department %}
+        <a href="{% url 'core:faculty_upload_excel' %}" class="btn btn-outline-light btn-sm"><i class="fas fa-file-excel me-1"></i> Upload Excel</a>
+        {% endif %}
         <a href="{% url 'core:faculty_add' %}" class="btn btn-primary-app btn-sm"><i class="fas fa-plus me-1"></i> Add</a>
     </div>
 </div>

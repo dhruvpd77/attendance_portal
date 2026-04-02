@@ -1,0 +1,293 @@
+{% extends 'core/exam_portal_base.html' %}
+{% block title %}Supervision — {{ user.username }}{% endblock %}
+{% block content %}
+<div class="exam-portal-hero mb-4 align-items-start">
+    <div class="flex-grow-1" style="min-width: min(100%, 280px);">
+        <p class="mb-2"><span class="ea-badge-dept">{{ profile.department.name }}</span></p>
+        <h1 class="page-title">Department coordination</h1>
+        <p class="page-subtitle mb-0">
+            Supervision uploads, paper checking &amp; setting for your department — same visual style as the faculty portal and hub.
+        </p>
+    </div>
+    <div class="d-flex flex-wrap gap-2 align-items-start">
+        <a href="{% url 'core:paper_checking_dashboard' %}" class="btn btn-success btn-sm rounded-pill px-3"><i class="fas fa-check-double me-1"></i>Paper checking</a>
+        <a href="{% url 'core:paper_setting_dashboard' %}" class="btn btn-warning text-dark btn-sm rounded-pill px-3"><i class="fas fa-pen-fancy me-1"></i>Paper setting</a>
+        <a href="{% url 'core:dept_exam_credit_analytics' %}" class="btn btn-primary-app btn-sm rounded-pill px-3"><i class="fas fa-chart-line me-1"></i>Paper-check credits</a>
+        <a href="{% url 'core:dept_exam_supervision_credit_analytics' %}" class="btn btn-outline-light btn-sm rounded-pill px-3 border-secondary"><i class="fas fa-user-check me-1"></i>Supervision credits</a>
+        <a href="{% url 'core:dr_facilities_dashboard' %}" class="btn btn-outline-light btn-sm rounded-pill px-3 border-secondary"><i class="fas fa-table-list me-1"></i>DR facilities</a>
+        <a href="{% url 'core:exam_credit_settings' %}" class="btn btn-outline-warning btn-sm rounded-pill px-3 border-secondary text-dark"><i class="fas fa-sliders me-1"></i>Credit settings</a>
+        <a href="{% url 'core:section_credit_report' %}" class="btn btn-outline-primary btn-sm rounded-pill px-3"><i class="fas fa-file-invoice-dollar me-1"></i>Section credit &amp; pay</a>
+    </div>
+</div>
+
+{% include 'core/exam_dept/_semester_context_switcher.html' with profiles=coord_parent_profiles active_profile=profile post_url='core:dept_exam_select_context' %}
+
+<div class="card card-app mb-4 border-0 shadow-sm">
+    <div class="card-body py-3 d-flex flex-wrap justify-content-between align-items-start gap-3">
+        <div class="small text-secondary flex-grow-1" style="max-width: 52rem;">
+            <strong>Why you might see “SY_1” here:</strong> that text is the <em>name of the department record</em> in <strong>Admin → Departments</strong>, not your login and not “only SY_1 division.” If you named a department “SY_1” there, it will show here—rename that department if you want a clearer label (e.g. “SY Combined”, “CE-SY”).
+            <span class="d-block mt-2"><strong>Phases &amp; Excel upload</strong> still apply to <em>every division column</em> in your file (SY_1, SY_2, …, FY_1, …). Faculty are matched from this linked department’s faculty list.</span>
+        </div>
+        <a href="{% url 'core:dept_exam_dr_report_excel' %}" class="btn btn-primary-app btn-sm flex-shrink-0"><i class="fas fa-file-excel me-1"></i> Supervision DR</a>
+    </div>
+</div>
+
+<div class="card exam-section-card mb-4">
+    <div class="card-header">
+        <h5 class="mb-0 fw-semibold"><i class="fa-solid fa-file-excel me-2"></i>Institute daily DR — {{ profile.department.name }}</h5>
+    </div>
+    <div class="card-body">
+        <p class="small text-muted mb-3 mb-md-4">Same <strong>exam.xlsx</strong> layout as exam section, restricted to faculty in this department. From / To range; only dates with activity are included.</p>
+        {% include 'core/exam_paper/_dr_date_range_form.html' with dr_url='core:dept_exam_daily_dr_excel' %}
+    </div>
+</div>
+
+{% if paper_credit_by_faculty %}
+<div class="card exam-section-card accent-success mb-4">
+    <div class="card-header">
+        <h5 class="mb-0 fw-semibold"><i class="fas fa-coins me-2"></i>Approved paper-checking credits — {{ profile.department.name }}</h5>
+    </div>
+    <div class="card-body">
+        <p class="small text-muted mb-3">Totals after sub-unit coordinators <strong>Accept</strong> faculty completion (uses subject credit rules on each phase).</p>
+        <div class="table-responsive rounded-2 border border-light">
+            <table class="table table-sm mb-0 exam-table-theme">
+                <thead><tr><th>Faculty</th><th class="text-end">Credits</th></tr></thead>
+                <tbody>
+                    {% for r in paper_credit_by_faculty %}
+                    <tr>
+                        <td>{{ r.faculty.full_name }} <span class="text-muted small">({{ r.faculty.short_name }})</span></td>
+                        <td class="text-end fw-semibold">{{ r.credits|floatformat:2 }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+{% if paper_setting_pending_enriched %}
+<div class="card exam-section-card mb-4" style="border:2px solid rgba(245,158,11,0.45);">
+    <div class="card-header card-header-slate">
+        <h5 class="mb-0 fw-semibold"><i class="fas fa-inbox me-2"></i>Paper setting — pending approvals</h5>
+    </div>
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table table-sm mb-0 exam-table-theme">
+                <thead><tr><th>Faculty</th><th>Phase</th><th>Subject</th><th>Deadline</th><th class="text-end">Credit if approved</th><th class="text-end">Actions</th></tr></thead>
+                <tbody>
+                    {% for item in paper_setting_pending_enriched %}
+                    {% with r=item.r %}
+                    <tr>
+                        <td>{{ r.faculty.full_name }} <span class="text-muted small">({{ r.faculty.short_name }})</span></td>
+                        <td><span class="badge text-bg-warning text-dark">{{ r.duty.phase.name }}</span></td>
+                        <td class="fw-semibold">{{ r.duty.subject_name }}</td>
+                        <td class="small">{% if r.duty.deadline_date %}{{ r.duty.deadline_date|date:"M j, Y" }}{% else %}—{% endif %}</td>
+                        <td class="text-end fw-semibold text-success">{{ item.credit|floatformat:2 }}</td>
+                        <td class="text-end text-nowrap">
+                            <form method="post" action="{% url 'core:paper_setting_completion_approve' r.pk %}" class="d-inline">{% csrf_token %}<button type="submit" class="btn btn-sm btn-success rounded-pill">Accept</button></form>
+                            <form method="post" action="{% url 'core:paper_setting_completion_dismiss' r.pk %}" class="d-inline" onsubmit="return confirm('Dismiss?');">{% csrf_token %}<button type="submit" class="btn btn-sm btn-outline-secondary rounded-pill">Dismiss</button></form>
+                        </td>
+                    </tr>
+                    {% endwith %}
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        <p class="small text-muted mb-0 px-3 py-2 border-top bg-light">Set phase-wise rates under <a href="{% url 'core:exam_credit_settings' %}">Credit settings</a>. Daily DR fills paper-setting columns on the <strong>approval date</strong>.</p>
+    </div>
+</div>
+{% endif %}
+
+{% if paper_setting_credit_rows %}
+<div class="card exam-section-card accent-warning mb-4">
+    <div class="card-header">
+        <h5 class="mb-0 fw-semibold"><i class="fas fa-pen-fancy me-2"></i>Approved paper setting — detail</h5>
+    </div>
+    <div class="card-body p-0">
+        <div class="table-responsive rounded-2 border border-light">
+            <table class="table table-sm mb-0 exam-table-theme">
+                <thead><tr><th>Faculty</th><th>Phase</th><th>Subject</th><th>Decided</th><th class="text-end">Credit</th></tr></thead>
+                <tbody>
+                    {% for item in paper_setting_credit_rows %}
+                    {% with r=item.req %}
+                    <tr>
+                        <td>{{ r.faculty.full_name }}</td>
+                        <td>{{ r.duty.phase.name }}</td>
+                        <td>{{ r.duty.subject_name }}</td>
+                        <td class="small">{% if r.decided_at %}{{ r.decided_at|date:"M j, Y H:i" }}{% else %}—{% endif %}</td>
+                        <td class="text-end fw-semibold">{{ item.credit|floatformat:2 }}</td>
+                    </tr>
+                    {% endwith %}
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+{% if paper_setting_history_enriched %}
+<div class="card exam-section-card mb-4">
+    <div class="card-header card-header-slate">
+        <h5 class="mb-0 fw-semibold"><i class="fas fa-history me-2"></i>Paper setting — recent decisions</h5>
+    </div>
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table table-sm mb-0 exam-table-theme">
+                <thead><tr><th>Faculty</th><th>Phase</th><th>Subject</th><th>Outcome</th><th class="text-end">Credit</th><th>Decided</th></tr></thead>
+                <tbody>
+                    {% for item in paper_setting_history_enriched %}
+                    {% with r=item.r %}
+                    <tr>
+                        <td>{{ r.faculty.full_name }}</td>
+                        <td>{{ r.duty.phase.name }}</td>
+                        <td>{{ r.duty.subject_name }}</td>
+                        <td>{% if r.status == 'approved' %}<span class="badge text-bg-success">Approved</span>{% else %}<span class="badge text-bg-secondary">Dismissed</span>{% endif %}</td>
+                        <td class="text-end">{% if item.credit is not None %}{{ item.credit|floatformat:2 }}{% else %}—{% endif %}</td>
+                        <td class="small">{{ r.decided_at|date:"M j, Y" }}</td>
+                    </tr>
+                    {% endwith %}
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+<div class="row g-3 mb-4">
+    <div class="col-md-6">
+        <div class="card card-app h-100 exam-paper-accent checking overflow-hidden">
+            <div class="card-header card-header-slate py-2">
+                <h6 class="mb-0"><i class="fas fa-check-double me-2" style="color:#6ee7b7;"></i>Paper checking</h6>
+            </div>
+            <div class="card-body">
+                <ul class="list-unstyled small mb-0">
+                    {% for ph in paper_checking_phases %}
+                    <li class="mb-1"><a href="{% url 'core:paper_checking_phase_detail' ph.id %}">{{ ph.name }}</a></li>
+                    {% empty %}<li class="text-muted">None yet.</li>{% endfor %}
+                </ul>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-6">
+        <div class="card card-app h-100 exam-paper-accent setting overflow-hidden">
+            <div class="card-header card-header-slate py-2">
+                <h6 class="mb-0"><i class="fas fa-pen-fancy me-2" style="color:#fde68a;"></i>Paper setting</h6>
+            </div>
+            <div class="card-body">
+                <ul class="list-unstyled small mb-0">
+                    {% for ph in paper_setting_phases %}
+                    <li class="mb-1"><a href="{% url 'core:paper_setting_phase_detail' ph.id %}">{{ ph.name }}</a></li>
+                    {% empty %}<li class="text-muted">None yet.</li>{% endfor %}
+                </ul>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row g-4">
+    <div class="col-lg-6">
+        <div class="card exam-section-card mb-4 mb-lg-0">
+            <div class="card-header">
+                <h5 class="mb-0 fw-semibold"><i class="fas fa-layer-group me-2"></i>Supervision phases</h5>
+            </div>
+            <div class="card-body">
+                <form method="post" action="{% url 'core:dept_exam_phase_add' %}" class="row g-2 g-md-3 align-items-end">
+                    {% csrf_token %}
+                    <div class="col-12 col-md-8">
+                        <label class="form-label">Phase name</label>
+                        <input type="text" name="name" class="form-control form-control-app" placeholder="T1, T2, SEE" required>
+                    </div>
+                    <div class="col-12 col-md-4">
+                        <button type="submit" class="btn btn-primary-app w-100">Add phase</button>
+                    </div>
+                </form>
+                <ul class="list-group list-group-flush mt-3">
+                    {% for ph in phases %}
+                    <li class="list-group-item px-0 py-2">
+                        <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-2">
+                            <span class="fw-medium">{{ ph.name }}</span>
+                            <a href="{% url 'core:dept_exam_phase_detail' ph.id %}" class="btn btn-sm btn-outline-primary">Open / upload</a>
+                        </div>
+                        <div class="d-flex flex-wrap gap-2 align-items-center">
+                            <form method="post" action="{% url 'core:dept_exam_phase_rename' ph.id %}" class="d-flex flex-wrap gap-1 align-items-center flex-grow-1">
+                                {% csrf_token %}
+                                <input type="text" name="name" class="form-control form-control-sm" value="{{ ph.name }}" aria-label="Rename supervision phase">
+                                <button type="submit" class="btn btn-sm btn-outline-secondary">Rename</button>
+                            </form>
+                            <form method="post" action="{% url 'core:dept_exam_phase_delete' ph.id %}" onsubmit="return confirm('Delete supervision phase {{ ph.name }}? Duties must be cleared first.');">
+                                {% csrf_token %}
+                                <button type="submit" class="btn btn-sm btn-outline-danger">Delete</button>
+                            </form>
+                        </div>
+                    </li>
+                    {% empty %}
+                    <li class="list-group-item text-muted px-0">No phases yet. Add T1, T2, or SEE above.</li>
+                    {% endfor %}
+                </ul>
+            </div>
+        </div>
+    </div>
+    <div class="col-lg-6">
+        <div class="card exam-section-card mb-4">
+            <div class="card-header">
+                <h5 class="mb-0 fw-semibold"><i class="fas fa-cubes me-2"></i>Sub-unit logins</h5>
+            </div>
+            <div class="card-body">
+                <form method="post" action="{% url 'core:dept_exam_child_create' %}">
+                    {% csrf_token %}
+                    <div class="mb-2">
+                        <label class="form-label">Username</label>
+                        <input type="text" name="username" class="form-control form-control-app" required autocomplete="off">
+                    </div>
+                    <div class="mb-2">
+                        <label class="form-label">Password</label>
+                        <input type="password" name="password" class="form-control form-control-app" required>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Sub-unit code</label>
+                        <input type="text" name="subunit_code" class="form-control form-control-app" placeholder="SY_1" required>
+                        <div class="form-text">Must match values in the duty columns of your Excel (e.g. SY_1, SY_2).</div>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Attendance department (for this sub-unit user)</label>
+                        <select name="department_id" class="form-select form-select-app" required>
+                            {% for d in all_departments %}
+                            <option value="{{ d.pk }}" {% if d.pk == profile.department_id %}selected{% endif %}>{{ d.name }}</option>
+                            {% endfor %}
+                        </select>
+                        <div class="form-text">Must match the same department you linked as <strong>{{ user.username }}</strong> (currently {{ profile.department.name }}). Sub-unit <em>code</em> (above) is what appears in the Excel duty cells.</div>
+                    </div>
+                    <button type="submit" class="btn btn-primary-app">Create sub-unit login</button>
+                </form>
+                <hr>
+                <p class="small text-muted mb-2">Existing sub-units</p>
+                <div class="table-responsive">
+                    <table class="table table-sm mb-0 exam-table-theme">
+                        <thead><tr><th>Code</th><th>Username</th><th class="text-end">Actions</th></tr></thead>
+                        <tbody>
+                            {% for ch in children %}
+                            <tr>
+                                <td><code>{{ ch.subunit_code }}</code></td>
+                                <td>{{ ch.user.username }}</td>
+                                <td class="text-end">
+                                    <a href="{% url 'core:dept_exam_child_edit' ch.pk %}" class="btn btn-sm btn-outline-primary">Edit</a>
+                                    <form method="post" action="{% url 'core:dept_exam_child_delete' ch.pk %}" class="d-inline" onsubmit="return confirm('Delete this sub-unit login?');">
+                                        {% csrf_token %}
+                                        <button type="submit" class="btn btn-sm btn-outline-danger">Delete</button>
+                                    </form>
+                                </td>
+                            </tr>
+                            {% empty %}
+                            <tr><td colspan="3" class="text-muted">None yet.</td></tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

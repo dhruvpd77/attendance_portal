@@ -1,4 +1,4 @@
-{% extends 'base.html' %}
+{% extends 'core/exam_portal_base.html' %}
 {% load static %}
 {% block title %}Exam Analytics Hub - Marks{% endblock %}
 {% block extra_head %}
@@ -26,15 +26,15 @@
         border-radius: var(--eah-radius);
         padding: clamp(1.25rem, 3vw, 1.75rem) clamp(1.25rem, 3vw, 2rem);
         margin-bottom: clamp(1.25rem, 3vw, 1.75rem);
-        background: linear-gradient(135deg, #0f172a 0%, #1e3a5f 42%, #312e81 100%);
+        background: linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #334155 100%);
         color: #fff;
-        box-shadow: var(--eah-shadow);
+        box-shadow: 0 10px 40px rgba(15, 23, 42, 0.25);
     }
     .eah-hero::after {
         content: "";
         position: absolute;
         inset: 0;
-        background: radial-gradient(ellipse 80% 60% at 100% 0%, rgba(96, 165, 250, 0.22), transparent 55%);
+        background: radial-gradient(ellipse 80% 60% at 100% 0%, rgba(59, 130, 246, 0.18), transparent 55%);
         pointer-events: none;
     }
     .eah-hero-inner {
@@ -78,7 +78,7 @@
         margin: 0;
         font-size: clamp(0.875rem, 1.5vw, 0.95rem);
         line-height: 1.55;
-        color: #c7d2fe !important;
+        color: #94a3b8 !important;
         max-width: 52rem;
     }
     .eah-hero-cta {
@@ -184,8 +184,8 @@
         color: #dc2626;
     }
     .eah-stat--phases .eah-stat__icon {
-        background: rgba(139, 92, 246, 0.12);
-        color: #7c3aed;
+        background: rgba(59, 130, 246, 0.15);
+        color: #2563eb;
     }
     .eah-stat__label {
         font-size: 0.8rem;

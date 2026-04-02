@@ -1,0 +1,122 @@
+{% extends 'core/admin/base_admin.html' %}
+{% load static %}
+{% block title %}Academic semesters - LJIET_Attendance{% endblock %}
+{% block content %}
+<div class="admin-hero">
+    <div class="d-flex align-items-center gap-3">
+        <img src="{% static 'images/ljiet-logo.png' %}" alt="LJIET" class="admin-logo">
+        <div>
+            <h1 class="page-title mb-1">Academic semesters</h1>
+            <p class="page-subtitle mb-0">Attendance, departments, and exam data are scoped to the <strong>active academic semester</strong>. Switch here before working on another session.</p>
+        </div>
+    </div>
+    <a href="{% url 'core:admin_dashboard' %}" class="btn btn-outline-light btn-sm"><i class="fas fa-arrow-left me-1"></i> Dashboard</a>
+</div>
+
+{% if active_institute_semester %}
+<div class="alert alert-info border-0 mb-4" style="background: rgba(14, 165, 233, 0.12);">
+    <strong>Active now:</strong> {{ active_institute_semester.label }}
+    <span class="text-muted small ms-1">({{ active_institute_semester.code }})</span>
+</div>
+{% else %}
+<div class="alert alert-warning border-0 mb-4">
+    <strong>No academic semester in session.</strong> Select one below or create a new semester. Super-admin dashboards and department lists use the active semester.
+</div>
+{% endif %}
+
+<div class="row g-4">
+    <div class="col-lg-7">
+        <div class="card admin-card">
+            <div class="card-header">Switch active academic semester</div>
+            <div class="card-body p-4">
+                <form method="post" class="row g-3 align-items-end">
+                    {% csrf_token %}
+                    <input type="hidden" name="set_active" value="1">
+                    <div class="col-md-8">
+                        <label class="form-label fw-semibold">Academic semester</label>
+                        <select name="semester_id" class="form-select form-select-app" required>
+                            {% for s in semesters %}
+                            <option value="{{ s.pk }}" {% if active_institute_semester and s.pk == active_institute_semester.pk %}selected{% endif %}>{{ s.label }} — {{ s.code }}</option>
+                            {% empty %}
+                            <option value="" disabled>No semesters yet. Create one on the right.</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="col-md-4">
+                        <button type="submit" class="btn btn-primary-app w-100" {% if not semesters %}disabled{% endif %}>Set active</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+    <div class="col-lg-5">
+        <div class="card admin-card">
+            <div class="card-header">New academic semester</div>
+            <div class="card-body p-4">
+                <form method="post">
+                    {% csrf_token %}
+                    <input type="hidden" name="create_semester" value="1">
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Label</label>
+                        <input type="text" name="label" class="form-control form-control-app" placeholder="e.g. SY EVEN 2026" required maxlength="200">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Code</label>
+                        <input type="text" name="code" class="form-control form-control-app" placeholder="e.g. SY_EVEN_2026 (optional if label suffices)">
+                        <div class="form-text small">Stable id; letters, numbers, underscores. Leave blank to derive from label.</div>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Sort order</label>
+                        <input type="number" name="sort_order" class="form-control form-control-app" value="0" min="0">
+                        <div class="form-text small">Higher appears first in lists.</div>
+                    </div>
+                    <button type="submit" class="btn btn-primary-app"><i class="fas fa-plus me-1"></i> Create &amp; activate</button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="card admin-card mt-4">
+    <div class="card-header">All academic semesters</div>
+    <div class="table-responsive">
+        <table class="table table-hover mb-0">
+            <thead>
+                <tr>
+                    <th>Label</th>
+                    <th>Code</th>
+                    <th class="text-end">Sort</th>
+                    <th class="text-end">Faculty portal</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for s in semesters %}
+                <tr {% if active_institute_semester and s.pk == active_institute_semester.pk %}class="table-primary bg-opacity-10"{% endif %}>
+                    <td class="fw-medium">{{ s.label }}{% if active_institute_semester and s.pk == active_institute_semester.pk %} <span class="badge bg-primary ms-1">Active</span>{% endif %}</td>
+                    <td class="text-secondary font-monospace small">{{ s.code }}</td>
+                    <td class="text-end">{{ s.sort_order }}</td>
+                    <td class="text-end">
+                        <form method="post" class="d-inline">
+                            {% csrf_token %}
+                            <input type="hidden" name="toggle_faculty_portal" value="1">
+                            <input type="hidden" name="semester_id" value="{{ s.pk }}">
+                            <input type="hidden" name="faculty_portal_active" value="">
+                            <div class="form-check form-switch d-inline-flex align-items-center justify-content-end gap-2">
+                                <input class="form-check-input" type="checkbox" role="switch" name="faculty_portal_active" value="on" {% if s.faculty_portal_active %}checked{% endif %}
+                                    onchange="this.form.submit();" id="fp_{{ s.pk }}">
+                                <label class="form-check-label small mb-0" for="fp_{{ s.pk }}">Open</label>
+                            </div>
+                        </form>
+                    </td>
+                </tr>
+                {% empty %}
+                <tr><td colspan="4" class="text-center text-secondary py-4">No academic semesters yet.</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    <div class="card-body border-top small text-secondary">
+        <strong>Faculty portal:</strong> turning <em>Open</em> off hides that semester’s attendance and main menu items for faculty, but exam duties and credits for that semester still appear under <strong>History</strong> (read-only) when the department enables exam menus. Turning <em>Open</em> on again starts a fresh current cycle for that semester. Super admin / HOD always keep full access. Manage departments under <a href="{% url 'core:department_list' %}">Departments</a> after selecting the active semester.
+    </div>
+</div>
+{% endblock %}

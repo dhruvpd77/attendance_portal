@@ -1,0 +1,261 @@
+{% extends 'core/exam_portal_base.html' %}
+{% block content %}
+{% with mode=analytics_mode|default:'paper' %}
+
+<div class="exam-portal-hero mb-4">
+    <h1 class="page-title">{% if mode == 'supervision' %}Supervision credits{% else %}Paper-check credit analytics{% endif %}</h1>
+    <p class="page-subtitle">
+        {% if mode == 'supervision' %}
+            Scope: <strong>{{ scope_label }}</strong>. By default <strong>all faculty</strong> are listed with completed supervision counts (phase type columns match DR buckets). Optionally pick one faculty for slot-level detail. Dates filter <strong>when the duty was marked complete</strong>.
+        {% elif institute_scope %}
+            Institute scope: all faculty. <strong>Accepted</strong> paper-check totals and optional line items. Dates filter coordinator <strong>decision</strong> (accepted) time.
+        {% else %}
+            Scope: <strong>{{ scope_label }}</strong>. By default <strong>all faculty</strong> show total credits; pick one for completion-level detail. Export includes a <strong>Summary</strong> sheet (everyone) and <strong>All completions</strong> when you download all.
+        {% endif %}
+    </p>
+</div>
+
+<form method="get" action="{% url list_url %}" class="card card-app mb-4 p-3 p-md-4">
+    <h2 class="h6 text-uppercase text-muted fw-semibold mb-3">Filter</h2>
+    <div class="row g-3 align-items-end">
+        {% if mode == 'paper' and paper_phase_choices %}
+        <div class="col-md-4">
+            <label for="id_paper_phase_id" class="form-label">Paper-check phase</label>
+            <select name="paper_phase_id" id="id_paper_phase_id" class="form-select form-select-app">
+                <option value="">All phases (in date range)</option>
+                {% for p in paper_phase_choices %}
+                <option value="{{ p.pk }}" {% if selected_paper_phase_id == p.pk %}selected{% endif %}>{{ p.name }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        {% endif %}
+        {% if mode == 'supervision' and supervision_phase_choices %}
+        <div class="col-md-4">
+            <label for="id_supervision_phase_id" class="form-label">Supervision phase</label>
+            <select name="supervision_phase_id" id="id_supervision_phase_id" class="form-select form-select-app">
+                <option value="">All phases (in date range)</option>
+                {% for p in supervision_phase_choices %}
+                <option value="{{ p.pk }}" {% if selected_supervision_phase_id == p.pk %}selected{% endif %}>{{ p.name }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        {% endif %}
+        <div class="col-md-5">
+            <label for="id_faculty_id" class="form-label">Faculty</label>
+            <select name="faculty_id" id="id_faculty_id" class="form-select form-select-app">
+                <option value="">All faculty — summary table below</option>
+                {% for f in faculty_list %}
+                    <option value="{{ f.pk }}" {% if selected_faculty and selected_faculty.pk == f.pk %}selected{% endif %}>
+                        {{ f.full_name }} ({{ f.short_name }}){% if f.department %} · {{ f.department.name }}{% endif %}
+                    </option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="col-md-3">
+            <label for="id_date_from" class="form-label">
+                {% if mode == 'supervision' %}Completed from{% else %}Decided from{% endif %}
+                <span class="fw-normal text-muted">(optional)</span>
+            </label>
+            <input type="date" name="date_from" id="id_date_from" class="form-control form-control-app" value="{{ filter_date_from }}">
+        </div>
+        <div class="col-md-3">
+            <label for="id_date_to" class="form-label">
+                {% if mode == 'supervision' %}Completed to{% else %}Decided to{% endif %}
+                <span class="fw-normal text-muted">(optional)</span>
+            </label>
+            <input type="date" name="date_to" id="id_date_to" class="form-control form-control-app" value="{{ filter_date_to }}">
+        </div>
+        <div class="col-md-auto d-grid d-md-block">
+            <button type="submit" class="btn btn-primary-app">Show</button>
+        </div>
+    </div>
+</form>
+
+<div class="d-flex flex-wrap align-items-center gap-2 mb-4">
+    <a class="btn btn-success rounded-pill btn-sm" href="{% url excel_url %}{% if excel_query_all %}?{{ excel_query_all }}{% endif %}">
+        <i class="fas fa-file-excel me-1"></i> Download Excel (all faculty)
+    </a>
+    {% if excel_query_selected %}
+        <a class="btn btn-outline-success rounded-pill btn-sm" href="{% url excel_url %}?{{ excel_query_selected }}">
+            <i class="fas fa-file-export me-1"></i> Excel — selected faculty only
+        </a>
+    {% endif %}
+</div>
+
+{% if mode == 'paper' %}
+
+    {% if paper_summaries %}
+    <div class="table-responsive card card-app p-0 overflow-hidden mb-4">
+        <div class="card-header bg-white border-0 py-3">
+            <h2 class="h6 mb-0 fw-semibold">All faculty — paper-check credits</h2>
+            <p class="small text-muted mb-0 mt-1">Grand total credit in scope: <strong class="text-success">{{ grand_total_credit|floatformat:2 }}</strong></p>
+        </div>
+        <table class="table table-sm table-app mb-0 align-middle">
+            <thead class="table-light">
+                <tr>
+                    <th>Faculty</th>
+                    <th>Short</th>
+                    <th>Department</th>
+                    <th class="text-end">Total credit</th>
+                    <th class="text-end">Completions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for s in paper_summaries %}
+                <tr {% if selected_faculty and selected_faculty.pk == s.faculty.pk %}class="table-primary bg-opacity-10"{% endif %}>
+                    <td>{{ s.faculty.full_name }}</td>
+                    <td>{{ s.faculty.short_name }}</td>
+                    <td>{% if s.faculty.department %}{{ s.faculty.department.name }}{% else %}—{% endif %}</td>
+                    <td class="text-end fw-semibold">{{ s.total_credit|floatformat:2 }}</td>
+                    <td class="text-end">{{ s.n_rows }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% endif %}
+
+    {% if selected_faculty %}
+        {% if detail_rows %}
+        <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+            <p class="mb-0 fw-bold">
+                {{ selected_faculty.full_name }}
+                <span class="text-muted fw-normal">({{ selected_faculty.short_name }})</span>
+                — total credit <span class="text-success">{{ total_credits|floatformat:2 }}</span>
+            </p>
+        </div>
+        <div class="table-responsive card card-app p-0 overflow-hidden">
+            <div class="card-header bg-white border-0 py-2"><span class="small fw-semibold text-muted">COMPLETION DETAIL</span></div>
+            <table class="table table-sm table-app mb-0 align-middle">
+                <thead class="table-light">
+                    <tr>
+                        <th>Phase</th>
+                        <th>Exam</th>
+                        <th>Subject</th>
+                        <th class="text-end">Papers</th>
+                        <th class="text-end">Credit</th>
+                        <th class="text-end">Running total</th>
+                        <th>Decided</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for item in detail_rows %}
+                        {% with r=item.req %}
+                        <tr>
+                            <td>{% if r.duty.phase %}{{ r.duty.phase.name }}{% else %}—{% endif %}</td>
+                            <td>{% if r.duty.exam_date %}{{ r.duty.exam_date|date:"M j, Y" }}{% else %}—{% endif %}</td>
+                            <td>{{ r.duty.subject_name|default:"—" }}</td>
+                            <td class="text-end">{{ r.papers_for_faculty_display }}</td>
+                            <td class="text-end">{{ item.credit|floatformat:2 }}</td>
+                            <td class="text-end fw-semibold">{{ item.running|floatformat:2 }}</td>
+                            <td><small class="text-muted">{% if r.decided_at %}{{ r.decided_at|date:"Y-m-d H:i" }}{% else %}—{% endif %}</small></td>
+                        </tr>
+                        {% endwith %}
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <p class="text-muted">No accepted completions for this faculty in the selected date range.</p>
+        {% endif %}
+    {% endif %}
+
+{% else %}
+
+    {# supervision #}
+    {% if supervision_summaries %}
+    <div class="table-responsive card card-app p-0 overflow-hidden mb-4">
+        <div class="card-header bg-white border-0 py-3">
+            <h2 class="h6 mb-0 fw-semibold">All faculty — completed supervision</h2>
+            <p class="small text-muted mb-0 mt-1">Grand total completed slots: <strong class="text-primary">{{ grand_total_supervision }}</strong> · columns <strong>T1–T3</strong> / <strong>SEE/T4</strong> / <strong>REM</strong> follow the same rules as the daily DR compile sheet.</p>
+        </div>
+        <table class="table table-sm table-app mb-0 align-middle">
+            <thead class="table-light">
+                <tr>
+                    <th>Faculty</th>
+                    <th>Short</th>
+                    <th>Department</th>
+                    <th class="text-end">Total</th>
+                    <th class="text-end">T1–T3</th>
+                    <th class="text-end">SEE/T4</th>
+                    <th class="text-end">REM</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for s in supervision_summaries %}
+                <tr {% if selected_faculty and selected_faculty.pk == s.faculty.pk %}class="table-primary bg-opacity-10"{% endif %}>
+                    <td>{{ s.faculty.full_name }}</td>
+                    <td>{{ s.faculty.short_name }}</td>
+                    <td>{% if s.faculty.department %}{{ s.faculty.department.name }}{% else %}—{% endif %}</td>
+                    <td class="text-end fw-semibold">{{ s.total_completed }}</td>
+                    <td class="text-end">{{ s.bucket_j }}</td>
+                    <td class="text-end">{{ s.bucket_k }}</td>
+                    <td class="text-end">{{ s.bucket_l }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% endif %}
+
+    {% if selected_faculty %}
+        {% if supervision_detail_rows %}
+        <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+            <p class="mb-0 fw-bold">
+                {{ selected_faculty.full_name }}
+                <span class="text-muted fw-normal">({{ selected_faculty.short_name }})</span>
+                — <span class="text-primary">{{ total_completed }}</span> completed slot(s)
+            </p>
+        </div>
+        <div class="table-responsive card card-app p-0 overflow-hidden">
+            <div class="card-header bg-white border-0 py-2"><span class="small fw-semibold text-muted">SLOT DETAIL</span></div>
+            <table class="table table-sm table-app mb-0 align-middle">
+                <thead class="table-light">
+                    <tr>
+                        <th>Phase</th>
+                        <th>Type</th>
+                        <th>Date</th>
+                        <th>Time</th>
+                        <th>Subject</th>
+                        <th>Division</th>
+                        <th>Room</th>
+                        <th>Block</th>
+                        <th>Proxy</th>
+                        <th>Completed</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for duty in supervision_detail_rows %}
+                    {% with p=duty.phase.name|default:''|upper %}
+                    <tr>
+                        <td>{{ duty.phase.name|default:"—" }}</td>
+                        <td>
+                            {% if 'REM' in p %}REM{% elif 'SEE' in p or 'T4' in p %}SEE/T4{% else %}T1–T3{% endif %}
+                        </td>
+                        <td>{% if duty.supervision_date %}{{ duty.supervision_date|date:"M j, Y" }}{% else %}—{% endif %}</td>
+                        <td><small>{{ duty.time_slot|default:"—" }}</small></td>
+                        <td>{{ duty.subject_name|default:"—" }}</td>
+                        <td>{{ duty.division_code|default:"—" }}</td>
+                        <td>{{ duty.room_no|default:"—" }}</td>
+                        <td>{{ duty.block_no|default:"—" }}</td>
+                        <td>{% if duty.is_proxy %}Y{% else %}—{% endif %}</td>
+                        <td><small class="text-muted">{% if duty.completed_at %}{{ duty.completed_at|date:"Y-m-d H:i" }}{% else %}—{% endif %}</small></td>
+                    </tr>
+                    {% endwith %}
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <p class="text-muted">No completed supervision for this faculty in the selected date range.</p>
+        {% endif %}
+    {% endif %}
+
+{% endif %}
+
+{% if not faculty_list %}
+<p class="text-muted">No faculty in scope for this login.</p>
+{% endif %}
+
+{% endwith %}
+{% endblock %}

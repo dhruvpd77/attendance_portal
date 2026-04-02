@@ -1,0 +1,138 @@
+{% extends 'core/exam_portal_base.html' %}
+{% block title %}Paper setting — {{ phase.name }}{% endblock %}
+{% block content %}
+
+<div class="exam-portal-hero mb-4">
+    <div class="flex-grow-1">
+        <h1 class="page-title mb-2">Phase {{ phase.name }}</h1>
+        <p class="page-subtitle mb-0">Paper setting duties — upload an Excel workbook, preview rows, then save to the database.</p>
+    </div>
+    <a href="{% url 'core:paper_setting_dashboard' %}" class="btn btn-outline-light btn-sm rounded-pill border-secondary flex-shrink-0">All phases</a>
+</div>
+
+{% include 'core/exam_paper/_excel_upload_format_reference.html' with format_kind='setting' %}
+
+<div class="exam-section-card mb-4 accent-warning exam-paper-accent setting">
+    <div class="card-header py-3 d-flex align-items-center gap-2">
+        <span class="duty-format-icon duty-format-icon--setting"><i class="fas fa-cloud-upload-alt"></i></span>
+        <div>
+            <h6 class="mb-0 fw-semibold">Upload workbook</h6>
+            <p class="small mb-0 mt-1 text-white-50">Accepted: .xlsx, .xls · Columns must include Subject and Faculty (see layout above).</p>
+        </div>
+    </div>
+    <div class="card-body py-4">
+        <form method="post" action="{% url 'core:paper_setting_phase_upload' phase.id %}" enctype="multipart/form-data">
+            {% csrf_token %}
+            <div class="row g-3 align-items-end">
+                <div class="col-lg-8">
+                    <label class="form-label small fw-semibold text-body-secondary"><i class="fas fa-file-upload me-1"></i>Select file</label>
+                    <div class="duty-upload-zone duty-upload-zone--setting">
+                        <input type="file" name="paper_file" class="form-control form-control-app border-0 bg-transparent" accept=".xlsx,.xls" required>
+                    </div>
+                    <p class="small text-muted mb-0 mt-2">Optional column: <strong>Deadline / due date</strong>. If blank, deadline matches the duty date.</p>
+                </div>
+                <div class="col-lg-4">
+                    <button type="submit" class="btn btn-primary-app w-100 rounded-3 fw-semibold py-2 shadow-sm"><i class="fas fa-file-import me-2"></i>Load preview</button>
+                </div>
+            </div>
+        </form>
+        <hr class="my-3 border-secondary border-opacity-25">
+        <div class="d-flex flex-wrap gap-2 align-items-center">
+            <form method="post" action="{% url 'core:paper_setting_phase_clear' phase.id %}" class="m-0" onsubmit="return confirm('Clear all rows for this phase?');">
+                {% csrf_token %}
+                <button type="submit" class="btn btn-outline-danger btn-sm rounded-pill">Clear all duties</button>
+            </form>
+            <a href="{% url 'core:paper_setting_dashboard' %}" class="btn btn-outline-secondary btn-sm rounded-pill">Back to dashboard</a>
+        </div>
+    </div>
+</div>
+
+{% if staging_preview %}
+<div class="duty-draft-banner p-3 mb-4 d-flex flex-wrap align-items-center justify-content-between gap-3">
+    <div class="small">
+        <strong class="text-dark">Draft import</strong> — <span class="text-primary fw-semibold">{{ staging_preview|length }}</span> row(s) in session (not saved yet).
+        {% if staging_unmatched %}<span class="ms-1 text-warning fw-semibold">{{ staging_unmatched }} not linked to a faculty.</span>{% endif %}
+    </div>
+    <div class="d-flex flex-wrap gap-2">
+        <form method="post" action="{% url 'core:paper_setting_phase_commit' phase.id %}" class="m-0">
+            {% csrf_token %}
+            <button type="submit" class="btn btn-success btn-sm rounded-pill fw-semibold px-3" onclick="return confirm('Replace all saved duties for this phase with this draft?');">Save to database</button>
+        </form>
+        <form method="post" action="{% url 'core:paper_setting_phase_discard_staging' phase.id %}" class="m-0">
+            {% csrf_token %}
+            <button type="submit" class="btn btn-outline-secondary btn-sm rounded-pill">Discard draft</button>
+        </form>
+    </div>
+</div>
+<div class="exam-section-card mb-4">
+    <div class="card-header py-3">
+        <h6 class="mb-0 fw-semibold"><i class="fas fa-eye me-2 text-primary"></i>Preview (draft)</h6>
+    </div>
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table table-sm mb-0 exam-table-theme">
+                <thead>
+                    <tr>
+                        <th>Date</th>
+                        <th>Deadline</th>
+                        <th>Subject</th>
+                        <th>Faculty</th>
+                        <th>Notes</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for d in staging_preview %}
+                    <tr>
+                        <td>{% if d.duty_date %}{{ d.duty_date|date:"M j, Y" }}{% else %}—{% endif %}</td>
+                        <td>{% if d.deadline_date %}{{ d.deadline_date|date:"M j, Y" }}{% elif d.duty_date %}{{ d.duty_date|date:"M j, Y" }}{% else %}—{% endif %}</td>
+                        <td>{{ d.subject_name }}</td>
+                        <td>
+                            {% if d.faculty %}{{ d.faculty.full_name }}{% else %}<span class="text-warning fw-semibold">{{ d.faculty_initial }}</span>{% endif %}
+                        </td>
+                        <td class="small">{{ d.notes|default:"—"|truncatechars:80 }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+<div class="exam-section-card mb-4">
+    <div class="card-header py-3 d-flex justify-content-between align-items-center flex-wrap gap-2">
+        <h6 class="mb-0 fw-semibold"><i class="fas fa-database me-2 text-secondary"></i>Saved duties (database)</h6>
+        {% if duties %}<span class="badge rounded-pill bg-secondary bg-opacity-25 text-dark border">{{ duties|length }} row(s)</span>{% endif %}
+    </div>
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table table-sm mb-0 exam-table-theme">
+                <thead>
+                    <tr>
+                        <th>Date</th>
+                        <th>Deadline</th>
+                        <th>Subject</th>
+                        <th>Faculty</th>
+                        <th>Notes</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for d in duties %}
+                    <tr>
+                        <td>{% if d.duty_date %}{{ d.duty_date|date:"M j, Y" }}{% else %}—{% endif %}</td>
+                        <td>{% if d.deadline_date %}{{ d.deadline_date|date:"M j, Y" }}{% else %}—{% endif %}</td>
+                        <td>{{ d.subject_name }}</td>
+                        <td>
+                            {% if d.faculty %}{{ d.faculty.full_name }}{% else %}<span class="text-warning fw-semibold">{{ d.faculty_short_raw }}</span>{% endif %}
+                        </td>
+                        <td class="small">{{ d.notes|default:"—"|truncatechars:80 }}</td>
+                    </tr>
+                    {% empty %}
+                    <tr><td colspan="5" class="text-center text-muted py-5">No rows yet — upload an Excel file above.</td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endblock %}

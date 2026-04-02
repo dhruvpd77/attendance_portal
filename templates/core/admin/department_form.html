@@ -7,7 +7,7 @@
         <img src="{% static 'images/ljiet-logo.png' %}" alt="LJIET" class="admin-logo">
         <div>
             <h1 class="page-title mb-1">{% if form_type == 'add' %}Add Department{% else %}Edit Department{% endif %}</h1>
-            <p class="page-subtitle">Create or update a department.</p>
+            <p class="page-subtitle">{% if form_type == 'add' %}New departments are created for the <strong>active academic semester</strong> (set on Admin → Academic semesters).{% else %}Update this department.{% endif %}</p>
         </div>
     </div>
     <a href="{% url 'core:department_list' %}" class="btn btn-outline-light btn-sm"><i class="fas fa-arrow-left me-1"></i> Back</a>
@@ -21,13 +21,18 @@
                 <input type="text" name="name" required value="{% if obj %}{{ obj.name }}{% endif %}" class="form-control form-control-app" placeholder="Department name">
             </div>
             <div class="mb-3">
-                <label class="form-label fw-semibold">Semester</label>
-                <input type="text" name="semester" value="{% if obj %}{{ obj.semester }}{% endif %}" class="form-control form-control-app" placeholder="e.g. IV / VIII (Roman or text; used on Daily Report)">
+                <label class="form-label fw-semibold">Daily Report semester label</label>
+                <input type="text" name="dr_export_semester_label" value="{% if obj %}{{ obj.dr_export_semester_label }}{% endif %}" class="form-control form-control-app" placeholder="e.g. IV / VIII (Roman or text; shown on Daily Report exports)">
             </div>
             <div class="mb-4 form-check">
                 <input type="checkbox" name="include_extra_lectures_in_attendance" id="id_include_extra" class="form-check-input" {% if obj and obj.include_extra_lectures_in_attendance %}checked{% endif %}>
                 <label class="form-check-label fw-semibold" for="id_include_extra">Count extra lectures in attendance %</label>
                 <div class="form-text small">Off: faculty can still mark extra lecture attendance, but held totals and percentages ignore them. On: extras behave like regular slots in all attendance math.</div>
+            </div>
+            <div class="mb-4 form-check">
+                <input type="checkbox" name="faculty_portal_enabled" id="id_faculty_portal_enabled" class="form-check-input" {% if obj and obj.faculty_portal_enabled %}checked{% endif %}>
+                <label class="form-check-label fw-semibold" for="id_faculty_portal_enabled">Faculty portal access for this department</label>
+                <div class="form-text small">When off, this department is hidden from faculty (attendance, mentorship, analytics). HOD and super admin dashboards are not affected.</div>
             </div>
             <div class="d-flex flex-wrap gap-2">
                 <button type="submit" class="btn btn-primary-app"><i class="fas fa-save me-2"></i>Save</button>

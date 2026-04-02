@@ -1,0 +1,292 @@
+{% extends 'core/exam_portal_base.html' %}
+{% block title %}Sub-unit {{ subunit }} — {{ profile.department.name }}{% endblock %}
+{% block content %}
+<div class="exam-portal-hero mb-4 align-items-start">
+    <div class="flex-grow-1" style="min-width: min(100%, 280px);">
+        <p class="mb-2">
+            <span class="ea-badge-dept text-uppercase">{{ subunit }}</span>
+            <span class="ea-badge-dept ms-1">{{ profile.department.name }}</span>
+        </p>
+        <h1 class="page-title">Sub-unit {{ subunit }}</h1>
+        <p class="page-subtitle mb-0">
+            Supervision, paper checking, and paper setting for your scope. Use the sidebar for full workflows; quick links below match the hub dashboard.
+        </p>
+    </div>
+    <div class="d-flex flex-wrap gap-2 align-items-start">
+        <a href="{% url 'core:paper_checking_dashboard' %}" class="btn btn-success btn-sm rounded-pill px-3"><i class="fas fa-check-double me-1"></i>Paper checking</a>
+        <a href="{% url 'core:paper_setting_dashboard' %}" class="btn btn-warning text-dark btn-sm rounded-pill px-3"><i class="fas fa-pen-fancy me-1"></i>Paper setting</a>
+        <a href="{% url 'core:dept_exam_credit_analytics' %}" class="btn btn-primary-app btn-sm rounded-pill px-3"><i class="fas fa-chart-line me-1"></i>Paper-check credits</a>
+        <a href="{% url 'core:dept_exam_supervision_credit_analytics' %}" class="btn btn-outline-light btn-sm rounded-pill px-3 border-secondary"><i class="fas fa-user-check me-1"></i>Supervision credits</a>
+        <a href="{% url 'core:dr_facilities_dashboard' %}" class="btn btn-outline-light btn-sm rounded-pill px-3 border-secondary"><i class="fas fa-table-list me-1"></i>DR facilities</a>
+    </div>
+</div>
+
+{% include 'core/exam_dept/_semester_context_switcher.html' with profiles=coord_child_profiles active_profile=profile post_url='core:dept_exam_child_select_context' %}
+
+<div class="card card-app mb-4 border-0 shadow-sm">
+    <div class="card-body py-3 d-flex flex-wrap justify-content-between align-items-center gap-2">
+        <p class="mb-0 small text-secondary">Proxy and DR export work as before.</p>
+        <a href="{% url 'core:dept_exam_dr_report_excel' %}" class="btn btn-primary-app btn-sm"><i class="fas fa-file-excel me-1"></i> Supervision DR</a>
+    </div>
+</div>
+
+<div class="card exam-section-card mb-4">
+    <div class="card-header">
+        <h5 class="mb-0 fw-semibold"><i class="fa-solid fa-file-excel me-2"></i>Institute daily DR — {{ profile.department.name }}</h5>
+    </div>
+    <div class="card-body">
+        <p class="small text-muted mb-3 mb-md-4">
+            Official layout for <strong>your department’s faculty</strong> only (sub-unit scope for approvals; DR lists whole department roster). Pick From / To; empty days are skipped.
+        </p>
+        {% include 'core/exam_paper/_dr_date_range_form.html' with dr_url='core:dept_exam_daily_dr_excel' %}
+    </div>
+</div>
+
+{% if paper_credit_by_faculty %}
+<div class="card exam-section-card accent-success mb-4">
+    <div class="card-header">
+        <h5 class="mb-0 fw-semibold"><i class="fas fa-check-double me-2"></i>Paper-check credits (approved) — {{ profile.department.name }}</h5>
+    </div>
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table table-sm mb-0 exam-table-theme">
+                <thead><tr><th>Faculty</th><th class="text-end">Credits</th></tr></thead>
+                <tbody>
+                    {% for r in paper_credit_by_faculty %}
+                    <tr>
+                        <td class="small">{{ r.faculty.short_name }} — {{ r.faculty.full_name }}</td>
+                        <td class="text-end fw-semibold">{{ r.credits|floatformat:2 }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+<div class="card card-app mb-4">
+    <div class="card-body">
+        <h6 class="fw-semibold mb-3"><i class="fas fa-filter me-2 text-primary"></i>Filter tables by phase</h6>
+        <form method="get" class="row g-3 align-items-end">
+            <div class="col-md-3">
+                <label class="form-label small text-muted">Supervision (proxy list)</label>
+                <select name="sup_phase_id" class="form-select form-select-app">
+                    <option value="">All phases</option>
+                    {% for p in sup_phases %}
+                    <option value="{{ p.pk }}" {% if selected_sup_phase_id == p.pk %}selected{% endif %}>{{ p.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-3">
+                <label class="form-label small text-muted">Paper checking</label>
+                <select name="pc_phase_id" class="form-select form-select-app">
+                    <option value="">All phases</option>
+                    {% for p in pc_phases %}
+                    <option value="{{ p.pk }}" {% if selected_pc_phase_id == p.pk %}selected{% endif %}>{{ p.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-3">
+                <label class="form-label small text-muted">Paper setting</label>
+                <select name="ps_phase_id" class="form-select form-select-app">
+                    <option value="">All phases</option>
+                    {% for p in ps_phases %}
+                    <option value="{{ p.pk }}" {% if selected_ps_phase_id == p.pk %}selected{% endif %}>{{ p.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-3 d-flex flex-wrap gap-2 align-items-end">
+                <button type="submit" class="btn btn-primary-app">Apply</button>
+                <a href="{% url 'core:dept_exam_dashboard' %}" class="btn btn-outline-secondary">Reset</a>
+            </div>
+        </form>
+        {% if show_exam_bulk_complete %}
+        <hr class="my-3">
+        <p class="small text-danger mb-2 mb-0">
+            <strong>Temporary tooling:</strong> enable via <code>EXAM_PORTAL_BULK_COMPLETE=1</code> in the server environment.
+            This marks every <em>open</em> supervision slot in your sub-unit as completed (placeholder room/block if empty) and creates or approves paper-check and paper-setting completions for your department’s assignments—use only for test data.
+        </p>
+        <form method="post" action="{% url 'core:dept_exam_child_bulk_complete_all' %}" class="mt-2" onsubmit="return confirm('Bulk-complete supervision and approve all paper duties in your sub-unit scope?');">
+            {% csrf_token %}
+            <button type="submit" class="btn btn-sm btn-outline-danger">Complete &amp; approve all (bulk)</button>
+        </form>
+        {% endif %}
+    </div>
+</div>
+
+<div class="card exam-section-card mb-4">
+    <div class="card-header">
+        <h5 class="mb-0 fw-semibold"><i class="fas fa-people-arrows me-2"></i>Proxy supervision</h5>
+    </div>
+    <div class="card-body">
+        <p class="small text-muted mb-3">
+            Pick the duty row, then assign to <strong>any faculty</strong> in the institute (list is all departments). The new assignee completes room/block; the Excel report shows <strong>Proxy</strong> and keeps the original sheet assignee.
+        </p>
+        {% if duties %}
+        <form method="post" action="{% url 'core:dept_exam_proxy_supervision' %}" class="row g-3 align-items-end">
+            {% csrf_token %}
+            <div class="col-12 col-md-6">
+                <label class="form-label">Duty slot</label>
+                <select name="duty_id" class="form-select form-select-app" required>
+                    <option value="">— Select —</option>
+                    {% for d in duties %}
+                    {% if d.faculty_id %}
+                    <option value="{{ d.pk }}">{{ d.phase.name }} — {{ d.supervision_date }} — {{ d.faculty.full_name }} — {{ d.subject_name }} ({{ d.division_code }}){% if d.is_proxy %} [already proxy]{% endif %}</option>
+                    {% endif %}
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-12 col-md-4">
+                <label class="form-label">Assign to (proxy faculty)</label>
+                <select name="to_faculty_id" class="form-select form-select-app" required>
+                    <option value="">— Select —</option>
+                    {% for f in global_faculty %}
+                    <option value="{{ f.pk }}">{{ f.full_name }} ({{ f.short_name }}) — {{ f.department.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-12 col-md-2">
+                <button type="submit" class="btn btn-warning text-dark w-100 fw-semibold">Set proxy</button>
+            </div>
+        </form>
+        {% else %}
+        <p class="text-muted mb-0 small">No duty rows yet for {{ subunit }}.</p>
+        {% endif %}
+    </div>
+</div>
+
+<div class="row g-3 mb-4">
+    <div class="col-lg-6">
+        <div class="card card-app exam-paper-accent checking h-100 overflow-hidden">
+            <div class="card-header card-header-slate py-2">
+                <h6 class="mb-0"><i class="fas fa-check-double me-2" style="color:#6ee7b7;"></i>Paper checking (this dept)</h6>
+            </div>
+            <div class="card-body p-0">
+                <div class="table-responsive">
+                    <table class="table table-sm mb-0 exam-table-theme">
+                        <thead><tr><th>Phase</th><th>Exam</th><th>Subject</th><th>Faculty</th><th>Deadline</th></tr></thead>
+                        <tbody>
+                            {% for d in paper_checking_duties %}
+                            <tr>
+                                <td>{{ d.phase.name }}</td>
+                                <td class="small">{{ d.exam_date|date:"M j" }}</td>
+                                <td>{{ d.subject_name }}</td>
+                                <td class="small">{% if d.faculty %}{{ d.faculty.short_name }}{% else %}{{ d.evaluator_short_raw }}{% endif %}</td>
+                                <td class="small">{{ d.deadline_date|date:"M j" }}</td>
+                            </tr>
+                            {% empty %}
+                            <tr><td colspan="5" class="text-muted text-center py-3 small">No rows for this department.</td></tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="col-lg-6">
+        <div class="card card-app exam-paper-accent setting h-100 overflow-hidden">
+            <div class="card-header card-header-slate py-2">
+                <h6 class="mb-0"><i class="fas fa-pen-fancy me-2" style="color:#fde68a;"></i>Paper setting</h6>
+            </div>
+            <div class="card-body p-0">
+                <div class="table-responsive">
+                    <table class="table table-sm mb-0 exam-table-theme">
+                        <thead><tr><th>Phase</th><th>Date</th><th>Subject</th><th>Faculty</th></tr></thead>
+                        <tbody>
+                            {% for d in paper_setting_duties %}
+                            <tr>
+                                <td>{{ d.phase.name }}</td>
+                                <td class="small">{% if d.duty_date %}{{ d.duty_date|date:"M j" }}{% else %}—{% endif %}</td>
+                                <td>{{ d.subject_name }}</td>
+                                <td class="small">{% if d.faculty %}{{ d.faculty.short_name }}{% else %}{{ d.faculty_short_raw }}{% endif %}</td>
+                            </tr>
+                            {% empty %}
+                            <tr><td colspan="4" class="text-muted text-center py-3 small">No rows.</td></tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="card exam-section-card mb-4">
+    <div class="card-header">
+        <h5 class="mb-0 fw-semibold"><i class="fas fa-users me-2"></i>Faculty summary ({{ faculty_list|length }})</h5>
+    </div>
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table mb-0 exam-table-theme">
+                <thead>
+                    <tr>
+                        <th>Faculty</th>
+                        <th>Short</th>
+                        <th>Total slots</th>
+                        <th>Completed</th>
+                        <th>Open</th>
+                        <th>Proxy rows</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for row in faculty_list %}
+                    <tr>
+                        <td>{{ row.faculty.full_name }}</td>
+                        <td><code>{{ row.faculty.short_name }}</code></td>
+                        <td>{{ row.duty_count }}</td>
+                        <td>{{ row.completed }}</td>
+                        <td>{{ row.open }}</td>
+                        <td>{% if row.proxy_n %}<span class="badge text-bg-warning text-dark">{{ row.proxy_n }}</span>{% else %}—{% endif %}</td>
+                    </tr>
+                    {% empty %}
+                    <tr><td colspan="6" class="text-muted text-center py-4">No duties for {{ subunit }} yet. Parent coordinator must upload a supervision sheet.</td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+{% if duties %}
+<div class="card exam-section-card mb-4">
+    <div class="card-header">
+        <h5 class="mb-0 fw-semibold"><i class="fas fa-list me-2"></i>All duties ({{ subunit }})</h5>
+    </div>
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table table-sm mb-0 exam-table-theme">
+                <thead>
+                    <tr>
+                        <th>Phase</th>
+                        <th>Faculty (current)</th>
+                        <th>Original</th>
+                        <th>Proxy</th>
+                        <th>Status</th>
+                        <th>Room/Block</th>
+                        <th>Date</th>
+                        <th>Time</th>
+                        <th>Subject</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for d in duties %}
+                    <tr>
+                        <td>{{ d.phase.name }}</td>
+                        <td>{% if d.faculty %}{{ d.faculty.full_name }}{% else %}{{ d.faculty_name_raw }}{% endif %}</td>
+                        <td>{% if d.original_faculty %}{{ d.original_faculty.full_name }}{% else %}—{% endif %}</td>
+                        <td>{% if d.is_proxy %}<span class="badge text-bg-warning text-dark">Proxy</span>{% else %}—{% endif %}</td>
+                        <td>{% if d.completion_status == 'completed' %}<span class="badge text-bg-success">Done</span>{% else %}<span class="badge text-bg-secondary">Open</span>{% endif %}</td>
+                        <td>{% if d.completion_status == 'completed' %}R {{ d.room_no }} · B {{ d.block_no }}{% else %}—{% endif %}</td>
+                        <td>{{ d.supervision_date }}</td>
+                        <td>{{ d.time_slot }}</td>
+                        <td>{{ d.subject_name }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endif %}
+{% endblock %}

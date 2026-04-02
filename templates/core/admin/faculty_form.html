@@ -28,6 +28,35 @@
                 <label class="form-label fw-semibold">Email (optional)</label>
                 <input type="email" name="email" value="{% if obj %}{{ obj.email }}{% endif %}" class="form-control form-control-app" placeholder="faculty@example.com">
             </div>
+            {% if show_portal_merge %}
+            <div class="mb-4">
+                <label class="form-label fw-semibold">Use portal account of (duplicate row)</label>
+                <p class="form-text small mb-2">Usually <strong>not needed</strong>: if this row has no login but the same short name as another row in the <strong>same academic semester</strong> (and only that other row has a user), the portal merges them automatically. Use this only when those rows sit in different academic semesters or more than one login shares the same short name.</p>
+                <select name="portal_canonical_id" class="form-select form-control-app">
+                    <option value="">— None —</option>
+                    {% for f in portal_merge_candidates %}
+                    <option value="{{ f.pk }}" {% if obj.portal_canonical_id == f.pk %}selected{% endif %}>{{ f.full_name }} ({{ f.short_name }}) — {{ f.department.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            {% elif form_type == 'edit' and obj.user_id %}
+            <p class="form-text small text-muted mb-4">This row has the login account. To merge a duplicate timetable row, edit that other row and choose this faculty under &quot;Use portal account of&quot;.</p>
+            {% endif %}
+            {% if show_extra_departments %}
+            <div class="mb-4">
+                <label class="form-label fw-semibold">Also assigned to (same academic semester)</label>
+                <div class="form-text small mb-2">Primary department stays as above. Tick extra divisions so this <strong>same login</strong> can switch department in the faculty header.</div>
+                <div class="border rounded-3 p-3 bg-light" style="max-height: 200px; overflow-y: auto;">
+                    {% for d in extra_departments %}
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox" name="extra_department_ids" value="{{ d.pk }}" id="xd_{{ d.pk }}"
+                            {% if d.pk in current_extra_department_ids %}checked{% endif %}>
+                        <label class="form-check-label" for="xd_{{ d.pk }}">{{ d.name }}</label>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+            {% endif %}
             <div class="d-flex flex-wrap gap-2">
                 <button type="submit" class="btn btn-primary-app"><i class="fas fa-save me-2"></i>Save</button>
                 <a href="{% url 'core:faculty_list' %}" class="btn btn-outline-secondary">Cancel</a>

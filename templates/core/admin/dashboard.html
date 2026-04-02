@@ -12,6 +12,21 @@
     </div>
 </div>
 
+{% if is_super_admin %}
+<div class="alert alert-info d-flex flex-wrap align-items-center justify-content-between gap-3 mb-4 border-0" style="background: rgba(14, 165, 233, 0.12);">
+    <div>
+        <span class="fw-semibold text-dark">Academic semester:</span>
+        {% if active_institute_semester %}
+        {{ active_institute_semester.label }}
+        <span class="text-muted small">({{ active_institute_semester.code }})</span>
+        {% else %}
+        <span class="text-warning">Not set — create a period first.</span>
+        {% endif %}
+    </div>
+    <a href="{% url 'core:admin_semester_list' %}" class="btn btn-sm btn-outline-primary">{% if active_institute_semester %}Change period{% else %}Set up periods{% endif %}</a>
+</div>
+{% endif %}
+
 <div class="card admin-card mb-4">
     <div class="card-header">Current department</div>
     <div class="card-body p-4">
@@ -116,6 +131,13 @@
             <div class="card-header">Quick links</div>
             <div class="card-body p-4">
                 <ul class="list-group list-group-flush">
+                    {% if is_super_admin %}
+                    <li class="list-group-item border-0 px-0 py-2">
+                        <a href="{% url 'core:admin_semester_list' %}" class="text-primary text-decoration-none fw-medium">
+                            <i class="fas fa-calendar-alt me-2"></i> Academic semesters
+                        </a>
+                    </li>
+                    {% endif %}
                     <li class="list-group-item border-0 px-0 py-2">
                         <a href="{% url 'core:upload_timetable' %}" class="text-primary text-decoration-none fw-medium">
                             <i class="fas fa-file-upload me-2"></i> Upload timetable (Excel)
