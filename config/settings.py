@@ -128,12 +128,9 @@ EXAM_DR_PAPER_SETTING_COLUMNS = {
 }
 
 # Sub-unit "Complete & approve all exam duties" bulk action (supervision + paper check + paper setting).
-# Enable only for temporary data setup: set EXAM_PORTAL_BULK_COMPLETE=1 in the environment.
-EXAM_PORTAL_BULK_COMPLETE = os.environ.get('EXAM_PORTAL_BULK_COMPLETE', '').lower() in (
-    '1',
-    'true',
-    'yes',
-)
+# On by default on live; set EXAM_PORTAL_BULK_COMPLETE=0 (or false/no/off) to hide the button.
+_EXAM_BULK_RAW = os.environ.get('EXAM_PORTAL_BULK_COMPLETE', '1').strip().lower()
+EXAM_PORTAL_BULK_COMPLETE = _EXAM_BULK_RAW not in ('0', 'false', 'no', 'off')
 
 # Email (for attendance notifications and mentor reports)
 # Development: emails printed to console. Production: set EMAIL_BACKEND to smtp.

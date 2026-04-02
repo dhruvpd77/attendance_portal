@@ -5,7 +5,7 @@
 <div class="exam-portal-hero mb-4">
     <div class="flex-grow-1">
         <h1 class="page-title mb-2">Phase {{ phase.name }}</h1>
-        <p class="page-subtitle mb-0">Import evaluation duties, set <strong>credit per paper</strong> by subject. <strong>Practical</strong> rows use <em>both</em> online and offline rates with the <em>same</em> paper count. Faculty see totals after coordinator approval; credits flow into the <strong>Daily Report</strong>.</p>
+        <p class="page-subtitle mb-0">Import duties, then mark each subject as <strong>Theory</strong> or <strong>Practical</strong>. Approved credits use the <strong>institute piecewise formula</strong> (paper count, T1–T3 vs SEE/T4). They flow into the <strong>Daily Report</strong>.</p>
     </div>
     <a href="{% url 'core:paper_checking_dashboard' %}" class="btn btn-outline-light btn-sm rounded-pill border-secondary flex-shrink-0">All phases</a>
 </div>
@@ -49,19 +49,29 @@
 
 {% if credit_rows %}
 <div class="exam-section-card mb-4 accent-success">
-    <div class="card-header py-3"><h6 class="mb-0 fw-semibold"><i class="fas fa-coins me-2"></i>Subject credits (per evaluated paper)</h6></div>
+    <div class="card-header py-3"><h6 class="mb-0 fw-semibold"><i class="fas fa-coins me-2"></i>Subject type (theory vs practical)</h6></div>
     <div class="card-body p-0">
         <form method="post" action="{% url 'core:paper_checking_phase_subject_credits_save' phase.id %}">
             {% csrf_token %}
+            <div class="p-3 border-bottom bg-light bg-opacity-50">
+                <p class="small text-muted mb-2"><strong>Phase <code>{{ phase.name }}</code>:</strong>
+                    {% if paper_credit_bucket_t4 %}Classified as <strong>SEE / T4</strong> (name contains SEE or T4).{% else %}Classified as <strong>T1–T3</strong> (and Remedial-style names use these same coefficients).{% endif %}
+                </p>
+                <p class="small text-muted mb-0">For <strong>n</strong> papers evaluated on a duty, each <em>component</em> uses
+                    <code>IF(n≤60, rate×n/30, rate×2 + (n−60)×rate/30×2)</code>.
+                    {% if paper_credit_bucket_t4 %}
+                    <strong>T4 / SEE rates:</strong> theory <strong>2.5</strong>; practical: <strong>online 1.125</strong> + <strong>offline 1.75</strong> (same <em>n</em> for both sums).
+                    {% else %}
+                    <strong>T1–T3 rates:</strong> theory <strong>1.5</strong>; practical: <strong>online 0.81</strong> + <strong>offline 0.96</strong>.
+                    {% endif %}
+                </p>
+            </div>
             <div class="table-responsive">
                 <table class="table table-sm mb-0 align-middle exam-table-theme">
                     <thead>
                         <tr>
                             <th>Subject <span class="text-muted small fw-normal">(from import)</span></th>
-                            <th class="text-center">Practical</th>
-                            <th>Theory credit / paper</th>
-                            <th>Online / paper</th>
-                            <th>Offline / paper</th>
+                            <th class="text-center">Practical <span class="text-muted small fw-normal d-block">(off = theory)</span></th>
                         </tr>
                     </thead>
                     <tbody>
@@ -69,25 +79,22 @@
                         <tr>
                             <td class="fw-semibold">{{ row.name }}<input type="hidden" name="credit_subject" value="{{ row.name }}"></td>
                             <td class="text-center">
-                                <input class="form-check-input" type="checkbox" name="credit_is_practical" value="{{ row.name }}" {% if row.is_practical %}checked{% endif %} title="Uses online/offline columns">
+                                <input class="form-check-input" type="checkbox" name="credit_is_practical" value="{{ row.name }}" {% if row.is_practical %}checked{% endif %} title="Practical: online+offline piecewise; Theory: single piecewise rate">
                             </td>
-                            <td style="max-width:8rem"><input type="text" name="credit_theory" class="form-control form-control-app form-control-sm" value="{{ row.theory }}" placeholder="0"></td>
-                            <td style="max-width:8rem"><input type="text" name="credit_online" class="form-control form-control-app form-control-sm" value="{{ row.online }}" placeholder="0"></td>
-                            <td style="max-width:8rem"><input type="text" name="credit_offline" class="form-control form-control-app form-control-sm" value="{{ row.offline }}" placeholder="0"></td>
                         </tr>
                         {% endfor %}
                     </tbody>
                 </table>
             </div>
             <div class="p-3 bg-light border-top d-flex flex-wrap gap-2 justify-content-between align-items-center">
-                <p class="small text-muted mb-0"><strong>Practical:</strong> one <strong>Completed</strong> submission per duty. Credits = <code>papers × (online credit + offline credit)</code> — same paper count for both components.</p>
-                <button type="submit" class="btn btn-primary-app rounded-3 fw-semibold px-4"><i class="fas fa-save me-1"></i>Save credits</button>
+                <p class="small text-muted mb-0">Use <strong>SEE</strong> or <strong>T4</strong> in the phase name when this offering should use the higher T4 coefficients.</p>
+                <button type="submit" class="btn btn-primary-app rounded-3 fw-semibold px-4"><i class="fas fa-save me-1"></i>Save subject types</button>
             </div>
         </form>
     </div>
 </div>
 {% elif duties %}
-<div class="alert alert-secondary border-0 rounded-3 mb-4 shadow-sm small"><i class="fas fa-info-circle me-2"></i>Upload evaluation rows first — subject names will appear here for credit configuration.</div>
+<div class="alert alert-secondary border-0 rounded-3 mb-4 shadow-sm small"><i class="fas fa-info-circle me-2"></i>Upload evaluation rows first — subject names will appear here so you can set theory vs practical.</div>
 {% endif %}
 
 {% if staging_preview %}

@@ -1716,7 +1716,7 @@ def dept_exam_dashboard(request):
                 'selected_pc_phase_id': sel_pc,
                 'ps_phases': ps_phases_list,
                 'selected_ps_phase_id': sel_ps,
-                'show_exam_bulk_complete': getattr(settings, 'EXAM_PORTAL_BULK_COMPLETE', False),
+                'show_exam_bulk_complete': getattr(settings, 'EXAM_PORTAL_BULK_COMPLETE', True),
             },
         )
     messages.error(request, 'Access denied.')
@@ -2565,8 +2565,8 @@ def _bulk_approve_paper_setting_row(duty: PaperSettingDuty, faculty: Faculty, us
 @require_http_methods(['POST'])
 def dept_exam_child_bulk_complete_all(request):
     """Temporary: sub-unit marks supervision complete and approves paper check/setting without faculty workflow."""
-    if not getattr(settings, 'EXAM_PORTAL_BULK_COMPLETE', False):
-        messages.error(request, 'This action is not enabled (set EXAM_PORTAL_BULK_COMPLETE=1).')
+    if not getattr(settings, 'EXAM_PORTAL_BULK_COMPLETE', True):
+        messages.error(request, 'Bulk complete is disabled on this server (remove EXAM_PORTAL_BULK_COMPLETE=0 or unset it).')
         return redirect('core:dept_exam_dashboard')
     if not _dept_child_only(request):
         messages.error(request, 'Access denied.')

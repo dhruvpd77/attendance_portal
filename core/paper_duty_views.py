@@ -17,7 +17,7 @@ from core.exam_coordination_views import (
     _child_profile,
     _parent_profile,
 )
-from core.paper_checking_credits import credit_for_completion_request
+from core.paper_checking_credits import credit_for_completion_request, is_t4_see_paper_check_bucket
 from core.paper_duty_scope import (
     checking_phases_institute_for_request,
     history_paper_check_completion_requests_for_child,
@@ -593,9 +593,6 @@ def paper_checking_phase_detail(request, phase_id):
             {
                 'name': s,
                 'is_practical': bool(ex and ex.is_practical),
-                'theory': ex.credit_per_paper_theory if ex else '',
-                'online': ex.credit_online_per_paper if ex else '',
-                'offline': ex.credit_offline_per_paper if ex else '',
             }
         )
     return render(
@@ -869,45 +866,33 @@ def paper_checking_child_dismiss_completion(request, pk):
 @login_required
 @require_http_methods(['POST'])
 def paper_checking_phase_subject_credits_save(request, phase_id):
-    from decimal import Decimal, InvalidOperation
+    from decimal import Decimal
 
     if not _paper_coord_access(request):
         messages.error(request, 'Access denied.')
         return redirect('accounts:role_redirect')
     phase = _get_checking_phase(request, phase_id)
     subjects = request.POST.getlist('credit_subject')
-    theories = request.POST.getlist('credit_theory')
-    onlines = request.POST.getlist('credit_online')
-    offlines = request.POST.getlist('credit_offline')
     practical_on = set(request.POST.getlist('credit_is_practical'))
-
-    def to_dec(x) -> Decimal:
-        try:
-            return Decimal(((x or '') + '').strip() or '0')
-        except InvalidOperation:
-            return Decimal('0')
 
     with transaction.atomic():
         PaperCheckingSubjectCredit.objects.filter(phase=phase).delete()
         n = 0
-        for i, subj in enumerate(subjects):
+        for subj in subjects:
             subj = (subj or '').strip()
             if not subj:
                 continue
-            th = to_dec(theories[i] if i < len(theories) else '0')
-            on = to_dec(onlines[i] if i < len(onlines) else '0')
-            off = to_dec(offlines[i] if i < len(offlines) else '0')
             is_p = subj in practical_on
             PaperCheckingSubjectCredit.objects.create(
                 phase=phase,
                 subject_name=subj,
                 is_practical=is_p,
-                credit_per_paper_theory=th,
-                credit_online_per_paper=on if is_p else None,
-                credit_offline_per_paper=off if is_p else None,
+                credit_per_paper_theory=Decimal('0'),
+                credit_online_per_paper=None,
+                credit_offline_per_paper=None,
             )
             n += 1
-    messages.success(request, f'Saved credit rules for {n} subject(s) in phase “{phase.name}”.')
+    messages.success(request, f'Saved subject type for {n} subject(s). Credits use the institute piecewise formula for this phase.')
     return redirect('core:paper_checking_phase_detail', phase_id=phase.id)
 
 

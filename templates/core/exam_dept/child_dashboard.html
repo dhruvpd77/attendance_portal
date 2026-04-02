@@ -104,8 +104,8 @@
         {% if show_exam_bulk_complete %}
         <hr class="my-3">
         <p class="small text-danger mb-2 mb-0">
-            <strong>Temporary tooling:</strong> enable via <code>EXAM_PORTAL_BULK_COMPLETE=1</code> in the server environment.
-            This marks every <em>open</em> supervision slot in your sub-unit as completed (placeholder room/block if empty) and creates or approves paper-check and paper-setting completions for your department’s assignments—use only for test data.
+            <strong>Bulk tooling:</strong> marks every <em>open</em> supervision slot in your sub-unit as completed (placeholder room/block if empty) and creates or approves paper-check and paper-setting completions for your department’s assignments.
+            Hidden if the server sets <code>EXAM_PORTAL_BULK_COMPLETE=0</code>.
         </p>
         <form method="post" action="{% url 'core:dept_exam_child_bulk_complete_all' %}" class="mt-2" onsubmit="return confirm('Bulk-complete supervision and approve all paper duties in your sub-unit scope?');">
             {% csrf_token %}

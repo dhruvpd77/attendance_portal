@@ -850,7 +850,7 @@ class PaperCheckingDuty(models.Model):
 
 
 class PaperCheckingSubjectCredit(models.Model):
-    """Per-phase subject: credit per evaluated paper (theory or practical online/offline)."""
+    """Per-phase subject: marks theory vs practical; credits come from piecewise institute rules in code."""
     phase = models.ForeignKey(
         PaperCheckingPhase,
         on_delete=models.CASCADE,
@@ -865,7 +865,7 @@ class PaperCheckingSubjectCredit(models.Model):
         max_digits=10,
         decimal_places=4,
         default=0,
-        help_text='Credit per paper for theory subjects (or default when not practical).',
+        help_text='Legacy field; computation uses institute piecewise formulas (not this value).',
     )
     credit_online_per_paper = models.DecimalField(
         max_digits=10,

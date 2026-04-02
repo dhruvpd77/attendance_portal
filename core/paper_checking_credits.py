@@ -21,6 +21,25 @@ from core.paper_setting_credits import (
     resolve_exam_remuneration,
 )
 
+_QUANT = Decimal('0.0001')
+
+
+def piecewise_paper_credit_component(n_papers: int, low_rate: Decimal) -> Decimal:
+    """
+    Matches Excel:
+    IF(n<=60, low_rate*n/30, (low_rate*2)+((n-60)*low_rate/30)*2)
+    """
+    n = int(n_papers)
+    if n <= 0:
+        return Decimal('0')
+    lr = Decimal(low_rate)
+    if n <= 60:
+        return (lr * Decimal(n) / Decimal('30')).quantize(_QUANT)
+    return (
+        lr * Decimal('2')
+        + (Decimal(n) - Decimal('60')) * lr / Decimal('30') * Decimal('2')
+    ).quantize(_QUANT)
+
 
 def get_subject_credit(phase_id: int, subject_name: str) -> PaperCheckingSubjectCredit | None:
     sn = (subject_name or '').strip()
@@ -41,6 +60,40 @@ def eval_credit_column_for_phase(phase_name: str) -> int:
     return 23
 
 
+def is_t4_see_paper_check_bucket(phase_name: str) -> bool:
+    """T4 / SEE uses higher piecewise coefficients (column 24 in DR workbook)."""
+    return eval_credit_column_for_phase(phase_name or '') == 24
+
+
+def paper_check_credit_total_for_subject(
+    n_papers: int,
+    *,
+    phase_name: str,
+    is_practical: bool,
+) -> Decimal:
+    """
+    Institute paper-checking credit for n evaluated papers (one duty / one approval).
+    T1–T3 vs T4/SEE from phase name; theory vs practical uses the published piecewise rules.
+    """
+    n = int(n_papers)
+    if n <= 0:
+        return Decimal('0')
+    t4 = is_t4_see_paper_check_bucket(phase_name)
+    if not is_practical:
+        lr = Decimal('2.5') if t4 else Decimal('1.5')
+        return piecewise_paper_credit_component(n, lr)
+    if t4:
+        on_r = Decimal('1.125')
+        off_r = Decimal('1.75')
+    else:
+        on_r = Decimal('0.81')
+        off_r = Decimal('0.96')
+    return (
+        piecewise_paper_credit_component(n, on_r)
+        + piecewise_paper_credit_component(n, off_r)
+    ).quantize(_QUANT)
+
+
 def paper_count_for_completion(req: PaperCheckingCompletionRequest) -> int:
     sh = PaperCheckingAdjustedShare.objects.filter(
         duty_id=req.duty_id, faculty_id=req.faculty_id
@@ -57,12 +110,12 @@ def credit_for_completion_request(req: PaperCheckingCompletionRequest) -> Decima
         return Decimal('0')
     rule = get_subject_credit(duty.phase_id, duty.subject_name)
     if rule:
-        if rule.is_practical:
-            # One submission: same paper count earns both online and offline components.
-            r_on = rule.credit_online_per_paper if rule.credit_online_per_paper is not None else Decimal('0')
-            r_off = rule.credit_offline_per_paper if rule.credit_offline_per_paper is not None else Decimal('0')
-            return Decimal(papers) * (r_on + r_off)
-        return Decimal(papers) * (rule.credit_per_paper_theory or Decimal('0'))
+        ph = duty.phase.name if duty.phase else ''
+        return paper_check_credit_total_for_subject(
+            papers,
+            phase_name=ph,
+            is_practical=bool(rule.is_practical),
+        )
     fac = req.faculty
     bucket = paper_setting_phase_bucket(duty.phase.name if duty.phase else '')
     per_paper = resolve_exam_credit(
@@ -122,7 +175,7 @@ def dr_activity_line_for_completion(req: PaperCheckingCompletionRequest) -> str:
     rule = get_subject_credit(duty.phase_id, duty.subject_name)
     if rule and rule.is_practical:
         return (
-            f'{block} - {sub} - {ph} - {papers} papers (practical: online+offline credit, same count)'
+            f'{block} - {sub} - {ph} - {papers} papers (practical: piecewise online+offline, same count)'
         )
     if rule:
         return f'{block} - {sub} - {ph} - {papers} papers evaluated'
