@@ -84,6 +84,22 @@ def sidebar_links(request):
             _make_link(request, 'Notifications', 'core:admin_notifications', 'fa-bell', 'admin_notifications'),
             _make_link(
                 request,
+                'Risk students (Excel)',
+                'core:admin_risk_students_export',
+                'fa-file-excel',
+                'admin_risk_students_export',
+                active_name_extra=('admin_risk_students_excel',),
+            ),
+            _make_link(
+                request,
+                'Risk student info (logs)',
+                'core:admin_risk_student_info',
+                'fa-phone',
+                'admin_risk_student_info',
+                active_name_extra=('admin_risk_student_info_save', 'admin_risk_student_info_excel'),
+            ),
+            _make_link(
+                request,
                 'Performance Students',
                 'core:admin_performance_students',
                 'fa-chart-pie',
@@ -675,6 +691,16 @@ def sidebar_links(request):
         if flags['show_dr_load']:
             links.append(_make_link(request, 'My DR weekly load', 'core:faculty_dr_load', 'fa-chart-bar', 'faculty_dr_load'))
         links.append(_make_link(request, 'Mentorship Students', 'core:faculty_mentorship', 'fa-users', 'faculty_mentorship'))
+        links.append(
+            _make_link(
+                request,
+                'Risk student info',
+                'core:faculty_risk_student_info',
+                'fa-phone',
+                'faculty_risk_student_info',
+                active_name_extra=('faculty_risk_student_info_excel',),
+            )
+        )
         if flags['show_exam_duties']:
             links.append(
                 _make_link(

@@ -126,7 +126,9 @@ def paper_checking_stage_deserialize_rows(blob: dict) -> list[dict]:
 # --- Supervision ---
 
 
-def supervision_stage_put(request, phase_id: int, rows: list[dict], n_unmatched: int) -> None:
+def supervision_stage_put(
+    request, phase_id: int, rows: list[dict], n_unmatched: int, n_visiting: int = 0
+) -> None:
     ser = []
     for r in rows:
         sd = r.get('supervision_date')
@@ -144,6 +146,7 @@ def supervision_stage_put(request, phase_id: int, rows: list[dict], n_unmatched:
         'v': STAGING_VER,
         'rows': ser,
         'n_unmatched': n_unmatched,
+        'n_visiting': int(n_visiting or 0),
     }
     request.session.modified = True
 

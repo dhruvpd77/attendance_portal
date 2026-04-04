@@ -1,0 +1,77 @@
+{% extends 'core/admin/base_admin.html' %}
+{% load static %}
+{% block title %}Risk students Excel - LJIET_Attendance{% endblock %}
+{% block content %}
+<div class="d-flex flex-wrap justify-content-between align-items-center mb-4 gap-3">
+    <div>
+        <h1 class="page-title mb-1">Risk students (Excel)</h1>
+        <p class="page-subtitle mb-0">Cumulative workbook up to the selected phase &amp; week. Each <strong>WEEK-<em>n</em></strong> sheet uses the <strong>same cumulative attendance through that week</strong> as <strong>Mentorship Students</strong> (not isolated single-week %). Students with overall <strong>&lt;75%</strong> in that window. <strong>T1–T4</strong> sheets: fail rows grouped by <strong>SUBJECT</strong> (merged column), <strong>MARKS</strong> per row, mentor-wise within each subject; contact/remark columns blank.</p>
+    </div>
+    <a href="{% url 'core:admin_dashboard' %}" class="btn btn-outline-app"><i class="fas fa-arrow-left me-1"></i> Dashboard</a>
+</div>
+<div class="card card-app mb-4" style="max-width: 520px;">
+    <div class="card-body p-4">
+        <form method="get" action="{% url 'core:admin_risk_students_excel' %}">
+            <div class="mb-3">
+                <label class="form-label fw-semibold text-secondary">Up through phase</label>
+                <select name="phase" id="phaseSelect" required class="form-select form-select-app" onchange="fillWeeks();">
+                    <option value="">Select phase</option>
+                    {% for p in phases %}
+                    <option value="{{ p }}">{{ p }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="mb-4">
+                <label class="form-label fw-semibold text-secondary">Up through week (within that phase)</label>
+                <select name="week" id="weekSelect" required class="form-select form-select-app">
+                    <option value="">Select week</option>
+                </select>
+            </div>
+            <button type="submit" class="btn btn-primary-app w-100 w-md-auto">
+                <i class="fas fa-download me-1"></i> Download Excel
+            </button>
+        </form>
+    </div>
+</div>
+<p class="text-secondary small" style="max-width: 640px;">
+    Example: choosing <strong>T1 · Week 2</strong> creates sheets <code>WEEK-1</code>, <code>WEEK-2</code>, <code>T1</code>.
+    Choosing <strong>T2 · Week 2</strong> adds all T1 week sheets, <code>T1</code>, then <code>WEEK-…</code> for T2 weeks 1–2, then <code>T2</code>. Requires <strong>Term Phases</strong> dates and exam marks uploaded under <strong>Result</strong> for fail lists.
+</p>
+<script id="week-map-data" type="application/json">{{ week_map_json|safe }}</script>
+<script id="phase-week-offsets" type="application/json">{{ phase_week_offsets_json|safe }}</script>
+<script>
+(function() {
+    var phaseSelect = document.getElementById('phaseSelect');
+    var weekSelect = document.getElementById('weekSelect');
+    var wm = {};
+    var offsets = {};
+    try {
+        var el = document.getElementById('week-map-data');
+        if (el) wm = JSON.parse(el.textContent || '{}');
+        el = document.getElementById('phase-week-offsets');
+        if (el) offsets = JSON.parse(el.textContent || '{}');
+    } catch (e) {}
+    function fillWeeks() {
+        var p = phaseSelect.value;
+        weekSelect.innerHTML = '<option value="">Select week</option>';
+        if (!wm[p] || !wm[p].length) {
+            var o = document.createElement('option');
+            o.value = '0';
+            o.textContent = 'Week 1 (no calendar weeks — phase summary only)';
+            weekSelect.appendChild(o);
+            return;
+        }
+        var off = parseInt(offsets[p] || 0, 10);
+        for (var i = 0; i < wm[p].length; i++) {
+            var opt = document.createElement('option');
+            opt.value = i;
+            var weekNum = off + i + 1;
+            opt.textContent = 'Week ' + weekNum;
+            weekSelect.appendChild(opt);
+        }
+    }
+    phaseSelect.addEventListener('change', fillWeeks);
+    fillWeeks();
+})();
+</script>
+{% endblock %}

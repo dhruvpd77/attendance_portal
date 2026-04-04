@@ -40,6 +40,7 @@ from .models import (
     AttendanceNotificationLog, AttendanceLockSetting, HODWeekLock,
     ExamPhase, ExamPhaseSubject, StudentMark, FacultyDoubtSession,
     FacultyDoubtRequest, FacultyDoubtRequestStudent, FacultyCombineDrCache,
+    RiskStudentMentorLog,
 )
 from accounts.models import UserRole
 
@@ -7468,6 +7469,66 @@ def compile_attendance_excel(request):
 
 
 @login_required
+def admin_risk_students_export(request):
+    """Dept admin / HOD: form to download cumulative risk workbook (weekly <75% + phase mark failures)."""
+    if not user_can_admin(request):
+        return redirect('accounts:role_redirect')
+    dept = get_admin_department(request)
+    if not dept:
+        messages.error(request, 'Select a department first.')
+        return redirect('core:admin_dashboard')
+    phases = ['T1', 'T2', 'T3', 'T4']
+    batch = Batch.objects.filter(department=dept).order_by('name').first()
+    if batch:
+        wm_obj, _, _ = _student_phase_weeks_and_dates(dept, batch)
+        week_map = {p: [[d.isoformat() for d in w] for w in wm_obj.get(p, [])] for p in phases}
+    else:
+        week_map = {p: [] for p in phases}
+    phase_week_offsets = _get_phase_week_offsets(week_map)
+    ctx = {
+        'department': dept,
+        'phases': phases,
+        'week_map_json': json.dumps(week_map),
+        'phase_week_offsets_json': json.dumps(phase_week_offsets),
+    }
+    return render(request, 'core/admin/risk_students_export.html', ctx)
+
+
+@login_required
+def admin_risk_students_excel(request):
+    if not user_can_admin(request):
+        return redirect('core:admin_dashboard')
+    dept = get_admin_department(request)
+    phase = (request.GET.get('phase') or '').upper()
+    week_str = request.GET.get('week')
+    if not dept or phase not in ('T1', 'T2', 'T3', 'T4'):
+        return redirect('core:admin_risk_students_export')
+    try:
+        week_idx = int(week_str) if week_str is not None else 0
+    except (TypeError, ValueError):
+        week_idx = 0
+    batch = Batch.objects.filter(department=dept).order_by('name').first()
+    if batch:
+        week_map_obj, _, _ = _student_phase_weeks_and_dates(dept, batch)
+    else:
+        week_map_obj = {p: _compile_phase_weeks_date_objects(dept, p) for p in ['T1', 'T2', 'T3', 'T4']}
+    sel_weeks = week_map_obj.get(phase, [])
+    if sel_weeks:
+        week_idx = max(0, min(week_idx, len(sel_weeks) - 1))
+    else:
+        week_idx = 0
+    from core.risk_students_excel import build_risk_students_workbook, workbook_to_bytes
+
+    wb = build_risk_students_workbook(dept, phase, week_idx)
+    data = workbook_to_bytes(wb)
+    safe_dept = re.sub(r'[^\w\-]+', '_', dept.name)[:40]
+    fname = f'Risk_Students_{safe_dept}_{phase}_through_W{week_idx + 1}.xlsx'
+    resp = HttpResponse(data, content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+    resp['Content-Disposition'] = f'attachment; filename="{fname}"'
+    return resp
+
+
+@login_required
 def overall_attendance(request):
     """Overall Attendance: download compiled sheet in format (DIV-A1)_WEEK-1_SY-1_SEM-IV_ COMPILED_ATTENDANCE SHEET."""
     if not user_can_admin(request):
@@ -10000,6 +10061,455 @@ def faculty_mentorship(request):
         'selected_week_global_num': selected_week_global_num,
     }
     return render(request, 'core/faculty/mentorship.html', ctx)
+
+
+def _risk_student_info_excel_week_idx(dept, phase, week_param, batch_for_weeks):
+    """Match risk-student UI: 'all' or missing means last week of phase; else 0-based week index."""
+    if not batch_for_weeks:
+        return 0
+    week_map, _, _ = _student_phase_weeks_and_dates(dept, batch_for_weeks)
+    weeks = week_map.get(phase, [])
+    if not weeks:
+        return 0
+    if week_param and week_param != 'all':
+        try:
+            wi = int(week_param)
+            if 0 <= wi < len(weeks):
+                return wi
+        except ValueError:
+            pass
+    return len(weeks) - 1
+
+
+def _risk_student_info_excel_mentee_ids_and_batch(dept, faculty):
+    m_ids = list(faculty_ids_equivalent_for_portal(faculty))
+    mentorship_students = list(
+        Student.objects.filter(mentor_id__in=m_ids, department=dept)
+        .select_related('batch')
+        .annotate(roll_no_int=Cast('roll_no', IntegerField()))
+        .order_by('batch__name', 'roll_no_int', 'roll_no')
+    )
+    mentee_ids = [s.id for s in mentorship_students]
+    batch_for_weeks = (
+        mentorship_students[0].batch
+        if mentorship_students
+        else Batch.objects.filter(department=dept).order_by('name').first()
+    )
+    return mentee_ids, batch_for_weeks
+
+
+def _risk_student_info_build_context(
+    request,
+    dept,
+    scope_faculty,
+    *,
+    is_admin_proxy=False,
+    faculty_picker_options=None,
+):
+    """Shared context for risk student contact logs. Logs are loaded by student/key only (not by who saved)."""
+    from core.risk_students_excel import _cumulative_attendance_risk_rows, mentee_phase_fail_rows
+
+    phases = ['T1', 'T2', 'T3', 'T4']
+    mode = request.GET.get('mode', 'attendance')
+    if mode not in ('attendance', 'marks'):
+        mode = 'attendance'
+    phase = request.GET.get('phase', 'T1')
+    if phase not in phases:
+        phase = 'T1'
+    week_param = request.GET.get('week', 'all')
+
+    mentorship_students = []
+    batch_for_weeks = Batch.objects.filter(department=dept).order_by('name').first()
+    if scope_faculty:
+        m_ids = list(faculty_ids_equivalent_for_portal(scope_faculty))
+        mentorship_students = list(
+            Student.objects.filter(mentor_id__in=m_ids, department=dept)
+            .select_related('batch', 'mentor')
+            .annotate(roll_no_int=Cast('roll_no', IntegerField()))
+            .order_by('batch__name', 'roll_no_int', 'roll_no')
+        )
+        if mentorship_students:
+            batch_for_weeks = mentorship_students[0].batch
+
+    week_map, _, phase_dates = _student_phase_weeks_and_dates(dept, batch_for_weeks)
+    phase_order_idx = phases.index(phase)
+    phase_dates_set = set()
+    for i in range(phase_order_idx + 1):
+        phase_dates_set.update(phase_dates.get(phases[i], []))
+    weeks = week_map.get(phase, [])
+    week_idx = None
+    if week_param and week_param != 'all':
+        try:
+            week_idx = int(week_param)
+            if week_idx < 0 or week_idx >= len(weeks):
+                week_idx = None
+        except ValueError:
+            week_idx = None
+    if week_idx is not None and weeks:
+        cum_dates = set()
+        for i in range(phase_order_idx):
+            cum_dates.update(phase_dates.get(phases[i], []))
+        for i in range(week_idx + 1):
+            cum_dates.update(weeks[i])
+        phase_dates_set = cum_dates
+
+    if week_idx is not None:
+        log_week_idx = week_idx
+    elif weeks:
+        log_week_idx = len(weeks) - 1
+    else:
+        log_week_idx = None
+
+    phase_week_offsets = _get_phase_week_offsets(week_map)
+    week_options = [(i, phase_week_offsets.get(phase, 0) + i + 1) for i in range(len(weeks))]
+    selected_week_global_num = (
+        (phase_week_offsets.get(phase, 0) + week_idx + 1) if week_idx is not None and weeks else None
+    )
+    log_week_global_num = (
+        (phase_week_offsets.get(phase, 0) + log_week_idx + 1) if log_week_idx is not None and weeks else None
+    )
+
+    has_mentees = bool(mentorship_students)
+    risk_data = []
+    if mentorship_students:
+        if mode == 'marks':
+            risk_data = mentee_phase_fail_rows(dept, [s.id for s in mentorship_students], phase)
+            if risk_data:
+                log_qs = RiskStudentMentorLog.objects.filter(
+                    department=dept,
+                    kind=RiskStudentMentorLog.KIND_MARKS_SUBJECT,
+                    phase=phase,
+                    student_id__in=[r['student_id'] for r in risk_data],
+                )
+                log_map = {(lg.student_id, lg.subject_name or ''): lg for lg in log_qs}
+                for r in risk_data:
+                    r['log'] = log_map.get((r['student_id'], r.get('subject') or ''))
+        else:
+            risk_data = _cumulative_attendance_risk_rows(dept, mentorship_students, phase_dates_set)
+            if risk_data and log_week_idx is not None:
+                log_qs = RiskStudentMentorLog.objects.filter(
+                    department=dept,
+                    kind=RiskStudentMentorLog.KIND_ATTENDANCE_WEEK,
+                    phase=phase,
+                    week_index=log_week_idx,
+                    student_id__in=[r['student_id'] for r in risk_data],
+                )
+                log_map = {lg.student_id: lg for lg in log_qs}
+            else:
+                log_map = {}
+            for r in risk_data:
+                r['log'] = log_map.get(r['student_id']) if log_map else None
+
+    sid_key = scope_faculty.pk if scope_faculty else ''
+    risk_session_key = f'{dept.id}|{phase}|{week_param}|{mode}|{sid_key}'
+
+    return {
+        'department': dept,
+        'faculty': scope_faculty,
+        'scope_faculty': scope_faculty,
+        'is_admin_proxy': is_admin_proxy,
+        'needs_faculty_pick': bool(is_admin_proxy and not scope_faculty),
+        'faculty_picker_options': faculty_picker_options or [],
+        'mode': mode,
+        'phase': phase,
+        'phases': phases,
+        'week_options': week_options,
+        'selected_week': week_param,
+        'selected_week_global_num': selected_week_global_num,
+        'log_week_idx': log_week_idx,
+        'log_week_global_num': log_week_global_num,
+        'risk_rows': risk_data,
+        'contact_choices': RiskStudentMentorLog.CONTACT_CHOICES,
+        'has_mentees': has_mentees,
+        'risk_session_key': risk_session_key,
+    }
+
+
+def _risk_student_info_save_commit(request, dept, m_ids_allow) -> tuple[bool, str]:
+    """Validate POST and save one log. Stores student's mentor on the log row. Returns (ok, redirect_qs)."""
+    from core.risk_students_excel import mentee_phase_fail_rows
+
+    kind = request.POST.get('kind', '')
+    phase = request.POST.get('phase', 'T1')
+    week_raw = request.POST.get('week_index', '')
+    subject_name = (request.POST.get('subject_name') or '').strip()
+    try:
+        sid = int(request.POST.get('student_id', '0'))
+    except ValueError:
+        sid = 0
+    q_fallback = request.POST.get('next_qs') or ''
+    student = Student.objects.filter(pk=sid, department=dept).select_related('mentor').first()
+    if not student or not student.mentor_id or student.mentor_id not in m_ids_allow:
+        return False, q_fallback
+
+    phases = {'T1', 'T2', 'T3', 'T4'}
+    if phase not in phases:
+        phase = 'T1'
+
+    cp_raw = (request.POST.get('contact_person') or '').strip()
+    if cp_raw in (RiskStudentMentorLog.CONTACT_FATHER, RiskStudentMentorLog.CONTACT_MOTHER, RiskStudentMentorLog.CONTACT_OTHER):
+        contact_person = cp_raw
+    else:
+        contact_person = RiskStudentMentorLog.CONTACT_FATHER
+
+    call_date = None
+    cd_raw = (request.POST.get('call_date') or '').strip()
+    if cd_raw:
+        try:
+            call_date = datetime.strptime(cd_raw, '%Y-%m-%d').date()
+        except ValueError:
+            pass
+
+    call_time = None
+    ct_raw = (request.POST.get('call_time') or '').strip()
+    if ct_raw:
+        try:
+            call_time = datetime.strptime(ct_raw, '%H:%M').time()
+        except ValueError:
+            try:
+                call_time = datetime.strptime(ct_raw, '%H:%M:%S').time()
+            except ValueError:
+                pass
+
+    remarks = (request.POST.get('remarks') or '').strip()
+    mentor_f = student.mentor
+    if not mentor_f:
+        return False, q_fallback
+
+    if kind == RiskStudentMentorLog.KIND_MARKS_SUBJECT:
+        fails = mentee_phase_fail_rows(dept, [student.id], phase)
+        subj_ok = {r['subject'] for r in fails}
+        if subject_name not in subj_ok:
+            return False, q_fallback
+        RiskStudentMentorLog.objects.update_or_create(
+            student=student,
+            kind=RiskStudentMentorLog.KIND_MARKS_SUBJECT,
+            phase=phase,
+            subject_name=subject_name,
+            defaults={
+                'department': dept,
+                'faculty': mentor_f,
+                'week_index': None,
+                'contact_person': contact_person,
+                'call_date': call_date,
+                'call_time': call_time,
+                'remarks': remarks,
+            },
+        )
+    elif kind == RiskStudentMentorLog.KIND_ATTENDANCE_WEEK:
+        try:
+            widx = int(week_raw)
+        except ValueError:
+            widx = -1
+        week_map, _, _ = _student_phase_weeks_and_dates(dept, student.batch)
+        weeks = week_map.get(phase, [])
+        if widx < 0 or widx >= len(weeks):
+            return False, q_fallback
+        RiskStudentMentorLog.objects.update_or_create(
+            student=student,
+            kind=RiskStudentMentorLog.KIND_ATTENDANCE_WEEK,
+            phase=phase,
+            week_index=widx,
+            defaults={
+                'department': dept,
+                'faculty': mentor_f,
+                'subject_name': '',
+                'contact_person': contact_person,
+                'call_date': call_date,
+                'call_time': call_time,
+                'remarks': remarks,
+            },
+        )
+    else:
+        return False, q_fallback
+
+    return True, q_fallback
+
+
+@login_required
+def faculty_risk_student_info(request):
+    """Faculty: optional parent-call log for at-risk mentees (attendance or marks); data appears on admin Risk students Excel."""
+    if not user_can_faculty(request):
+        return redirect('accounts:role_redirect')
+    faculty = get_faculty_user(request)
+    if not faculty:
+        return redirect('accounts:logout')
+    dept = get_faculty_working_department(request)
+    if not dept:
+        messages.error(request, 'No department context. Use the header switcher or contact admin.')
+        return redirect('core:faculty_dashboard')
+
+    ctx = _risk_student_info_build_context(request, dept, faculty, is_admin_proxy=False, faculty_picker_options=None)
+    return render(request, 'core/faculty/risk_student_info.html', ctx)
+
+
+@login_required
+def faculty_risk_student_info_excel(request):
+    """Faculty: one sheet per export — merged student names, rows for each at-risk week and failed subject through selected phase/week."""
+    if not user_can_faculty(request):
+        return redirect('accounts:role_redirect')
+    faculty = get_faculty_user(request)
+    if not faculty:
+        return redirect('accounts:logout')
+    dept = get_faculty_working_department(request)
+    if not dept:
+        messages.error(request, 'No department context.')
+        return redirect('core:faculty_dashboard')
+
+    phases = ['T1', 'T2', 'T3', 'T4']
+    phase = (request.GET.get('phase') or 'T1').upper()
+    if phase not in phases:
+        phase = 'T1'
+    week_param = request.GET.get('week', 'all')
+
+    mentee_ids, batch_for_weeks = _risk_student_info_excel_mentee_ids_and_batch(dept, faculty)
+    week_idx = _risk_student_info_excel_week_idx(dept, phase, week_param, batch_for_weeks)
+
+    from core.risk_students_excel import build_faculty_risk_studentwise_workbook, workbook_to_bytes
+
+    mentor_lbl = (faculty.short_name or faculty.full_name or str(faculty.pk)).strip()
+    wb = build_faculty_risk_studentwise_workbook(
+        dept, phase, week_idx, mentee_ids, mentor_label=f'Mentor: {mentor_lbl}'
+    )
+    data = workbook_to_bytes(wb)
+    safe_dept = re.sub(r'[^\w\-]+', '_', dept.name)[:40]
+    fname = f'Risk_Students_Studentwise_{safe_dept}_{phase}_W{week_idx + 1}.xlsx'
+    resp = HttpResponse(data, content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+    resp['Content-Disposition'] = f'attachment; filename="{fname}"'
+    return resp
+
+
+@login_required
+def admin_risk_student_info(request):
+    """Department admin / HOD: same as faculty risk log UI; pick a faculty to edit their mentees' logs."""
+    if not user_can_admin(request):
+        return redirect('accounts:role_redirect')
+    dept = get_admin_department(request)
+    if not dept:
+        messages.error(request, 'No department selected.')
+        return redirect('core:admin_dashboard')
+
+    faculty_options = list(
+        Faculty.objects.filter(department=dept).order_by('short_name', 'full_name', 'pk')
+    )
+    pick_id = request.GET.get('faculty')
+    scope = None
+    if pick_id:
+        scope = Faculty.objects.filter(pk=pick_id, department=dept).first()
+
+    ctx = _risk_student_info_build_context(
+        request,
+        dept,
+        scope,
+        is_admin_proxy=True,
+        faculty_picker_options=faculty_options,
+    )
+    return render(request, 'core/faculty/risk_student_info.html', ctx)
+
+
+@login_required
+def admin_risk_student_info_excel(request):
+    """Admin proxy: same student-wise workbook as faculty export; requires ?faculty= id."""
+    if not user_can_admin(request):
+        return redirect('core:admin_dashboard')
+    dept = get_admin_department(request)
+    if not dept:
+        messages.error(request, 'No department selected.')
+        return redirect('core:admin_dashboard')
+
+    pick_id = request.GET.get('faculty')
+    scope = Faculty.objects.filter(pk=pick_id, department=dept).first() if pick_id else None
+    if not scope:
+        messages.error(request, 'Select a faculty on Risk student info, then download Excel.')
+        return redirect('core:admin_risk_student_info')
+
+    phases = ['T1', 'T2', 'T3', 'T4']
+    phase = (request.GET.get('phase') or 'T1').upper()
+    if phase not in phases:
+        phase = 'T1'
+    week_param = request.GET.get('week', 'all')
+
+    mentee_ids, batch_for_weeks = _risk_student_info_excel_mentee_ids_and_batch(dept, scope)
+    week_idx = _risk_student_info_excel_week_idx(dept, phase, week_param, batch_for_weeks)
+
+    from core.risk_students_excel import build_faculty_risk_studentwise_workbook, workbook_to_bytes
+
+    mentor_lbl = (scope.short_name or scope.full_name or str(scope.pk)).strip()
+    wb = build_faculty_risk_studentwise_workbook(
+        dept, phase, week_idx, mentee_ids, mentor_label=f'Mentor: {mentor_lbl}'
+    )
+    data = workbook_to_bytes(wb)
+    safe_dept = re.sub(r'[^\w\-]+', '_', dept.name)[:40]
+    fname = f'Risk_Students_Studentwise_{safe_dept}_{phase}_W{week_idx + 1}_{mentor_lbl[:20]}.xlsx'
+    resp = HttpResponse(data, content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+    resp['Content-Disposition'] = f'attachment; filename="{fname}"'
+    return resp
+
+
+@login_required
+@require_POST
+def faculty_risk_student_info_save(request):
+    if not user_can_faculty(request):
+        return redirect('accounts:role_redirect')
+    faculty = get_faculty_user(request)
+    if not faculty:
+        return redirect('accounts:logout')
+    dept = get_faculty_working_department(request)
+    if not dept:
+        messages.error(request, 'No department context.')
+        return redirect(reverse('core:faculty_risk_student_info'))
+
+    m_ids = set(faculty_ids_equivalent_for_portal(faculty))
+    ok, q = _risk_student_info_save_commit(request, dept, m_ids)
+    if not ok:
+        err = 'Invalid student, mentee, or subject/week for this save.'
+        if request.POST.get('kind') == RiskStudentMentorLog.KIND_MARKS_SUBJECT:
+            err = 'Invalid student or not an at-risk marks row for this student in the selected phase.'
+        messages.error(request, err)
+        url = f'{reverse("core:faculty_risk_student_info")}?{q}' if q else reverse('core:faculty_risk_student_info')
+        return redirect(url)
+
+    messages.success(request, 'Saved contact log.')
+    q = request.POST.get('next_qs') or ''
+    if q:
+        return redirect(f'{reverse("core:faculty_risk_student_info")}?{q}')
+    return redirect(reverse('core:faculty_risk_student_info'))
+
+
+@login_required
+@require_POST
+def admin_risk_student_info_save(request):
+    if not user_can_admin(request):
+        return redirect('accounts:role_redirect')
+    dept = get_admin_department(request)
+    if not dept:
+        messages.error(request, 'No department selected.')
+        return redirect(reverse('core:admin_risk_student_info'))
+
+    try:
+        ctx_fid = int(request.POST.get('context_faculty_id', '0'))
+    except ValueError:
+        ctx_fid = 0
+    ctx_faculty = Faculty.objects.filter(pk=ctx_fid, department=dept).first()
+    if not ctx_faculty:
+        messages.error(request, 'Invalid faculty context.')
+        return redirect(reverse('core:admin_risk_student_info'))
+
+    m_ids = set(faculty_ids_equivalent_for_portal(ctx_faculty))
+    ok, q = _risk_student_info_save_commit(request, dept, m_ids)
+    if not ok:
+        messages.error(
+            request,
+            'Could not save. Check student belongs to the selected faculty mentees and week/subject are valid.',
+        )
+        url = f'{reverse("core:admin_risk_student_info")}?{q}' if q else reverse('core:admin_risk_student_info')
+        return redirect(url)
+
+    messages.success(request, 'Saved contact log.')
+    q = request.POST.get('next_qs') or ''
+    if q:
+        return redirect(f'{reverse("core:admin_risk_student_info")}?{q}')
+    return redirect(reverse('core:admin_risk_student_info'))
 
 
 # ---------- Student: Attendance Summary ----------

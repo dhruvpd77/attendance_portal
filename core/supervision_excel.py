@@ -8,8 +8,11 @@ from datetime import date, datetime
 
 import openpyxl
 
-from core.models import Faculty
+from core.models import Department, Faculty, InstituteSemester
 from core.exam_subunit_scope import canonical_division_code
+
+# Auto-created per academic semester when supervision/paper sheets name unknown faculty.
+VISITING_DEPARTMENT_NAME = 'Visiting faculty'
 
 
 def _norm(s) -> str:
@@ -56,6 +59,95 @@ def match_faculty_global(full_name: str, short_initial: str) -> Faculty | None:
             if _norm(f.short_name) == si:
                 return f
     return None
+
+
+def ensure_visiting_faculty(institute_semester: InstituteSemester, full_name: str, short_initial: str) -> Faculty:
+    """Create or reuse a Faculty row under auto-created Visiting faculty department for this academic semester."""
+    dept, _ = Department.objects.get_or_create(
+        institute_semester=institute_semester,
+        name=VISITING_DEPARTMENT_NAME,
+        defaults={},
+    )
+    fac = match_faculty_for_department(dept, full_name, short_initial)
+    if fac:
+        return fac
+
+    fn = (full_name or '').strip()
+    si = (short_initial or '').strip()
+    if not fn and not si:
+        fn = 'Unknown visitor'
+        si = 'VIS'
+    elif not fn:
+        fn = si
+    elif not si:
+        si = re.sub(r'[^A-Z0-9]', '', _norm(fn))[:8] or 'VST'
+    si = si[:30]
+    if not si:
+        si = 'VST'
+
+    if Faculty.objects.filter(department=dept, full_name__iexact=fn).exists():
+        return Faculty.objects.filter(department=dept, full_name__iexact=fn).first()
+
+    base = si
+    n = 0
+    while Faculty.objects.filter(department=dept, short_name__iexact=si).exists():
+        n += 1
+        si = f'{base[:25]}-{n}'[:30]
+
+    return Faculty.objects.create(
+        department=dept,
+        full_name=fn[:200],
+        short_name=si[:30],
+    )
+
+
+def resolve_supervision_faculty_for_phase(
+    *,
+    institute_semester: InstituteSemester,
+    coordinator_department: Department | None,
+    hub_phase: bool,
+    full_name: str,
+    short_initial: str,
+) -> tuple[Faculty, bool]:
+    """
+    Match sheet name to Faculty; if not found in any regular workflow, attach to Visiting faculty department.
+    Returns (faculty, created_or_matched_via_visiting).
+    """
+    if hub_phase:
+        fac = match_faculty_global(full_name, short_initial)
+    else:
+        fac = None
+        if coordinator_department:
+            fac = match_faculty_for_department(coordinator_department, full_name, short_initial)
+        if not fac:
+            fac = match_faculty_global(full_name, short_initial)
+    if fac:
+        return fac, False
+    return ensure_visiting_faculty(institute_semester, full_name, short_initial), True
+
+
+def resolve_faculty_with_visiting_fallback(
+    institute_semester: InstituteSemester | None,
+    *,
+    coordinator_department: Department | None,
+    scope_wide: bool,
+    full_name: str,
+    short_initial: str,
+) -> Faculty | None:
+    """Paper duties / shared resolver: match globally or locally, then Visiting faculty if semester known."""
+    if scope_wide:
+        fac = match_faculty_global(full_name, short_initial)
+    else:
+        fac = None
+        if coordinator_department:
+            fac = match_faculty_for_department(coordinator_department, full_name, short_initial)
+        if not fac:
+            fac = match_faculty_global(full_name, short_initial)
+    if fac:
+        return fac
+    if not institute_semester:
+        return None
+    return ensure_visiting_faculty(institute_semester, full_name, short_initial)
 
 
 def _cell_date(val):

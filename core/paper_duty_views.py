@@ -64,7 +64,7 @@ from core.exam_upload_staging import (
     paper_setting_stage_get,
     paper_setting_stage_put,
 )
-from core.supervision_excel import match_faculty_for_department, match_faculty_global
+from core.supervision_excel import resolve_faculty_with_visiting_fallback
 
 
 def _institute_paper_access(request):
@@ -121,28 +121,45 @@ def _get_setting_phase(request, phase_id) -> PaperSettingPhase:
     return get_object_or_404(qs.filter(pk=phase_id))
 
 
-def _faculty_match_checking(phase: PaperCheckingPhase, coordinator_dept: Department | None, name: str, initial: str):
-    if phase.institute_scope or phase.hub_coordinator_id:
-        return match_faculty_global(name, initial)
-    if coordinator_dept:
-        return match_faculty_for_department(coordinator_dept, name, initial)
+def _paper_phase_institute_semester(phase, coordinator_dept: Department | None):
+    if getattr(phase, 'institute_semester_id', None):
+        return phase.institute_semester
+    if coordinator_dept and coordinator_dept.institute_semester_id:
+        return coordinator_dept.institute_semester
     if phase.department_id:
-        d = Department.objects.filter(pk=phase.department_id).first()
-        if d:
-            return match_faculty_for_department(d, name, initial)
-    return match_faculty_global(name, initial)
+        d = Department.objects.filter(pk=phase.department_id).select_related('institute_semester').first()
+        return d.institute_semester if d else None
+    return None
+
+
+def _faculty_match_checking(phase: PaperCheckingPhase, coordinator_dept: Department | None, name: str, initial: str):
+    sem = _paper_phase_institute_semester(phase, coordinator_dept)
+    scope_wide = bool(phase.institute_scope or phase.hub_coordinator_id)
+    local_dept = coordinator_dept
+    if not scope_wide and local_dept is None and phase.department_id:
+        local_dept = Department.objects.filter(pk=phase.department_id).first()
+    return resolve_faculty_with_visiting_fallback(
+        sem,
+        coordinator_department=local_dept,
+        scope_wide=scope_wide,
+        full_name=name,
+        short_initial=initial,
+    )
 
 
 def _faculty_match_setting(phase: PaperSettingPhase, coordinator_dept: Department | None, name: str, initial: str):
-    if phase.institute_scope or phase.hub_coordinator_id:
-        return match_faculty_global(name, initial)
-    if coordinator_dept:
-        return match_faculty_for_department(coordinator_dept, name, initial)
-    if phase.department_id:
-        d = Department.objects.filter(pk=phase.department_id).first()
-        if d:
-            return match_faculty_for_department(d, name, initial)
-    return match_faculty_global(name, initial)
+    sem = _paper_phase_institute_semester(phase, coordinator_dept)
+    scope_wide = bool(phase.institute_scope or phase.hub_coordinator_id)
+    local_dept = coordinator_dept
+    if not scope_wide and local_dept is None and phase.department_id:
+        local_dept = Department.objects.filter(pk=phase.department_id).first()
+    return resolve_faculty_with_visiting_fallback(
+        sem,
+        coordinator_department=local_dept,
+        scope_wide=scope_wide,
+        full_name=name,
+        short_initial=initial,
+    )
 
 
 def _commit_paper_checking_rows(

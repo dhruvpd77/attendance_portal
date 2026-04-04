@@ -233,11 +233,21 @@ def _section_credit_excel_banner_lines(
 
 def _write_section_credit_workbook(ws, rows: list[dict], line1: str, line2: str) -> None:
     """Merged banners, grouped header row, sub-headers, borders — aligned with DR / supervision exports."""
+    rows = sorted(
+        rows,
+        key=lambda r: (
+            (r['faculty'].department.name if r['faculty'].department_id else '').upper(),
+            (r['faculty'].full_name or '').upper(),
+            str(r['faculty'].pk),
+        ),
+    )
+
     ncols = 13
     thin = Side(style='thin', color='555555')
     border = Border(left=thin, right=thin, top=thin, bottom=thin)
     ctr = Alignment(horizontal='center', vertical='center', wrap_text=True)
     ctr_left = Alignment(horizontal='left', vertical='center', wrap_text=True)
+    dept_cell_align = Alignment(horizontal='center', vertical='center', wrap_text=True)
 
     title_fill = PatternFill(start_color='1E3A5F', end_color='1E3A5F', fill_type='solid')
     title_font = Font(name='Calibri', size=14, bold=True, color='FFFFFF')
@@ -257,6 +267,19 @@ def _write_section_credit_workbook(ws, rows: list[dict], line1: str, line2: str)
     data_font = Font(name='Calibri', size=10)
     num_align = Alignment(horizontal='right', vertical='center')
 
+    dept_band_fills = [
+        PatternFill(start_color='E3F2FD', end_color='E3F2FD', fill_type='solid'),
+        PatternFill(start_color='E8F5E9', end_color='E8F5E9', fill_type='solid'),
+        PatternFill(start_color='FFF8E1', end_color='FFF8E1', fill_type='solid'),
+        PatternFill(start_color='F3E5F5', end_color='F3E5F5', fill_type='solid'),
+        PatternFill(start_color='FFEBEE', end_color='FFEBEE', fill_type='solid'),
+        PatternFill(start_color='E0F7FA', end_color='E0F7FA', fill_type='solid'),
+        PatternFill(start_color='FBE9E7', end_color='FBE9E7', fill_type='solid'),
+        PatternFill(start_color='ECEFF1', end_color='ECEFF1', fill_type='solid'),
+    ]
+    dept_color_index: dict[str, int] = {}
+    next_dept_i = 0
+
     ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=ncols)
     c1 = ws.cell(row=1, column=1, value=line1)
     c1.font = title_font
@@ -275,7 +298,7 @@ def _write_section_credit_workbook(ws, rows: list[dict], line1: str, line2: str)
 
     gr = 3
     ws.merge_cells(start_row=gr, start_column=1, end_row=gr, end_column=2)
-    g1 = ws.cell(row=gr, column=1, value='Faculty & department')
+    g1 = ws.cell(row=gr, column=1, value='Department & faculty')
     g1.font = grp_font
     g1.fill = grp_id_fill
     g1.alignment = ctr
@@ -306,8 +329,8 @@ def _write_section_credit_workbook(ws, rows: list[dict], line1: str, line2: str)
         ws.cell(row=gr, column=col_g).border = border
 
     hdr = [
-        'Faculty',
         'Department',
+        'Faculty',
         'Paper checking count',
         'Paper checking credit',
         'Paper checking rupees ₹',
@@ -328,15 +351,30 @@ def _write_section_credit_workbook(ws, rows: list[dict], line1: str, line2: str)
         cell.border = border
         cell.alignment = ctr if c >= 3 else Alignment(horizontal='center', vertical='center', wrap_text=True)
 
-    band_a = PatternFill(start_color='FAFBFC', end_color='FAFBFC', fill_type='solid')
-    band_b = PatternFill(start_color='FFFFFF', end_color='FFFFFF', fill_type='solid')
-
     rno = hr + 1
+    block_start = rno
+    merge_blocks: list[tuple[int, int]] = []
+    prev_dept_key = None
+
     for i, row in enumerate(rows):
         f = row['faculty']
-        fill = band_a if i % 2 == 0 else band_b
-        ws.cell(row=rno, column=1, value=f.full_name).font = data_font
-        ws.cell(row=rno, column=2, value=f.department.name if f.department_id else '').font = data_font
+        dname = f.department.name if f.department_id else ''
+        dept_key = dname or f'__none_{f.pk}__'
+
+        if i > 0 and dept_key != prev_dept_key:
+            merge_blocks.append((block_start, rno - 1))
+            block_start = rno
+
+        if dept_key not in dept_color_index:
+            dept_color_index[dept_key] = next_dept_i % len(dept_band_fills)
+            next_dept_i += 1
+
+        prev_dept_key = dept_key
+        fill = dept_band_fills[dept_color_index[dept_key]]
+        is_first_in_block = rno == block_start
+        c1 = ws.cell(row=rno, column=1, value=dname if is_first_in_block else None)
+        c1.font = data_font
+        ws.cell(row=rno, column=2, value=f.full_name).font = data_font
         ws.cell(row=rno, column=3, value=row['paper_n']).font = data_font
         ws.cell(row=rno, column=4, value=float(row['paper_credits'])).font = data_font
         ws.cell(row=rno, column=5, value=float(row['paper_rem'])).font = data_font
@@ -354,9 +392,20 @@ def _write_section_credit_workbook(ws, rows: list[dict], line1: str, line2: str)
             cell.fill = fill
             if c >= 3:
                 cell.alignment = num_align
-            else:
+            elif c == 2:
                 cell.alignment = ctr_left
+            else:
+                cell.alignment = dept_cell_align
         rno += 1
+
+    if rows:
+        merge_blocks.append((block_start, rno - 1))
+
+    for sr, er in merge_blocks:
+        if er > sr:
+            ws.merge_cells(start_row=sr, start_column=1, end_row=er, end_column=1)
+        top = ws.cell(row=sr, column=1)
+        top.alignment = dept_cell_align
 
     tot_row = rno
     sum_papers = sum(row['paper_n'] for row in rows)
@@ -403,7 +452,7 @@ def _write_section_credit_workbook(ws, rows: list[dict], line1: str, line2: str)
         cell.border = border
         cell.alignment = num_align
 
-    widths = (22, 14, 10, 12, 12, 10, 12, 12, 10, 12, 12, 12, 14)
+    widths = (16, 22, 10, 12, 12, 10, 12, 12, 10, 12, 12, 12, 14)
     for i, w in enumerate(widths, start=1):
         ws.column_dimensions[get_column_letter(i)].width = w
 

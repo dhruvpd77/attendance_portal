@@ -102,7 +102,11 @@ from core.exam_upload_staging import (
     supervision_stage_get,
     supervision_stage_put,
 )
-from core.supervision_excel import match_faculty_for_department, match_faculty_global, parse_combined_supervision_workbook
+from core.supervision_excel import (
+    VISITING_DEPARTMENT_NAME,
+    parse_combined_supervision_workbook,
+    resolve_supervision_faculty_for_phase,
+)
 from core.exam_subunit_scope import duty_visible_to_subunit, subunit_supervision_duty_filter_q, phases_for_subunit_prof
 from core.views import is_super_admin
 
@@ -1938,15 +1942,14 @@ def dept_exam_phase_detail(request, phase_id):
         srows = supervision_stage_deserialize_rows(staging_blob)
         staging_preview = []
         for row in srows:
-            if phase.hub_coordinator_id:
-                fac = match_faculty_global(row['faculty_name'], row['faculty_initial'])
-            else:
-                fac = match_faculty_for_department(
-                    prof.department,
-                    row['faculty_name'],
-                    row['faculty_initial'],
-                )
-            staging_preview.append({**row, 'faculty': fac})
+            fac, _vis = resolve_supervision_faculty_for_phase(
+                institute_semester=phase.institute_semester,
+                coordinator_department=prof.department,
+                hub_phase=bool(phase.hub_coordinator_id),
+                full_name=row['faculty_name'],
+                short_initial=row['faculty_initial'],
+            )
+            staging_preview.append({**row, 'faculty': fac, 'visiting_assigned': _vis})
     duties = phase.duties.select_related('faculty', 'original_faculty').order_by(
         'supervision_date', 'division_code', 'faculty__full_name'
     )
@@ -1971,6 +1974,7 @@ def dept_exam_phase_detail(request, phase_id):
             'all_departments': departments_for_exam_coordination_request(request),
             'staging_preview': staging_preview,
             'staging_unmatched': staging_blob.get('n_unmatched') if staging_blob else None,
+            'staging_visiting': staging_blob.get('n_visiting') if staging_blob else None,
         },
     )
 
@@ -2086,23 +2090,26 @@ def dept_exam_phase_upload(request, phase_id):
         messages.error(request, str(e))
         return redirect('core:dept_exam_phase_detail', phase_id=phase.id)
 
-    n_unmatched = 0
+    n_visiting = 0
     for row in rows:
-        if phase.hub_coordinator_id:
-            fac = match_faculty_global(row['faculty_name'], row['faculty_initial'])
-        else:
-            fac = match_faculty_for_department(
-                prof.department,
-                row['faculty_name'],
-                row['faculty_initial'],
-            )
-        if not fac:
-            n_unmatched += 1
-    supervision_stage_put(request, phase.id, rows, n_unmatched)
+        _fac, vis = resolve_supervision_faculty_for_phase(
+            institute_semester=phase.institute_semester,
+            coordinator_department=prof.department,
+            hub_phase=bool(phase.hub_coordinator_id),
+            full_name=row['faculty_name'],
+            short_initial=row['faculty_initial'],
+        )
+        if vis:
+            n_visiting += 1
+    supervision_stage_put(request, phase.id, rows, 0, n_visiting)
+    extra_vis = (
+        f' {n_visiting} row(s) use the auto-created "{VISITING_DEPARTMENT_NAME}" department (name not found elsewhere).'
+        if n_visiting
+        else ''
+    )
     messages.info(
         request,
-        f'Loaded {len(rows)} row(s) for review (not saved yet). '
-        f'{"No" if n_unmatched == 0 else n_unmatched} row(s) could not be linked to a faculty record. '
+        f'Loaded {len(rows)} row(s) for review (not saved yet).{extra_vis} '
         'Click Save to database to replace current duties for this phase.',
     )
     return redirect('core:dept_exam_phase_detail', phase_id=phase.id)
@@ -2129,18 +2136,17 @@ def dept_exam_phase_commit_import(request, phase_id):
     with transaction.atomic():
         phase.duties.all().delete()
         created = 0
-        n_unmatched = 0
+        n_visiting = 0
         for row in rows:
-            if phase.hub_coordinator_id:
-                fac = match_faculty_global(row['faculty_name'], row['faculty_initial'])
-            else:
-                fac = match_faculty_for_department(
-                    prof.department,
-                    row['faculty_name'],
-                    row['faculty_initial'],
-                )
-            if not fac:
-                n_unmatched += 1
+            fac, vis = resolve_supervision_faculty_for_phase(
+                institute_semester=phase.institute_semester,
+                coordinator_department=prof.department,
+                hub_phase=bool(phase.hub_coordinator_id),
+                full_name=row['faculty_name'],
+                short_initial=row['faculty_initial'],
+            )
+            if vis:
+                n_visiting += 1
             SupervisionDuty.objects.create(
                 phase=phase,
                 faculty=fac,
@@ -2154,10 +2160,14 @@ def dept_exam_phase_commit_import(request, phase_id):
             )
             created += 1
     clear_staging(request, 'supervision', phase.id)
+    vis_note = (
+        f' {n_visiting} row(s) assigned under "{VISITING_DEPARTMENT_NAME}" (sheet name not found in other departments).'
+        if n_visiting
+        else ''
+    )
     messages.success(
         request,
-        f'Saved {created} supervision duty row(s). '
-        f'{"No" if n_unmatched == 0 else n_unmatched} row(s) could not be linked to a faculty record (check names/initials).',
+        f'Saved {created} supervision duty row(s).{vis_note}',
     )
     return redirect('core:dept_exam_phase_detail', phase_id=phase.id)
 

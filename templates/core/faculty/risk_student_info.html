@@ -1,0 +1,382 @@
+{% extends 'base.html' %}
+{% load static %}
+{% block title %}Risk student info - LJIET_Attendance{% endblock %}
+{% block extra_head %}
+{{ block.super }}
+<style>
+/* Align with Mentorship / faculty portal (slate + indigo) */
+.risk-hero {
+    background: linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #334155 100%);
+    border-radius: 16px;
+    padding: 1rem 1.25rem;
+    margin-bottom: 1.25rem;
+    color: #fff;
+}
+@media (min-width: 768px) {
+    .risk-hero { padding: 1.25rem 1.5rem; }
+}
+.risk-hero .page-title { color: #fff !important; font-size: clamp(1.15rem, 4vw, 1.75rem); }
+.risk-hero .admin-logo {
+    height: 40px; width: auto; max-width: 80px; object-fit: contain;
+    filter: drop-shadow(0 2px 8px rgba(0,0,0,0.4));
+}
+@media (min-width: 768px) { .risk-hero .admin-logo { height: 44px; max-width: 90px; } }
+
+.risk-hero .risk-mode-toggle .btn-check:checked + .btn {
+    background: linear-gradient(135deg, #6366f1 0%, #4f46e5 100%);
+    border-color: transparent;
+    color: #fff;
+    font-weight: 600;
+}
+.risk-hero .risk-mode-toggle .btn-outline-light {
+    border-color: rgba(255,255,255,0.45);
+    color: #fff;
+}
+.risk-hero .risk-mode-toggle .btn-outline-light:hover {
+    background: rgba(255,255,255,0.12);
+    color: #fff;
+}
+
+.risk-card {
+    border: none;
+    border-radius: 14px;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+    margin-bottom: 1rem;
+    overflow: hidden;
+    border-left: 5px solid #6366f1;
+    background: linear-gradient(180deg, #fff 0%, #f8fafc 100%);
+}
+.risk-card .student-strip {
+    background: linear-gradient(90deg, #1e293b 0%, #334155 100%);
+    color: #fff;
+    padding: 0.75rem 1rem;
+    font-weight: 600;
+    font-size: clamp(0.8rem, 2.5vw, 0.95rem);
+}
+.risk-card .pct-badge {
+    font-size: 0.75rem;
+    padding: 0.25rem 0.55rem;
+    border-radius: 8px;
+    background: #fee2e2;
+    color: #b91c1c;
+    font-weight: 700;
+    white-space: nowrap;
+}
+.risk-card .mark-badge {
+    font-size: 0.75rem;
+    padding: 0.25rem 0.55rem;
+    border-radius: 8px;
+    background: #e0e7ff;
+    color: #4338ca;
+    font-weight: 700;
+    white-space: nowrap;
+}
+.risk-card .form-label {
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: #64748b;
+    font-weight: 600;
+}
+.risk-card .form-control, .risk-card .form-select { border-radius: 10px; border-color: #e2e8f0; }
+.risk-card .btn-save {
+    background: linear-gradient(135deg, #6366f1 0%, #4f46e5 100%);
+    border: none;
+    border-radius: 10px;
+    font-weight: 600;
+    padding: 0.5rem 1.25rem;
+    min-height: 2.5rem;
+    width: 100%;
+}
+@media (min-width: 768px) {
+    .risk-card .btn-save { width: auto; }
+}
+.risk-card .btn-save:hover { filter: brightness(1.06); color: #fff; }
+
+.risk-note { font-size: 0.85rem; color: #64748b; line-height: 1.45; }
+.risk-empty { padding: 2rem 1rem; text-align: center; color: #64748b; }
+
+.risk-bulk-bar {
+    border-radius: 14px;
+    border: 1px solid #c7d2fe;
+    background: linear-gradient(135deg, #eef2ff 0%, #e0e7ff 55%, #f8fafc 100%);
+    box-shadow: 0 2px 14px rgba(99, 102, 241, 0.12);
+    padding: 1rem 1.15rem;
+    margin-bottom: 1.25rem;
+}
+.risk-bulk-bar .bulk-title { font-weight: 700; color: #3730a3; font-size: clamp(0.9rem, 2.5vw, 0.95rem); }
+.risk-bulk-bar .bulk-hint { font-size: 0.78rem; color: #64748b; line-height: 1.4; }
+.risk-bulk-bar .form-control, .risk-bulk-bar .btn { border-radius: 10px; }
+.risk-bulk-bar .btn-apply-bulk {
+    background: linear-gradient(135deg, #6366f1 0%, #4f46e5 100%);
+    border: none;
+    color: #fff;
+    font-weight: 600;
+    min-height: 2.5rem;
+    width: 100%;
+}
+@media (min-width: 576px) {
+    .risk-bulk-bar .btn-apply-bulk { width: auto; }
+}
+.risk-bulk-bar .btn-apply-bulk:hover { filter: brightness(1.05); color: #fff; }
+
+.risk-filters-panel {
+    width: 100%;
+    max-width: 100%;
+}
+@media (min-width: 992px) {
+    .risk-filters-panel { max-width: 320px; }
+}
+.risk-filters-panel .form-select, .risk-filters-panel .btn-group { max-width: 100%; }
+</style>
+{% endblock %}
+
+{% block content %}
+<span id="riskSessionKey" data-key="{{ risk_session_key }}" hidden></span>
+
+<div class="risk-hero">
+    <div class="d-flex flex-column flex-lg-row flex-wrap align-items-stretch align-items-lg-center justify-content-between gap-3">
+        <div class="d-flex align-items-start align-items-md-center gap-3 min-w-0">
+            <img src="{% static 'images/ljiet-logo.png' %}" alt="LJIET" class="admin-logo flex-shrink-0">
+            <div class="min-w-0">
+                <h1 class="page-title mb-1">Risk student information</h1>
+                <p class="text-white-50 mb-0 small">
+                    {% if is_admin_proxy %}
+                    <strong>{{ department.name }}</strong> — optional parent-call notes for mentees. Choose a faculty, then the same filters as the faculty portal. Data appears in Risk students Excel.
+                    {% elif faculty %}
+                    {{ faculty.full_name }} — optional parent call notes for your mentees. Data is included in the admin Risk students Excel.
+                    {% else %}
+                    Risk student contact logs.
+                    {% endif %}
+                </p>
+            </div>
+        </div>
+        <form method="get" id="riskFilterForm" class="risk-filters-panel d-flex flex-column gap-2 flex-shrink-0">
+            {% if is_admin_proxy %}
+            <div class="d-flex flex-column gap-1">
+                <label class="text-white-50 small mb-0">Faculty (mentor)</label>
+                <select name="faculty" class="form-select form-select-sm bg-light" aria-label="Select faculty mentor" onchange="this.form.submit()">
+                    <option value="">— Select faculty —</option>
+                    {% for f in faculty_picker_options %}
+                    <option value="{{ f.pk }}" {% if scope_faculty and scope_faculty.pk == f.pk %}selected{% endif %}>{{ f.short_name }} — {{ f.full_name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            {% endif %}
+            <input type="hidden" name="mode" id="modeInput" value="{{ mode }}">
+            <div class="btn-group risk-mode-toggle w-100" role="group" aria-label="Data mode">
+                <input type="radio" class="btn-check" name="mode_radio" id="modeAtt" autocomplete="off" {% if mode == 'attendance' %}checked{% endif %} onchange="document.getElementById('modeInput').value='attendance'; this.form.submit();">
+                <label class="btn btn-sm btn-outline-light flex-fill" for="modeAtt">Attendance</label>
+                <input type="radio" class="btn-check" name="mode_radio" id="modeMk" autocomplete="off" {% if mode == 'marks' %}checked{% endif %} onchange="document.getElementById('modeInput').value='marks'; this.form.submit();">
+                <label class="btn btn-sm btn-outline-light flex-fill" for="modeMk">Marks</label>
+            </div>
+            <div class="d-flex flex-wrap align-items-center gap-2">
+                <label class="text-white-50 small mb-0 text-nowrap">Phase</label>
+                <select name="phase" class="form-select form-select-sm bg-light flex-grow-1" style="max-width: 120px;" onchange="this.form.submit()">
+                    {% for p in phases %}
+                    <option value="{{ p }}" {% if phase == p %}selected{% endif %}>{{ p }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            {% if mode == 'attendance' %}
+            <div class="d-flex flex-wrap align-items-center gap-2">
+                <label class="text-white-50 small mb-0 text-nowrap">Week</label>
+                <select name="week" class="form-select form-select-sm bg-light flex-grow-1" onchange="this.form.submit()">
+                    <option value="all" {% if selected_week == 'all' or not selected_week %}selected{% endif %}>All (cumulative)</option>
+                    {% for idx, num in week_options %}
+                    <option value="{{ idx }}" {% if selected_week == idx|stringformat:"d" %}selected{% endif %}>Week {{ num }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            {% endif %}
+        </form>
+    </div>
+</div>
+
+{% if not needs_faculty_pick %}
+<div class="d-flex flex-wrap justify-content-end align-items-center gap-2 mb-3">
+    <span class="text-secondary small me-auto">Export uses the phase and week selected above (same cutoff as the admin &ldquo;Risk students&rdquo; workbook). Includes every at-risk week and failed-subject row through that point, with call details.</span>
+    {% if is_admin_proxy and scope_faculty %}
+    <a href="{% url 'core:admin_risk_student_info_excel' %}?faculty={{ scope_faculty.pk }}&phase={{ phase }}&week={{ selected_week }}&mode={{ mode }}" class="btn btn-sm btn-success shadow-sm">
+        <i class="fas fa-file-excel me-1" aria-hidden="true"></i>Download Excel (student-wise)
+    </a>
+    {% elif not is_admin_proxy %}
+    <a href="{% url 'core:faculty_risk_student_info_excel' %}?phase={{ phase }}&week={{ selected_week }}&mode={{ mode }}" class="btn btn-sm btn-success shadow-sm">
+        <i class="fas fa-file-excel me-1" aria-hidden="true"></i>Download Excel (student-wise)
+    </a>
+    {% endif %}
+</div>
+{% endif %}
+
+<p class="risk-note mb-3">
+    {% if mode == 'attendance' %}
+    Showing mentees below 75% for {{ phase }}{% if selected_week_global_num %} — through Week {{ selected_week_global_num }}{% else %} — cumulative through {{ phase }}{% endif %}.
+    {% if log_week_global_num %}
+    Saves attach to <strong>WEEK-{{ log_week_global_num }}</strong> on the admin export (when &ldquo;All (cumulative)&rdquo; is selected, that is the last week of {{ phase }}).
+    {% endif %}
+    {% else %}
+    Showing mentees with marks below 9 in {{ phase }}, same as Risk students Excel.
+    {% endif %}
+    Date, time, and remarks are optional; contact defaults to Father.
+    {% if not is_admin_proxy %}
+    After &ldquo;Apply to all&rdquo;, use <strong>Save</strong> on each row you want stored — or your bulk date is remembered in this browser until you change week/phase.
+    {% endif %}
+</p>
+
+{% if not risk_rows %}
+<div class="risk-empty card border-0 shadow-sm">
+    <div class="card-body">
+        {% if needs_faculty_pick %}
+        <p class="mb-0">Select a <strong>faculty (mentor)</strong> above to load at-risk mentees for that mentor.</p>
+        {% elif not has_mentees %}
+        <p class="mb-0">
+            {% if is_admin_proxy %}This faculty has no assigned mentorship students in this division.{% else %}No mentorship students assigned.{% endif %}
+        </p>
+        {% elif mode == 'marks' %}
+        <p class="mb-0">No at-risk marks rows for these mentees in this phase.</p>
+        {% else %}
+        <p class="mb-0">No at-risk attendance rows for this selection (cumulative % is 75% or above).</p>
+        {% endif %}
+    </div>
+</div>
+{% else %}
+
+{% if mode == 'attendance' and log_week_idx == None %}
+<div class="alert alert-warning">Term weeks are not configured for this phase — attendance contact logs cannot be saved until weeks exist.</div>
+{% endif %}
+
+<div class="risk-bulk-bar" id="riskBulkBar">
+    <div class="mb-2">
+        <div class="bulk-title"><i class="fas fa-calendar-day me-2 text-primary"></i>Calling date for all rows (this view)</div>
+        <div class="bulk-hint mt-1">
+            {% if mode == 'attendance' %}
+            {{ phase }}{% if selected_week_global_num %} — Week {{ selected_week_global_num }}{% elif selected_week == 'all' or not selected_week %} — all weeks (cumulative){% endif %}: pick a date, <strong>Apply to all</strong>, then save each row you need. The same date is restored in this browser after a save until you change filters.
+            {% else %}
+            {{ phase }} (marks): apply one date to all fields shown, then save per row.
+            {% endif %}
+        </div>
+    </div>
+    <div class="d-flex flex-column flex-sm-row flex-wrap align-items-stretch align-items-sm-end gap-2">
+        <div class="flex-grow-1 flex-sm-grow-0">
+            <label for="riskBulkCallDate" class="form-label small text-secondary mb-1">Date of call</label>
+            <input type="date" id="riskBulkCallDate" class="form-control form-control-sm" aria-label="Bulk calling date for all students" autocomplete="off">
+        </div>
+        <button type="button" class="btn btn-sm btn-apply-bulk px-3 flex-shrink-0" id="riskBulkApplyDate" title="Copy this date into every student's Date of call field">
+            Apply to all
+        </button>
+    </div>
+</div>
+
+<div id="riskStudentCards" class="risk-student-cards">
+{% for row in risk_rows %}
+<div class="risk-card">
+    <div class="student-strip d-flex flex-wrap justify-content-between align-items-center gap-2">
+        <span class="min-w-0" style="word-break: break-word;">
+            <span class="opacity-75 me-2">Roll {{ row.roll }}</span>
+            <span>{{ row.name }}</span>
+            <span class="opacity-75 ms-2">· {{ row.div }}</span>
+        </span>
+        {% if mode == 'attendance' %}
+        <span class="pct-badge">{{ row.pct|floatformat:2 }}% · {{ row.attended }}/{{ row.held }}</span>
+        {% else %}
+        <span class="mark-badge">{{ row.subject }} · mark {{ row.mark|floatformat:0 }}</span>
+        {% endif %}
+    </div>
+    <div class="card-body py-3">
+        <form method="post" action="{% if is_admin_proxy %}{% url 'core:admin_risk_student_info_save' %}{% else %}{% url 'core:faculty_risk_student_info_save' %}{% endif %}" class="row g-3 align-items-end">
+            {% csrf_token %}
+            <input type="hidden" name="next_qs" value="{{ request.GET.urlencode }}">
+            {% if is_admin_proxy and scope_faculty %}
+            <input type="hidden" name="context_faculty_id" value="{{ scope_faculty.pk }}">
+            {% endif %}
+            <input type="hidden" name="student_id" value="{{ row.student_id }}">
+            <input type="hidden" name="phase" value="{{ phase }}">
+            {% if mode == 'attendance' %}
+            <input type="hidden" name="kind" value="attendance_week">
+            <input type="hidden" name="week_index" value="{{ log_week_idx }}">
+            {% else %}
+            <input type="hidden" name="kind" value="marks_subject">
+            <input type="hidden" name="subject_name" value="{{ row.subject }}">
+            {% endif %}
+            <div class="col-12 col-md-6 col-xl-3">
+                <label class="form-label">Contact person</label>
+                <select name="contact_person" class="form-select form-select-sm">
+                    {% for val, label in contact_choices %}
+                    <option value="{{ val }}" {% if row.log and row.log.contact_person == val %}selected{% elif not row.log and val == 'Father' %}selected{% endif %}>{{ label }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-12 col-sm-6 col-xl-3">
+                <label class="form-label">Date of call</label>
+                <input type="date" name="call_date" class="form-control form-control-sm risk-row-call-date" value="{% if row.log and row.log.call_date %}{{ row.log.call_date|date:'Y-m-d' }}{% endif %}" autocomplete="off">
+            </div>
+            <div class="col-12 col-sm-6 col-xl-2">
+                <label class="form-label">Time</label>
+                <input type="time" name="call_time" class="form-control form-control-sm" value="{% if row.log and row.log.call_time %}{{ row.log.call_time|time:'H:i' }}{% endif %}" autocomplete="off">
+            </div>
+            <div class="col-12 col-xl-4">
+                <label class="form-label">Remarks</label>
+                <textarea name="remarks" class="form-control form-control-sm" rows="2" placeholder="Optional">{% if row.log %}{{ row.log.remarks }}{% endif %}</textarea>
+            </div>
+            <div class="col-12 col-md-auto ms-md-auto d-grid d-md-block">
+                {% if mode == 'attendance' and log_week_idx == None %}
+                <button type="button" class="btn btn-secondary btn-sm" disabled title="No week index">Save</button>
+                {% else %}
+                <button type="submit" class="btn btn-save btn-sm text-white">Save</button>
+                {% endif %}
+            </div>
+        </form>
+    </div>
+</div>
+{% endfor %}
+</div>
+{% endif %}
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(function() {
+    var SESSION_PREFIX = 'riskBulkCallDate_v1_';
+    function sessionKey() {
+        var el = document.getElementById('riskSessionKey');
+        return el ? (el.getAttribute('data-key') || '') : '';
+    }
+    function persistBulkDate(val) {
+        var k = sessionKey();
+        if (!k || !val) return;
+        try { sessionStorage.setItem(SESSION_PREFIX + k, val); } catch (e) {}
+    }
+    function readStoredBulkDate() {
+        var k = sessionKey();
+        if (!k) return null;
+        try { return sessionStorage.getItem(SESSION_PREFIX + k); } catch (e) { return null; }
+    }
+    function applyBulkCallDate() {
+        var bulk = document.getElementById('riskBulkCallDate');
+        var container = document.getElementById('riskStudentCards');
+        if (!bulk || !container || !bulk.value) {
+            if (bulk && !bulk.value) bulk.focus();
+            return;
+        }
+        container.querySelectorAll('input.risk-row-call-date').forEach(function(el) {
+            el.value = bulk.value;
+        });
+        persistBulkDate(bulk.value);
+    }
+    function restoreBulkDateToEmptyRows() {
+        var val = readStoredBulkDate();
+        if (!val) return;
+        var bulk = document.getElementById('riskBulkCallDate');
+        if (bulk && !bulk.value) bulk.value = val;
+        var container = document.getElementById('riskStudentCards');
+        if (!container) return;
+        container.querySelectorAll('input.risk-row-call-date').forEach(function(el) {
+            if (!el.value) el.value = val;
+        });
+    }
+    document.addEventListener('DOMContentLoaded', restoreBulkDateToEmptyRows);
+    var btn = document.getElementById('riskBulkApplyDate');
+    if (btn) btn.addEventListener('click', applyBulkCallDate);
+})();
+</script>
+{% endblock %}

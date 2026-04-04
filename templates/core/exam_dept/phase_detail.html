@@ -68,7 +68,7 @@
 <div class="duty-draft-banner p-3 mb-4 d-flex flex-wrap align-items-center justify-content-between gap-3">
     <div class="small">
         <strong class="text-dark">Draft import</strong> — <span class="text-primary fw-semibold">{{ staging_preview|length }}</span> row(s) in session (not saved).
-        {% if staging_unmatched %}<span class="ms-1 text-warning fw-semibold">{{ staging_unmatched }} not linked to faculty.</span>{% endif %}
+        {% if staging_visiting %}<span class="ms-1 text-info fw-semibold">{{ staging_visiting }} row(s) → Visiting faculty (auto).</span>{% endif %}
     </div>
     <div class="d-flex flex-wrap gap-2">
         <form method="post" action="{% url 'core:dept_exam_phase_commit_import' phase.id %}" class="m-0">
@@ -101,8 +101,8 @@
                 </thead>
                 <tbody>
                     {% for d in staging_preview %}
-                    <tr class="{% if not d.faculty %}table-warning{% endif %}">
-                        <td>{% if d.faculty %}{{ d.faculty.full_name }}{% else %}<span title="{{ d.faculty_name }}">{{ d.faculty_name }}</span>{% endif %}</td>
+                    <tr class="{% if not d.faculty %}table-warning{% elif d.visiting_assigned %}table-info{% endif %}">
+                        <td>{% if d.faculty %}{{ d.faculty.full_name }}{% if d.visiting_assigned %} <span class="badge bg-info text-dark ms-1">Visiting</span>{% endif %}{% else %}<span title="{{ d.faculty_name }}">{{ d.faculty_name }}</span>{% endif %}</td>
                         <td>{{ d.supervision_date }}</td>
                         <td>{{ d.time_slot }}</td>
                         <td>{{ d.subject_name }}</td>

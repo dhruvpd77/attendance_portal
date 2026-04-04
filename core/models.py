@@ -194,6 +194,62 @@ class Student(models.Model):
         return f"{self.roll_no} - {self.name}"
 
 
+class RiskStudentMentorLog(models.Model):
+    """Faculty follow-up for at-risk mentees; shown on admin Risk students Excel export."""
+
+    KIND_ATTENDANCE_WEEK = 'attendance_week'
+    KIND_MARKS_SUBJECT = 'marks_subject'
+    KIND_CHOICES = (
+        (KIND_ATTENDANCE_WEEK, 'Attendance week'),
+        (KIND_MARKS_SUBJECT, 'Marks subject'),
+    )
+    CONTACT_FATHER = 'Father'
+    CONTACT_MOTHER = 'Mother'
+    CONTACT_OTHER = 'Other'
+    CONTACT_CHOICES = (
+        (CONTACT_FATHER, 'Father'),
+        (CONTACT_MOTHER, 'Mother'),
+        (CONTACT_OTHER, 'Other'),
+    )
+
+    student = models.ForeignKey(Student, on_delete=models.CASCADE, related_name='risk_mentor_logs')
+    department = models.ForeignKey(Department, on_delete=models.CASCADE, related_name='risk_mentor_logs')
+    faculty = models.ForeignKey(Faculty, on_delete=models.CASCADE, related_name='risk_mentor_logs_saved')
+    kind = models.CharField(max_length=20, choices=KIND_CHOICES)
+    phase = models.CharField(max_length=4, help_text='T1–T4 exam/term phase.')
+    week_index = models.PositiveSmallIntegerField(
+        null=True,
+        blank=True,
+        help_text='0-based week within phase; attendance rows only.',
+    )
+    subject_name = models.CharField(max_length=200, blank=True, help_text='Marks rows only: failed subject name.')
+    contact_person = models.CharField(max_length=20, choices=CONTACT_CHOICES, default=CONTACT_FATHER)
+    call_date = models.DateField(null=True, blank=True)
+    call_time = models.TimeField(null=True, blank=True)
+    remarks = models.TextField(blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-updated_at']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['student', 'kind', 'phase', 'week_index'],
+                condition=models.Q(kind='attendance_week'),
+                name='uniq_risk_mentor_log_attendance',
+            ),
+            models.UniqueConstraint(
+                fields=['student', 'kind', 'phase', 'subject_name'],
+                condition=models.Q(kind='marks_subject'),
+                name='uniq_risk_mentor_log_marks',
+            ),
+        ]
+        verbose_name = 'Risk student mentor log'
+        verbose_name_plural = 'Risk student mentor logs'
+
+    def __str__(self):
+        return f'{self.student.roll_no} {self.kind} {self.phase}'
+
+
 class ScheduleSlot(models.Model):
     """One lecture slot: faculty teaches subject to batch on a weekday at a time.
     effective_from: when this schedule version applies. Past dates use the version valid on that date."""
