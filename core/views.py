@@ -430,6 +430,9 @@ def faculty_portal_feature_allowed(request, url_name):
         'faculty_exam_credits_analytics': d.faculty_show_exam_credits_analytics,
         'faculty_exam_history_credits_analytics': d.faculty_show_exam_credits_analytics,
         'faculty_student_analytics': d.faculty_show_student_analytics,
+        'faculty_risk_student_info': d.faculty_show_risk_student_info,
+        'faculty_risk_student_info_excel': d.faculty_show_risk_student_info,
+        'faculty_risk_student_info_save': d.faculty_show_risk_student_info,
     }
     return mapping.get(url_name, True)
 
@@ -443,6 +446,24 @@ def _faculty_portal_guard_redirect(request, url_name):
         )
         return redirect('core:faculty_dashboard')
     return None
+
+
+def admin_risk_student_features_allowed(request) -> bool:
+    """Per-department toggle for Risk student info + compiled Risk students Excel (admin sidebar)."""
+    dept = get_admin_department(request)
+    if not dept:
+        return True
+    return getattr(dept, 'faculty_show_risk_student_info', True)
+
+
+def _admin_risk_student_features_guard_redirect(request):
+    if admin_risk_student_features_allowed(request):
+        return None
+    messages.error(
+        request,
+        'Risk student tools are turned off for this department. A super admin or HOD can enable them under Management → Faculty portal.',
+    )
+    return redirect('core:admin_dashboard')
 
 
 # ---------- Home & Dashboards ----------
@@ -904,6 +925,7 @@ def admin_faculty_portal_management(request):
         'faculty_show_exam_duties',
         'faculty_show_exam_credits_analytics',
         'faculty_show_student_analytics',
+        'faculty_show_risk_student_info',
     )
     if request.method == 'POST':
         if dept.pk not in allowed_management_ids:
@@ -7477,6 +7499,9 @@ def admin_risk_students_export(request):
     if not dept:
         messages.error(request, 'Select a department first.')
         return redirect('core:admin_dashboard')
+    blocked = _admin_risk_student_features_guard_redirect(request)
+    if blocked:
+        return blocked
     phases = ['T1', 'T2', 'T3', 'T4']
     batch = Batch.objects.filter(department=dept).order_by('name').first()
     if batch:
@@ -7498,6 +7523,9 @@ def admin_risk_students_export(request):
 def admin_risk_students_excel(request):
     if not user_can_admin(request):
         return redirect('core:admin_dashboard')
+    blocked = _admin_risk_student_features_guard_redirect(request)
+    if blocked:
+        return blocked
     dept = get_admin_department(request)
     phase = (request.GET.get('phase') or '').upper()
     week_str = request.GET.get('week')
@@ -10338,6 +10366,9 @@ def faculty_risk_student_info(request):
     if not dept:
         messages.error(request, 'No department context. Use the header switcher or contact admin.')
         return redirect('core:faculty_dashboard')
+    blocked = _faculty_portal_guard_redirect(request, 'faculty_risk_student_info')
+    if blocked:
+        return blocked
 
     ctx = _risk_student_info_build_context(request, dept, faculty, is_admin_proxy=False, faculty_picker_options=None)
     return render(request, 'core/faculty/risk_student_info.html', ctx)
@@ -10355,6 +10386,9 @@ def faculty_risk_student_info_excel(request):
     if not dept:
         messages.error(request, 'No department context.')
         return redirect('core:faculty_dashboard')
+    blocked = _faculty_portal_guard_redirect(request, 'faculty_risk_student_info_excel')
+    if blocked:
+        return blocked
 
     phases = ['T1', 'T2', 'T3', 'T4']
     phase = (request.GET.get('phase') or 'T1').upper()
@@ -10388,6 +10422,9 @@ def admin_risk_student_info(request):
     if not dept:
         messages.error(request, 'No department selected.')
         return redirect('core:admin_dashboard')
+    blocked = _admin_risk_student_features_guard_redirect(request)
+    if blocked:
+        return blocked
 
     faculty_options = list(
         Faculty.objects.filter(department=dept).order_by('short_name', 'full_name', 'pk')
@@ -10416,6 +10453,9 @@ def admin_risk_student_info_excel(request):
     if not dept:
         messages.error(request, 'No department selected.')
         return redirect('core:admin_dashboard')
+    blocked = _admin_risk_student_features_guard_redirect(request)
+    if blocked:
+        return blocked
 
     pick_id = request.GET.get('faculty')
     scope = Faculty.objects.filter(pk=pick_id, department=dept).first() if pick_id else None
@@ -10458,6 +10498,9 @@ def faculty_risk_student_info_save(request):
     if not dept:
         messages.error(request, 'No department context.')
         return redirect(reverse('core:faculty_risk_student_info'))
+    blocked = _faculty_portal_guard_redirect(request, 'faculty_risk_student_info_save')
+    if blocked:
+        return blocked
 
     m_ids = set(faculty_ids_equivalent_for_portal(faculty))
     ok, q = _risk_student_info_save_commit(request, dept, m_ids)
@@ -10485,6 +10528,9 @@ def admin_risk_student_info_save(request):
     if not dept:
         messages.error(request, 'No department selected.')
         return redirect(reverse('core:admin_risk_student_info'))
+    blocked = _admin_risk_student_features_guard_redirect(request)
+    if blocked:
+        return blocked
 
     try:
         ctx_fid = int(request.POST.get('context_faculty_id', '0'))

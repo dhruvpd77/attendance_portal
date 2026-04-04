@@ -116,6 +116,10 @@
                     <input class="form-check-input" type="checkbox" role="switch" id="faculty_show_student_analytics" name="faculty_show_student_analytics" {% if department.faculty_show_student_analytics %}checked{% endif %}>
                     <label class="form-check-label" for="faculty_show_student_analytics"><strong>Student Analytics</strong></label>
                 </div>
+                <div class="form-check form-switch">
+                    <input class="form-check-input" type="checkbox" role="switch" id="faculty_show_risk_student_info" name="faculty_show_risk_student_info" {% if department.faculty_show_risk_student_info %}checked{% endif %}>
+                    <label class="form-check-label" for="faculty_show_risk_student_info"><strong>Risk student info</strong> <span class="text-muted small">(faculty + admin contact logs, student-wise Excel, compiled Risk students workbook)</span></label>
+                </div>
             </div>
 
             <div class="mt-4 d-flex gap-2 flex-wrap">

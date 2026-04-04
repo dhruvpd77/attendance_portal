@@ -157,10 +157,12 @@
         <div>
             <h1 class="page-title mb-1">Mentorship Students</h1>
             <p class="text-white-50 mb-0">{{ faculty.full_name }} ({{ faculty.short_name }}) — {{ phase }}{% if phase != 'T1' %} (T1–{{ phase }} cumulative){% endif %}{% if selected_week_global_num %} — up to Week {{ selected_week_global_num }}{% else %} — All weeks{% endif %}</p>
+            {% if faculty_portal_flags and faculty_portal_flags.show_risk_student_info %}
             <a href="{% url 'core:faculty_risk_student_info' %}?phase={{ phase }}&week={{ selected_week }}&mode=attendance" class="btn btn-sm btn-light text-dark fw-semibold mt-2 shadow-sm">
                 <i class="fas fa-phone me-1"></i>Risk student info
             </a>
             <span class="text-white-50 small ms-2 d-none d-md-inline">Parent contact log · same phase &amp; week</span>
+            {% endif %}
         </div>
     </div>
     <form method="get" class="d-flex flex-wrap align-items-center gap-3">

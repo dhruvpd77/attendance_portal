@@ -203,6 +203,26 @@ def sidebar_links(request):
                 pi + 1,
                 _make_link(request, 'Management', 'core:admin_faculty_portal_management', 'fa-sliders-h', 'admin_faculty_portal_management'),
             )
+        from core.views import get_admin_department
+
+        _risk_admin_nav = frozenset(
+            {
+                'admin_risk_students_export',
+                'admin_risk_students_excel',
+                'admin_risk_student_info',
+                'admin_risk_student_info_save',
+                'admin_risk_student_info_excel',
+            }
+        )
+        _admin_dept_nav = get_admin_department(request)
+        if _admin_dept_nav and not getattr(_admin_dept_nav, 'faculty_show_risk_student_info', True):
+
+            def _keep_admin_nav_item(lk):
+                if lk.get('active_name') in _risk_admin_nav:
+                    return False
+                return not any(x in _risk_admin_nav for x in (lk.get('active_name_extra') or []))
+
+            links = [lk for lk in links if _keep_admin_nav_item(lk)]
         return {
             'sidebar_links': links,
             'is_super_admin': is_super_admin,
@@ -680,6 +700,7 @@ def sidebar_links(request):
             if exam_dept
             else False,
             'show_student_analytics_nav': getattr(dept, 'faculty_show_student_analytics', False) if dept else False,
+            'show_risk_student_info': getattr(dept, 'faculty_show_risk_student_info', True) if dept else True,
             'show_exam_history_nav': faculty_has_exam_portal_history_rows(faculty) if faculty else False,
         }
         links = [
@@ -691,16 +712,17 @@ def sidebar_links(request):
         if flags['show_dr_load']:
             links.append(_make_link(request, 'My DR weekly load', 'core:faculty_dr_load', 'fa-chart-bar', 'faculty_dr_load'))
         links.append(_make_link(request, 'Mentorship Students', 'core:faculty_mentorship', 'fa-users', 'faculty_mentorship'))
-        links.append(
-            _make_link(
-                request,
-                'Risk student info',
-                'core:faculty_risk_student_info',
-                'fa-phone',
-                'faculty_risk_student_info',
-                active_name_extra=('faculty_risk_student_info_excel',),
+        if flags['show_risk_student_info']:
+            links.append(
+                _make_link(
+                    request,
+                    'Risk student info',
+                    'core:faculty_risk_student_info',
+                    'fa-phone',
+                    'faculty_risk_student_info',
+                    active_name_extra=('faculty_risk_student_info_excel',),
+                )
             )
-        )
         if flags['show_exam_duties']:
             links.append(
                 _make_link(

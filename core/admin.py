@@ -20,8 +20,8 @@ class InstituteSemesterAdmin(admin.ModelAdmin):
 
 @admin.register(Department)
 class DepartmentAdmin(admin.ModelAdmin):
-    list_display = ('name', 'institute_semester', 'faculty_portal_enabled', 'dr_export_semester_label')
-    list_filter = ('institute_semester', 'faculty_portal_enabled')
+    list_display = ('name', 'institute_semester', 'faculty_portal_enabled', 'faculty_show_risk_student_info', 'dr_export_semester_label')
+    list_filter = ('institute_semester', 'faculty_portal_enabled', 'faculty_show_risk_student_info')
 
 @admin.register(Batch)
 class BatchAdmin(admin.ModelAdmin):

@@ -82,6 +82,10 @@ class Department(models.Model):
         default=False,
         help_text='If off, faculty sidebar hides Student Analytics.',
     )
+    faculty_show_risk_student_info = models.BooleanField(
+        default=True,
+        help_text='If off, Risk student info (faculty + admin), student-wise Excel, and admin Risk students (Excel) export are hidden and blocked.',
+    )
     faculty_portal_enabled = models.BooleanField(
         default=False,
         help_text='Master switch: when off, this department is hidden from faculty portal (attendance, mentorship, etc.). HOD / super admin dashboards are unchanged. Enable in Management when this division should use the faculty portal.',
