@@ -1,0 +1,111 @@
+{% extends 'core/admin/base_admin.html' %}
+{% load static %}
+{% block title %}Extra lecture requests — LJIET_Attendance{% endblock %}
+{% block content %}
+<div class="admin-hero">
+    <div class="d-flex align-items-center gap-3">
+        <img src="{% static 'images/ljiet-logo.png' %}" alt="LJIET" class="admin-logo">
+        <div>
+            <h1 class="page-title mb-1">Extra lecture requests</h1>
+            <p class="page-subtitle mb-0">{{ department.name }} — Faculty submissions. <strong>Approve</strong> creates the same extra-lecture record as <strong>Add Extra Lecture</strong> (attendance, compile, Daily Report, DR / teaching load).</p>
+        </div>
+    </div>
+    <a href="{% url 'core:admin_dashboard' %}" class="btn btn-outline-light btn-sm"><i class="fas fa-arrow-left me-1"></i> Dashboard</a>
+</div>
+
+<div class="card admin-card mb-4">
+    <div class="card-header fw-semibold">Pending</div>
+    <div class="table-responsive">
+        <table class="table table-hover align-middle mb-0">
+            <thead class="table-light">
+                <tr>
+                    <th>Requested by</th>
+                    <th>Date</th>
+                    <th>Batch</th>
+                    <th>Slot</th>
+                    <th>Subject</th>
+                    <th>Faculty</th>
+                    <th>Room</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for r in pending %}
+                <tr>
+                    <td>{{ r.requested_by.short_name }} — {{ r.requested_by.full_name }}</td>
+                    <td>{{ r.date|date:"d M Y" }}</td>
+                    <td>{{ r.batch.name }}</td>
+                    <td>{{ r.time_slot }}</td>
+                    <td>{{ r.subject.name }}</td>
+                    <td>{{ r.faculty.short_name }}</td>
+                    <td>{{ r.room_number|default:"—" }}</td>
+                    <td>
+                        <form method="post" action="{% url 'core:hod_extra_lecture_request_review' r.pk %}" class="d-inline-flex flex-column gap-1 align-items-start">
+                            {% csrf_token %}
+                            <input type="hidden" name="action" value="approve">
+                            <input type="text" name="notes" class="form-control form-control-sm" placeholder="Optional note" maxlength="500" style="max-width:14rem">
+                            <button type="submit" class="btn btn-sm btn-success">Approve</button>
+                        </form>
+                        <button class="btn btn-sm btn-outline-danger mb-1" type="button" data-bs-toggle="collapse" data-bs-target="#rejxl{{ r.pk }}">Reject</button>
+                        <div class="collapse mt-2" id="rejxl{{ r.pk }}">
+                            <form method="post" action="{% url 'core:hod_extra_lecture_request_review' r.pk %}" class="d-flex flex-column gap-1">
+                                {% csrf_token %}
+                                <input type="hidden" name="action" value="reject">
+                                <input type="text" name="notes" class="form-control form-control-sm" placeholder="Optional note" maxlength="500">
+                                <button type="submit" class="btn btn-sm btn-danger">Confirm reject</button>
+                            </form>
+                        </div>
+                    </td>
+                </tr>
+                {% empty %}
+                <tr><td colspan="8" class="text-secondary py-4 text-center">No pending requests.</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<div class="card admin-card">
+    <div class="card-header fw-semibold">Recently reviewed</div>
+    <div class="table-responsive">
+        <table class="table table-sm table-hover mb-0">
+            <thead class="table-light">
+                <tr>
+                    <th>Requested by</th>
+                    <th>Date</th>
+                    <th>Batch</th>
+                    <th>Slot</th>
+                    <th>Subject</th>
+                    <th>Teaching</th>
+                    <th>Status</th>
+                    <th>Reviewed</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for r in recent %}
+                <tr>
+                    <td class="small">{{ r.requested_by.short_name }}</td>
+                    <td>{{ r.date|date:"d M Y" }}</td>
+                    <td>{{ r.batch.name }}</td>
+                    <td>{{ r.time_slot }}</td>
+                    <td class="small">{{ r.subject.name }}</td>
+                    <td class="small">{{ r.faculty.short_name }}</td>
+                    <td>
+                        {% if r.status == 'approved' %}<span class="badge bg-success">Approved</span>
+                        {% elif r.status == 'rejected' %}<span class="badge bg-secondary">Rejected</span>
+                        {% else %}<span class="badge bg-light text-dark">{{ r.get_status_display }}</span>{% endif %}
+                    </td>
+                    <td class="small">
+                        {% if r.reviewed_at %}{{ r.reviewed_at|date:"d M Y H:i" }}{% else %}—{% endif %}
+                        {% if r.reviewed_by %}<div class="text-muted">{{ r.reviewed_by.username }}</div>{% endif %}
+                        {% if r.review_notes %}<div class="text-muted">{{ r.review_notes }}</div>{% endif %}
+                    </td>
+                </tr>
+                {% empty %}
+                <tr><td colspan="8" class="text-secondary py-3 text-center">None yet.</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}

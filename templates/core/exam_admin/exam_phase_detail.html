@@ -61,7 +61,8 @@
                     <tbody><tr><td><code>ROLL NO</code></td><td><code>DIV</code></td><td><code>BRANCH</code></td><td><code>Enrollment No</code></td><td><code>NAME</code></td><td><code>Mentor</code></td><td><code>Marks</code></td></tr></tbody>
                 </table>
             </div>
-            <p class="small mb-0"><strong>Important:</strong> Marks are saved only by matching <strong>Enrollment No</strong> to students in <strong>{{ department.name }}</strong>. Use the same enrollment numbers as in the portal; use <strong>digits only</strong> in that column. Rows whose enrollment is not found are skipped. Headers must include <strong>enroll</strong> and <strong>mark</strong> in the wording — the names above satisfy that.</p>
+            <p class="small mb-2"><strong>Compiled format:</strong> <strong>RANK</strong> etc. are ignored. Optional <strong>BRANCH</strong> fills branch when still empty. Marks: <code>Marks</code> or <code><em>SubjectName</em> (<em>{{ phase.name }}</em>) Out of …</code>.</p>
+            <p class="small mb-0"><strong>Important:</strong> Matching is by <strong>Enrollment No</strong>. Use <strong>Bulk upload</strong> below to apply one sheet to several departments (same phase name and subject name in each).</p>
         </div>
         {% if phase_subjects %}
         <div class="table-responsive">
@@ -91,6 +92,26 @@
                                         <input type="file" name="marksheet_file" accept=".xlsx,.xls" class="form-control form-control-sm d-inline-block" style="max-width: 220px;" required>
                                         <button type="submit" class="btn btn-sm btn-success ms-1"><i class="fas fa-upload me-1"></i> Upload</button>
                                     </form>
+                                    {% if bulk_upload_departments %}
+                                    <div class="mt-2 pt-2 border-top small fw-semibold">Bulk (multiple departments)</div>
+                                    <form method="post" action="{% url 'core:exam_admin_exam_phase_upload_marks' %}" enctype="multipart/form-data" class="mt-1 p-2 border rounded bg-white small">
+                                        {% csrf_token %}
+                                        <input type="hidden" name="dept_id" value="{{ department.id }}">
+                                        <input type="hidden" name="phase_id" value="{{ phase.id }}">
+                                        <input type="hidden" name="subject_id" value="{{ s.id }}">
+                                        <input type="hidden" name="bulk_multi_department" value="1">
+                                        <div class="d-flex flex-wrap gap-2 mb-2">
+                                            {% for d in bulk_upload_departments %}
+                                            <div class="form-check form-check-inline m-0">
+                                                <input class="form-check-input" type="checkbox" name="bulk_department_ids" value="{{ d.pk }}" id="ea_bulk_rep_{{ s.id }}_{{ d.pk }}" {% if d.pk == department.pk %}checked{% endif %}>
+                                                <label class="form-check-label" for="ea_bulk_rep_{{ s.id }}_{{ d.pk }}">{{ d.name }}</label>
+                                            </div>
+                                            {% endfor %}
+                                        </div>
+                                        <input type="file" name="marksheet_file" accept=".xlsx,.xls" class="form-control form-control-sm d-inline-block" style="max-width: 220px;" required>
+                                        <button type="submit" class="btn btn-sm btn-primary ms-1"><i class="fas fa-upload me-1"></i> Upload bulk</button>
+                                    </form>
+                                    {% endif %}
                                 </details>
                             </div>
                             {% else %}
@@ -102,6 +123,31 @@
                                 <input type="file" name="marksheet_file" accept=".xlsx,.xls" class="form-control form-control-sm d-inline-block" style="max-width: 200px;" required>
                                 <button type="submit" class="btn btn-sm btn-success ms-1"><i class="fas fa-upload me-1"></i> Upload</button>
                             </form>
+                            {% endif %}
+                            {% if bulk_upload_departments %}
+                            <details class="mt-2 text-start">
+                                <summary class="small fw-semibold" style="cursor:pointer;">Bulk upload (multiple departments)…</summary>
+                                <form method="post" action="{% url 'core:exam_admin_exam_phase_upload_marks' %}" enctype="multipart/form-data" class="mt-2 p-2 border rounded bg-white small">
+                                    {% csrf_token %}
+                                    <input type="hidden" name="dept_id" value="{{ department.id }}">
+                                    <input type="hidden" name="phase_id" value="{{ phase.id }}">
+                                    <input type="hidden" name="subject_id" value="{{ s.id }}">
+                                    <input type="hidden" name="bulk_multi_department" value="1">
+                                    <p class="mb-2">One <code>.xlsx</code> for enrollments across selected departments (each needs this phase, this subject, and phase–subject link).</p>
+                                    <div class="d-flex flex-wrap gap-2 mb-2">
+                                        {% for d in bulk_upload_departments %}
+                                        <div class="form-check form-check-inline m-0">
+                                            <input class="form-check-input" type="checkbox" name="bulk_department_ids" value="{{ d.pk }}" id="ea_bulk_{{ s.id }}_{{ d.pk }}" {% if d.pk == department.pk %}checked{% endif %}>
+                                            <label class="form-check-label" for="ea_bulk_{{ s.id }}_{{ d.pk }}">{{ d.name }}</label>
+                                        </div>
+                                        {% endfor %}
+                                    </div>
+                                    <div class="d-flex flex-wrap align-items-center gap-2">
+                                        <input type="file" name="marksheet_file" accept=".xlsx,.xls" class="form-control form-control-sm" style="max-width: 220px;" required>
+                                        <button type="submit" class="btn btn-sm btn-primary"><i class="fas fa-upload me-1"></i> Upload bulk</button>
+                                    </div>
+                                </form>
+                            </details>
                             {% endif %}
                         </td>
                         <td class="text-end">
@@ -158,6 +204,7 @@
                         <th>Roll No</th>
                         <th>Name</th>
                         <th>Batch</th>
+                        <th>Branch</th>
                         <th>Enrollment</th>
                         <th class="text-end">Marks</th>
                     </tr>
@@ -168,12 +215,13 @@
                         <td class="fw-medium">{{ m.student.roll_no }}</td>
                         <td>{{ m.student.name }}</td>
                         <td>{{ m.student.batch.name }}</td>
+                        <td class="text-secondary">{{ m.student.branch|default:"—" }}</td>
                         <td class="text-secondary">{{ m.student.enrollment_no|default:"—" }}</td>
                         <td class="text-end fw-semibold">{% if m.marks_obtained is not None %}{{ m.marks_obtained }}{% else %}—{% endif %}</td>
                     </tr>
                     {% empty %}
                     <tr>
-                        <td colspan="5" class="text-center text-secondary py-4">No marks uploaded for {{ selected_subject.name }}{% if selected_batch_id %} in selected batch{% endif %}.</td>
+                        <td colspan="6" class="text-center text-secondary py-4">No marks uploaded for {{ selected_subject.name }}{% if selected_batch_id %} in selected batch{% endif %}.</td>
                     </tr>
                     {% endfor %}
                 </tbody>

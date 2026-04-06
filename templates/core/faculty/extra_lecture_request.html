@@ -1,0 +1,166 @@
+{% extends 'base.html' %}
+{% load static %}
+{% block title %}Add Extra Lecture — LJIET_Attendance{% endblock %}
+{% block content %}
+<style>
+.el-req-hero { background: linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #334155 100%); border-radius: 16px; padding: 1.25rem 1.5rem; margin-bottom: 1.5rem; color: #fff; }
+.el-req-hero .page-title { color: #fff !important; font-size: 1.35rem; }
+.el-req-hero .page-subtitle { color: #94a3b8 !important; font-size: 0.9rem; }
+.el-req-hero .hero-logo { height: 44px; width: auto; max-width: 90px; object-fit: contain; filter: drop-shadow(0 2px 8px rgba(0,0,0,0.4)); }
+.el-card { border: none; border-radius: 14px; box-shadow: 0 4px 20px rgba(0,0,0,0.07); margin-bottom: 1.5rem; overflow: hidden; }
+.el-card .card-header { background: linear-gradient(90deg, #1e293b 0%, #334155 100%); color: #fff; font-weight: 600; padding: 0.9rem 1.25rem; border: none; }
+.el-card .table thead th { background: linear-gradient(180deg, #334155 0%, #475569 100%); color: #fff !important; font-weight: 600; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.45px; padding: 0.75rem 1rem; border: none; }
+.el-card .table tbody td { padding: 0.75rem 1rem; vertical-align: middle; }
+</style>
+
+<div class="el-req-hero d-flex align-items-center gap-3 flex-wrap">
+    <img src="{% static 'images/ljiet-logo.png' %}" alt="LJIET" class="hero-logo">
+    <div class="flex-grow-1">
+        <h1 class="page-title mb-1">Add Extra Lecture</h1>
+        <p class="page-subtitle mb-0">Same details as the admin form. Your request is sent to the <strong>HOD</strong> for approval. After approval it appears on your schedule and in <strong>Mark Attendance</strong>. Whether it counts in attendance %, compile, and DR teaching load follows your department’s <strong>Include extra lectures in attendance</strong> setting (same as admin-added extras).</p>
+    </div>
+</div>
+
+<div class="card el-card">
+    <div class="card-header"><i class="fas fa-plus-circle me-2"></i>Request extra lecture</div>
+    <div class="card-body">
+        <form method="post" class="row g-3">
+            {% csrf_token %}
+            <div class="col-md-6 col-lg-2">
+                <label class="form-label">Batch</label>
+                <select name="batch_id" class="form-select" required>
+                    <option value="">-- Select batch --</option>
+                    {% for b in batches %}
+                    <option value="{{ b.id }}">{{ b.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-6 col-lg-2">
+                <label class="form-label">Date</label>
+                <input type="date" name="date" class="form-control" required>
+            </div>
+            <div class="col-md-6 col-lg-2">
+                <label class="form-label">Time Slot</label>
+                <select name="time_slot" class="form-select" required>
+                    <option value="">-- Select --</option>
+                    {% for ts in time_slots %}
+                    <option value="{{ ts }}">{{ ts }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-6 col-lg-2">
+                <label class="form-label">Subject</label>
+                <select name="subject_id" class="form-select" required>
+                    <option value="">-- Select subject --</option>
+                    {% for s in subjects %}
+                    <option value="{{ s.id }}">{{ s.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-6 col-lg-2">
+                <label class="form-label">Faculty</label>
+                <select name="faculty_id" class="form-select" required>
+                    <option value="">-- Select faculty --</option>
+                    {% for f in faculties %}
+                    <option value="{{ f.id }}">{{ f.full_name }} ({{ f.short_name }})</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-6 col-lg-2">
+                <label class="form-label">Room No</label>
+                <input type="text" name="room_number" class="form-control" placeholder="e.g. 310" autocomplete="off">
+            </div>
+            <div class="col-12">
+                <button type="submit" class="btn btn-primary"><i class="fas fa-paper-plane me-1"></i> Submit for HOD approval</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<div class="card el-card">
+    <div class="card-header"><i class="fas fa-hourglass-half me-2"></i>Pending approval</div>
+    <div class="card-body p-0">
+        {% if my_pending %}
+        <div class="table-responsive">
+            <table class="table table-hover mb-0">
+                <thead>
+                    <tr>
+                        <th>Submitted</th>
+                        <th>Date</th>
+                        <th>Batch</th>
+                        <th>Slot</th>
+                        <th>Subject</th>
+                        <th>Faculty</th>
+                        <th>Room</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for r in my_pending %}
+                    <tr>
+                        <td class="small text-muted">{{ r.created_at|date:"d M Y H:i" }}</td>
+                        <td>{{ r.date|date:"D, d M Y" }}</td>
+                        <td>{{ r.batch.name }}</td>
+                        <td>{{ r.time_slot }}</td>
+                        <td>{{ r.subject.name }}</td>
+                        <td>{{ r.faculty.short_name }}</td>
+                        <td>{{ r.room_number|default:"—" }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <p class="text-secondary text-center py-4 mb-0">No pending requests.</p>
+        {% endif %}
+    </div>
+</div>
+
+<div class="card el-card">
+    <div class="card-header"><i class="fas fa-check-double me-2"></i>Reviewed requests</div>
+    <div class="card-body p-0">
+        {% if my_done %}
+        <div class="table-responsive">
+            <table class="table table-hover mb-0">
+                <thead>
+                    <tr>
+                        <th>Date</th>
+                        <th>Batch</th>
+                        <th>Slot</th>
+                        <th>Subject</th>
+                        <th>Faculty</th>
+                        <th>Status</th>
+                        <th>Reviewed</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for r in my_done %}
+                    <tr>
+                        <td>{{ r.date|date:"d M Y" }}</td>
+                        <td>{{ r.batch.name }}</td>
+                        <td>{{ r.time_slot }}</td>
+                        <td>{{ r.subject.name }}</td>
+                        <td>{{ r.faculty.short_name }}</td>
+                        <td>
+                            {% if r.status == 'approved' %}
+                            <span class="badge bg-success">Approved</span>
+                            {% elif r.status == 'rejected' %}
+                            <span class="badge bg-secondary">Rejected</span>
+                            {% else %}
+                            <span class="badge bg-light text-dark">{{ r.get_status_display }}</span>
+                            {% endif %}
+                        </td>
+                        <td class="small">
+                            {% if r.reviewed_at %}{{ r.reviewed_at|date:"d M Y H:i" }}{% else %}—{% endif %}
+                            {% if r.review_notes %}<div class="text-muted mt-1">{{ r.review_notes }}</div>{% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <p class="text-secondary text-center py-4 mb-0">No reviewed requests yet.</p>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

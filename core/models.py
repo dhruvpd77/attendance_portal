@@ -177,6 +177,11 @@ class Student(models.Model):
     department = models.ForeignKey(Department, on_delete=models.CASCADE)
     batch = models.ForeignKey(Batch, on_delete=models.CASCADE)
     roll_no = models.CharField(max_length=30)
+    branch = models.CharField(
+        max_length=80,
+        blank=True,
+        help_text='Engineering branch code (e.g. CE, IT); can be filled from marksheet upload.',
+    )
     enrollment_no = models.CharField(max_length=50, blank=True)
     name = models.CharField(max_length=200)
     email = models.EmailField(blank=True)

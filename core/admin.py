@@ -48,7 +48,7 @@ class FacultyAdmin(admin.ModelAdmin):
 
 @admin.register(Student)
 class StudentAdmin(admin.ModelAdmin):
-    list_display = ('roll_no', 'name', 'batch', 'department')
+    list_display = ('roll_no', 'name', 'branch', 'batch', 'department')
     list_filter = ('department', 'batch')
 
 @admin.register(ScheduleSlot)

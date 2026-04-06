@@ -13,7 +13,7 @@
     <div class="d-flex gap-2 flex-wrap align-items-center">
         <a href="{% url 'core:admin_dashboard' %}" class="btn btn-outline-light btn-sm"><i class="fas fa-arrow-left me-1"></i> Dashboard</a>
         <form method="get" class="d-flex align-items-center gap-2 flex-wrap">
-            <input type="search" name="q" value="{{ search_q }}" placeholder="Search roll, name, enrollment…" class="form-control form-control-sm" style="min-width:180px;">
+            <input type="search" name="q" value="{{ search_q }}" placeholder="Search roll, name, enrollment, branch…" class="form-control form-control-sm" style="min-width:180px;">
             <select name="batch" onchange="this.form.submit()" class="form-select form-select-sm" style="min-width:140px;">
                 <option value="">All batches</option>
                 {% for b in batches %}
@@ -41,6 +41,7 @@
                     <th>Roll No</th>
                     <th>Name</th>
                     <th>Enrollment No</th>
+                    <th>Branch</th>
                     <th>Batch</th>
                     <th>Mentor</th>
                     <th>Student Phone</th>
@@ -54,6 +55,7 @@
                     <td class="fw-medium">{{ s.roll_no }}</td>
                     <td>{{ s.name }}</td>
                     <td class="text-secondary">{{ s.enrollment_no|default:"—" }}</td>
+                    <td class="text-secondary">{{ s.branch|default:"—" }}</td>
                     <td class="text-secondary">{{ s.batch.name }}</td>
                     <td class="text-secondary">{{ s.mentor.full_name|default:"" }}{% if s.mentor %} ({{ s.mentor.short_name }}){% else %}—{% endif %}</td>
                     <td class="text-secondary">{{ s.student_phone_number|default:"—" }}</td>
@@ -64,7 +66,7 @@
                     </td>
                 </tr>
                 {% empty %}
-                <tr><td colspan="8" class="text-center text-secondary py-5">No students. Add student, upload CSV, or adjust search.</td></tr>
+                <tr><td colspan="9" class="text-center text-secondary py-5">No students. Add student, upload CSV, or adjust search.</td></tr>
                 {% endfor %}
             </tbody>
         </table>

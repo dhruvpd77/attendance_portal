@@ -39,6 +39,10 @@
                     <input type="text" name="enrollment_no" value="{% if obj %}{{ obj.enrollment_no }}{% endif %}" class="form-control form-control-app" placeholder="Enrollment number">
                 </div>
                 <div class="col-md-6">
+                    <label class="form-label fw-semibold">Branch (optional)</label>
+                    <input type="text" name="branch" value="{% if obj %}{{ obj.branch }}{% endif %}" class="form-control form-control-app" maxlength="80" placeholder="e.g. CE, IT, CSE">
+                </div>
+                <div class="col-md-6">
                     <label class="form-label fw-semibold">Mentor (optional)</label>
                     <select name="mentor_id" class="form-select form-select-app">
                         <option value="">— No mentor —</option>

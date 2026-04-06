@@ -1018,6 +1018,8 @@ def exam_phase_detail(request, phase_id):
         StudentMark.objects.filter(exam_phase=phase).values_list('subject_id', flat=True).distinct()
     )
 
+    from core.semester_scope import departments_for_admin_request
+
     ctx = {
         'department': dept,
         'phase': phase,
@@ -1029,6 +1031,10 @@ def exam_phase_detail(request, phase_id):
         'marks_list': marks_list,
         'selected_subject': selected_subject,
         'subject_ids_with_marks': subject_ids_with_marks,
+        'is_super_admin': is_super_admin(request),
+        'bulk_upload_departments': list(departments_for_admin_request(request).order_by('name'))
+        if is_super_admin(request)
+        else [],
     }
     return render(request, 'core/admin/exam_phase_detail.html', ctx)
 
@@ -1052,6 +1058,28 @@ def exam_phase_upload_marks(request):
         messages.error(request, 'Subject not in this phase.')
         return redirect('core:exam_phase_detail', phase_id=phase.id)
 
+    from core.marksheet_excel import process_exam_marksheet_worksheet
+    from core.semester_scope import departments_for_admin_request
+
+    allowed_ids = set(departments_for_admin_request(request).values_list('pk', flat=True))
+    if is_super_admin(request) and request.POST.get('bulk_multi_department') == '1':
+        department_ids = []
+        for x in request.POST.getlist('bulk_department_ids'):
+            try:
+                pid = int(x)
+            except (TypeError, ValueError):
+                continue
+            if pid in allowed_ids:
+                department_ids.append(pid)
+        if not department_ids:
+            messages.error(request, 'For bulk upload, select at least one department.')
+            return redirect('core:exam_phase_detail', phase_id=phase.id)
+    else:
+        if dept.pk not in allowed_ids:
+            messages.error(request, 'Invalid department scope.')
+            return redirect('core:exam_phases_list')
+        department_ids = [dept.pk]
+
     excel_file = request.FILES.get('marksheet_file')
     if not excel_file:
         messages.error(request, 'Select an Excel file.')
@@ -1064,61 +1092,23 @@ def exam_phase_upload_marks(request):
         messages.error(request, f'Invalid Excel file: {e}')
         return redirect('core:exam_phase_detail', phase_id=phase.id)
 
-    # Find header row and columns: Enrollment (Enrolllment/Enrollment), Marks
-    enroll_col = marks_col = None
-    data_start_row = 0
-    for row_idx, row in enumerate(ws.iter_rows(values_only=True), 1):
-        if row_idx > 30:
-            break
-        row_str = [str(c).lower() if c is not None else '' for c in (row or [])]
-        if 'enroll' in ' '.join(row_str) or 'enrolllment' in ' '.join(row_str):
-            for c_idx, cell in enumerate(row_str):
-                if 'enroll' in cell or 'enrolllment' in cell:
-                    enroll_col = c_idx
-                if 'mark' in cell:
-                    marks_col = c_idx
-            if enroll_col is not None:
-                data_start_row = row_idx
-                break
-    if enroll_col is None:
-        enroll_col = 3  # Fallback: column D
-    if marks_col is None:
-        marks_col = 6   # Fallback: column G
-
-    students_by_enrollment = {
-        str(s.enrollment_no).strip(): s
-        for s in Student.objects.filter(department=dept).exclude(enrollment_no='')
-        if s.enrollment_no
-    }
-
-    created = updated = skipped = 0
-    for row_idx, row in enumerate(ws.iter_rows(values_only=True), 1):
-        if row_idx <= data_start_row or not row:  # Skip header and empty
-            continue
-        enroll_val = row[enroll_col] if enroll_col < len(row) else None
-        if enroll_val is None:
-            continue
-        enroll_str = str(enroll_val).strip()
-        if not enroll_str or not enroll_str.isdigit():
-            continue
-        marks_val = row[marks_col] if marks_col < len(row) else None
-        marks_decimal = normalize_student_mark(marks_val)
-
-        student = students_by_enrollment.get(enroll_str)
-        if not student:
-            skipped += 1
-            continue
-        obj, created_flag = StudentMark.objects.update_or_create(
-            student=student, exam_phase=phase, subject=subject,
-            defaults={'marks_obtained': marks_decimal}
+    try:
+        stats = process_exam_marksheet_worksheet(
+            ws,
+            template_phase=phase,
+            template_subject=subject,
+            department_ids=department_ids,
         )
-        if created_flag:
-            created += 1
-        else:
-            updated += 1
+    finally:
+        wb.close()
 
-    wb.close()
-    messages.success(request, f'Marks uploaded: {created} new, {updated} updated. {skipped} rows skipped (enrollment not found).')
+    messages.success(
+        request,
+        f'Marks uploaded: {stats["created"]} new, {stats["updated"]} updated. '
+        f'{stats["skipped"]} row(s) skipped (enrollment not found or ambiguous). '
+        f'{stats["skipped_no_target"]} skipped (no phase/subject link in that department). '
+        f'{stats["branch_filled"]} student(s) had branch filled from the sheet.',
+    )
     return redirect('core:exam_phase_detail', phase_id=phase.id)
 
 
@@ -2584,7 +2574,10 @@ def student_list(request):
     if q:
         from django.db.models import Q
         students = students.filter(
-            Q(roll_no__icontains=q) | Q(name__icontains=q) | Q(enrollment_no__icontains=q)
+            Q(roll_no__icontains=q)
+            | Q(name__icontains=q)
+            | Q(enrollment_no__icontains=q)
+            | Q(branch__icontains=q)
         )
     students = students.select_related('batch', 'mentor').annotate(
         roll_no_int=Cast('roll_no', IntegerField())
@@ -2644,6 +2637,7 @@ def student_upload(request):
                 rn = get_col(row, 'roll_no', 'roll no')
                 nm = get_col(row, 'name')
                 en = get_col(row, 'enrollment_no', 'enrollment no')
+                br = get_col(row, 'branch')
                 mentor_val = get_col(row, 'mentor')
                 student_phone = get_col(row, 'student_phone_number', 'student phone number', 'student_phone')
                 parents_contact = get_col(row, 'parents_contact_number', 'parents contact number', 'parents_contact')
@@ -2655,8 +2649,13 @@ def student_upload(request):
                             break
                 if rn and nm:
                     rows.append({
-                        'roll_no': rn, 'name': nm, 'enrollment_no': en, 'mentor': mentor,
-                        'student_phone_number': student_phone, 'parents_contact_number': parents_contact,
+                        'roll_no': rn,
+                        'name': nm,
+                        'enrollment_no': en,
+                        'branch': (br or '')[:80],
+                        'mentor': mentor,
+                        'student_phone_number': student_phone,
+                        'parents_contact_number': parents_contact,
                     })
             if not rows:
                 messages.error(request, 'No valid rows (need roll_no, name).')
@@ -2666,6 +2665,7 @@ def student_upload(request):
                 Student.objects.create(
                     department=dept, batch=batch,
                     roll_no=r['roll_no'], name=r['name'], enrollment_no=r.get('enrollment_no', ''),
+                    branch=r.get('branch', ''),
                     mentor=r.get('mentor'),
                     student_phone_number=r.get('student_phone_number', ''),
                     parents_contact_number=r.get('parents_contact_number', ''),
@@ -2696,6 +2696,7 @@ def student_add(request):
         mentor_id = request.POST.get('mentor_id', '').strip()
         student_phone = request.POST.get('student_phone_number', '').strip()
         parents_contact = request.POST.get('parents_contact_number', '').strip()
+        branch = request.POST.get('branch', '').strip()[:80]
         if not roll_no or not name or not batch_id:
             messages.error(request, 'Roll No, Name, and Batch are required.')
             return redirect('core:student_add')
@@ -2709,7 +2710,7 @@ def student_add(request):
         mentor = Faculty.objects.filter(pk=mentor_id, department=dept).first() if mentor_id else None
         Student.objects.create(
             department=dept, batch=batch,
-            roll_no=roll_no, name=name, enrollment_no=enrollment_no,
+            roll_no=roll_no, name=name, enrollment_no=enrollment_no, branch=branch,
             mentor=mentor,
             student_phone_number=student_phone, parents_contact_number=parents_contact,
         )
@@ -2738,6 +2739,7 @@ def student_edit(request, pk):
         mentor_id = request.POST.get('mentor_id', '').strip()
         student_phone = request.POST.get('student_phone_number', '').strip()
         parents_contact = request.POST.get('parents_contact_number', '').strip()
+        branch = request.POST.get('branch', '').strip()[:80]
         if not roll_no or not name or not batch_id:
             messages.error(request, 'Roll No, Name, and Batch are required.')
             return redirect('core:student_edit', pk=pk)
@@ -2754,6 +2756,7 @@ def student_edit(request, pk):
         obj.name = name
         obj.batch = batch
         obj.enrollment_no = enrollment_no
+        obj.branch = branch
         obj.mentor = mentor
         obj.student_phone_number = student_phone
         obj.parents_contact_number = parents_contact
@@ -10964,6 +10967,10 @@ def exam_admin_exam_phase_detail(request, phase_id):
         StudentMark.objects.filter(exam_phase=phase).values_list('subject_id', flat=True).distinct()
     )
 
+    from core.semester_scope import departments_for_institute_semester, get_active_institute_semester
+
+    bulk_allowed = departments_for_institute_semester(get_active_institute_semester(request))
+
     ctx = {
         'department': dept,
         'phase': phase,
@@ -10977,6 +10984,7 @@ def exam_admin_exam_phase_detail(request, phase_id):
         'selected_subject': selected_subject,
         'subject_ids_with_marks': subject_ids_with_marks,
         'is_exam_admin': True,
+        'bulk_upload_departments': list(bulk_allowed.order_by('name')),
     }
     return render(request, 'core/exam_admin/exam_phase_detail.html', ctx)
 
@@ -10987,9 +10995,11 @@ def exam_admin_exam_phase_upload_marks(request):
     if request.method != 'POST' or not user_can_exam_admin(request):
         return redirect('core:exam_admin_exam_phases_list')
     dept_id = request.POST.get('dept_id')
+    from core.marksheet_excel import process_exam_marksheet_worksheet
     from core.semester_scope import departments_for_institute_semester, get_active_institute_semester
 
     allowed = departments_for_institute_semester(get_active_institute_semester(request))
+    allowed_ids = set(allowed.values_list('pk', flat=True))
     try:
         dept = allowed.filter(pk=int(dept_id)).first() if dept_id else None
     except (TypeError, ValueError):
@@ -11010,6 +11020,21 @@ def exam_admin_exam_phase_upload_marks(request):
         messages.error(request, 'Subject not in this phase.')
         return redirect('core:exam_admin_exam_phase_detail', phase_id=phase.id)
 
+    if request.POST.get('bulk_multi_department') == '1':
+        department_ids = []
+        for x in request.POST.getlist('bulk_department_ids'):
+            try:
+                pid = int(x)
+            except (TypeError, ValueError):
+                continue
+            if pid in allowed_ids:
+                department_ids.append(pid)
+        if not department_ids:
+            messages.error(request, 'For bulk upload, select at least one department.')
+            return redirect('core:exam_admin_exam_phase_detail', phase_id=phase.id)
+    else:
+        department_ids = [dept.pk]
+
     excel_file = request.FILES.get('marksheet_file')
     if not excel_file:
         messages.error(request, 'Select an Excel file.')
@@ -11022,60 +11047,23 @@ def exam_admin_exam_phase_upload_marks(request):
         messages.error(request, f'Invalid Excel file: {e}')
         return redirect('core:exam_admin_exam_phase_detail', phase_id=phase.id)
 
-    enroll_col = marks_col = None
-    data_start_row = 0
-    for row_idx, row in enumerate(ws.iter_rows(values_only=True), 1):
-        if row_idx > 30:
-            break
-        row_str = [str(c).lower() if c is not None else '' for c in (row or [])]
-        if 'enroll' in ' '.join(row_str) or 'enrolllment' in ' '.join(row_str):
-            for c_idx, cell in enumerate(row_str):
-                if 'enroll' in cell or 'enrolllment' in cell:
-                    enroll_col = c_idx
-                if 'mark' in cell:
-                    marks_col = c_idx
-            if enroll_col is not None:
-                data_start_row = row_idx
-                break
-    if enroll_col is None:
-        enroll_col = 3
-    if marks_col is None:
-        marks_col = 6
-
-    students_by_enrollment = {
-        str(s.enrollment_no).strip(): s
-        for s in Student.objects.filter(department=dept).exclude(enrollment_no='')
-        if s.enrollment_no
-    }
-
-    created = updated = skipped = 0
-    for row_idx, row in enumerate(ws.iter_rows(values_only=True), 1):
-        if row_idx <= data_start_row or not row:
-            continue
-        enroll_val = row[enroll_col] if enroll_col < len(row) else None
-        if enroll_val is None:
-            continue
-        enroll_str = str(enroll_val).strip()
-        if not enroll_str or not enroll_str.isdigit():
-            continue
-        marks_val = row[marks_col] if marks_col < len(row) else None
-        marks_decimal = normalize_student_mark(marks_val)
-
-        student = students_by_enrollment.get(enroll_str)
-        if not student:
-            skipped += 1
-            continue
-        obj, created_flag = StudentMark.objects.update_or_create(
-            student=student, exam_phase=phase, subject=subject,
-            defaults={'marks_obtained': marks_decimal}
+    try:
+        stats = process_exam_marksheet_worksheet(
+            ws,
+            template_phase=phase,
+            template_subject=subject,
+            department_ids=department_ids,
         )
-        if created_flag:
-            created += 1
-        else:
-            updated += 1
+    finally:
+        wb.close()
 
-    wb.close()
-    messages.success(request, f'Marks uploaded: {created} new, {updated} updated. {skipped} rows skipped (enrollment not found).')
+    messages.success(
+        request,
+        f'Marks uploaded: {stats["created"]} new, {stats["updated"]} updated. '
+        f'{stats["skipped"]} row(s) skipped (enrollment not found or ambiguous). '
+        f'{stats["skipped_no_target"]} skipped (no phase/subject link in that department). '
+        f'{stats["branch_filled"]} student(s) had branch filled from the sheet.',
+    )
     return redirect('core:exam_admin_exam_phase_detail', phase_id=phase.id)
 
 
