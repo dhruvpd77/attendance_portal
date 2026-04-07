@@ -210,7 +210,7 @@
 
 <p class="risk-note mb-3">
     {% if mode == 'attendance' %}
-    Showing mentees below 75% for {{ phase }}{% if selected_week_global_num %} — through Week {{ selected_week_global_num }}{% else %} — cumulative through {{ phase }}{% endif %}.
+    Showing mentees below {{ att_risk_min_pct|floatformat:2 }}% for {{ phase }}{% if selected_week_global_num %} — through Week {{ selected_week_global_num }}{% else %} — cumulative through {{ phase }}{% endif %}.
     {% if log_week_global_num %}
     Saves attach to <strong>WEEK-{{ log_week_global_num }}</strong> on the admin export (when &ldquo;All (cumulative)&rdquo; is selected, that is the last week of {{ phase }}).
     {% endif %}
@@ -235,7 +235,7 @@
         {% elif mode == 'marks' %}
         <p class="mb-0">No at-risk marks rows for these mentees in this phase.</p>
         {% else %}
-        <p class="mb-0">No at-risk attendance rows for this selection (cumulative % is 75% or above).</p>
+        <p class="mb-0">No at-risk attendance rows for this selection (cumulative % is at or above {{ att_risk_min_pct|floatformat:2 }}%).</p>
         {% endif %}
     </div>
 </div>

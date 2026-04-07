@@ -27,7 +27,7 @@
                                 <tr>
                                     <td style="background:linear-gradient(135deg,#fef3c7 0%,#fde68a 100%); border-left:4px solid #f59e0b; border-radius:10px; padding:18px 20px;">
                                         <p style="margin:0;color:#92400e;font-size:0.95rem;line-height:1.6;">
-                                            <strong style="font-size:1.05rem;">{{ at_risk_list|length }} of your mentees</strong> have attendance below 75&#37; for <strong>{{ phase }} up to Week {{ week_num }}</strong>.<br>
+                                            <strong style="font-size:1.05rem;">{{ at_risk_list|length }} of your mentees</strong> have attendance below {{ att_risk_min_pct|floatformat:2 }}&#37; for <strong>{{ phase }} up to Week {{ week_num }}</strong>.<br>
                                             Please review the details below and take necessary action.
                                         </p>
                                     </td>

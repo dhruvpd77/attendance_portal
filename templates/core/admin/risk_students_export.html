@@ -5,7 +5,7 @@
 <div class="d-flex flex-wrap justify-content-between align-items-center mb-4 gap-3">
     <div>
         <h1 class="page-title mb-1">Risk students (Excel)</h1>
-        <p class="page-subtitle mb-0">Cumulative workbook up to the selected phase &amp; week. Each <strong>WEEK-<em>n</em></strong> sheet uses the <strong>same cumulative attendance through that week</strong> as <strong>Mentorship Students</strong> (not isolated single-week %). Students with overall <strong>&lt;75%</strong> in that window. <strong>T1–T4</strong> sheets: fail rows grouped by <strong>SUBJECT</strong> (merged column), <strong>MARKS</strong> per row, mentor-wise within each subject; contact/remark columns blank.</p>
+        <p class="page-subtitle mb-0">Cumulative workbook up to the selected phase &amp; week. Each <strong>WEEK-<em>n</em></strong> sheet uses the <strong>same cumulative attendance through that week</strong> as <strong>Mentorship Students</strong> (not isolated single-week %). Students with overall <strong>below {{ att_risk_min_pct|floatformat:2 }}%</strong> in that window (set under <strong>Department risk criteria</strong>). Phase sheets: marks below each phase’s cutoff (institute/department settings). Fail rows grouped by <strong>SUBJECT</strong>; contact/remark columns blank.</p>
     </div>
     <a href="{% url 'core:admin_dashboard' %}" class="btn btn-outline-app"><i class="fas fa-arrow-left me-1"></i> Dashboard</a>
 </div>

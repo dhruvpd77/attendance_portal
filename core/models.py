@@ -24,6 +24,12 @@ class InstituteSemester(models.Model):
         default=False,
         help_text='When off, faculty users cannot see attendance, mentorship, or other portal data for departments in this period. Super admin and departmental admin views are unchanged. Turn on when the period is ready for faculty. Exam duties and credits for this semester still appear under History (read-only) when exam menu is enabled for the department.',
     )
+    risk_attendance_min_percent = models.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        default=75,
+        help_text='Institute default: cumulative attendance below this %% is at-risk (all term phases). Departments can override.',
+    )
 
     class Meta:
         ordering = ['-sort_order', '-pk']
@@ -49,6 +55,21 @@ class Department(models.Model):
     include_extra_lectures_in_attendance = models.BooleanField(
         default=False,
         help_text='If on, extra lectures count in held/percentages like regular slots. If off, faculty can still mark attendance but totals exclude extras.',
+    )
+    faculty_show_mark_attendance = models.BooleanField(
+        default=True,
+        help_text='If off, faculty sidebar hides Mark Attendance and saving attendance is blocked.',
+    )
+    faculty_show_mentorship = models.BooleanField(
+        default=True,
+        help_text='If off, faculty sidebar hides Mentorship Students.',
+    )
+    risk_attendance_min_percent = models.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text='If set, overrides institute semester default for at-risk attendance %.',
     )
     faculty_show_doubt_solving = models.BooleanField(
         default=True,
@@ -96,6 +117,54 @@ class Department(models.Model):
 
     def __str__(self):
         return self.name
+
+
+class InstituteExamPhaseRiskThreshold(models.Model):
+    """Super-admin defaults: marks below this value are at-risk for the phase (per academic semester)."""
+
+    institute_semester = models.ForeignKey(
+        InstituteSemester, on_delete=models.CASCADE, related_name='exam_phase_risk_thresholds'
+    )
+    phase_name = models.CharField(max_length=50, help_text='Exam phase name, e.g. T1, T2, SEE')
+    fail_below_marks = models.DecimalField(
+        max_digits=6,
+        decimal_places=2,
+        default=9,
+        help_text='At-risk if marks obtained is strictly less than this (same as legacy &lt; 9).',
+    )
+
+    class Meta:
+        ordering = ['institute_semester', 'phase_name']
+        unique_together = [('institute_semester', 'phase_name')]
+        verbose_name = 'Institute mark at-risk threshold (phase)'
+        verbose_name_plural = 'Institute mark at-risk thresholds (phase)'
+
+    def __str__(self):
+        return f'{self.institute_semester} {self.phase_name} < {self.fail_below_marks}'
+
+
+class DepartmentExamPhaseRiskThreshold(models.Model):
+    """Department override for mark at-risk cutoff per exam phase (HOD / super admin)."""
+
+    department = models.ForeignKey(
+        Department, on_delete=models.CASCADE, related_name='exam_phase_risk_thresholds'
+    )
+    phase_name = models.CharField(max_length=50)
+    fail_below_marks = models.DecimalField(
+        max_digits=6,
+        decimal_places=2,
+        default=9,
+        help_text='At-risk if marks strictly less than this.',
+    )
+
+    class Meta:
+        ordering = ['department', 'phase_name']
+        unique_together = [('department', 'phase_name')]
+        verbose_name = 'Department mark at-risk threshold (phase)'
+        verbose_name_plural = 'Department mark at-risk thresholds (phase)'
+
+    def __str__(self):
+        return f'{self.department} {self.phase_name} < {self.fail_below_marks}'
 
 
 class Batch(models.Model):

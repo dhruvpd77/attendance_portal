@@ -205,6 +205,36 @@ def sidebar_links(request):
             )
         from core.views import get_admin_department
 
+        try:
+            perf_i = next(i for i, l in enumerate(links) if l.get('active_name') == 'admin_performance_students')
+        except StopIteration:
+            perf_i = max(0, len(links) - 1)
+        insert_at = perf_i + 1
+        if is_super_admin:
+            links.insert(
+                insert_at,
+                _make_link(
+                    request,
+                    'Institute risk criteria',
+                    'core:admin_institute_risk_criteria',
+                    'fa-percentage',
+                    'admin_institute_risk_criteria',
+                ),
+            )
+            insert_at += 1
+        dept_for_risk = get_admin_department(request)
+        if dept_for_risk:
+            links.insert(
+                insert_at,
+                _make_link(
+                    request,
+                    'Department risk criteria',
+                    'core:admin_department_risk_criteria',
+                    'fa-sliders-h',
+                    'admin_department_risk_criteria',
+                ),
+            )
+
         _risk_admin_nav = frozenset(
             {
                 'admin_risk_students_export',
@@ -690,6 +720,8 @@ def sidebar_links(request):
         dept_choices = list(faculty_portal_member_departments_qs(faculty)) if faculty else []
         dept_selected = dept or exam_dept
         flags = {
+            'show_mark_attendance': getattr(dept, 'faculty_show_mark_attendance', True) if dept else True,
+            'show_mentorship': getattr(dept, 'faculty_show_mentorship', True) if dept else True,
             'show_doubt': getattr(dept, 'faculty_show_doubt_solving', True) if dept else True,
             'show_dr_load': getattr(dept, 'faculty_show_dr_weekly_load', True) if dept else True,
             'show_mark_analytics': getattr(dept, 'faculty_show_mark_analytics', True) if dept else True,
@@ -705,13 +737,24 @@ def sidebar_links(request):
         }
         links = [
             _make_link(request, 'Dashboard', 'core:faculty_dashboard', 'fa-tachometer-alt', 'faculty_dashboard'),
-            _make_link(request, 'Mark Attendance', 'core:faculty_attendance_entry', 'fa-edit', 'faculty_attendance_entry'),
         ]
+        if flags['show_mark_attendance']:
+            links.append(
+                _make_link(
+                    request,
+                    'Mark Attendance',
+                    'core:faculty_attendance_entry',
+                    'fa-edit',
+                    'faculty_attendance_entry',
+                    active_name_extra=('faculty_attendance_save',),
+                )
+            )
         if flags['show_doubt']:
             links.append(_make_link(request, 'Doubt solving', 'core:faculty_doubt_solving', 'fa-comments', 'faculty_doubt_solving'))
         if flags['show_dr_load']:
             links.append(_make_link(request, 'My DR weekly load', 'core:faculty_dr_load', 'fa-chart-bar', 'faculty_dr_load'))
-        links.append(_make_link(request, 'Mentorship Students', 'core:faculty_mentorship', 'fa-users', 'faculty_mentorship'))
+        if flags['show_mentorship']:
+            links.append(_make_link(request, 'Mentorship Students', 'core:faculty_mentorship', 'fa-users', 'faculty_mentorship'))
         if flags['show_risk_student_info']:
             links.append(
                 _make_link(

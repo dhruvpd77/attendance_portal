@@ -7,7 +7,7 @@
         <img src="{% static 'images/ljiet-logo.png' %}" alt="LJIET" class="admin-logo">
         <div>
             <h1 class="page-title mb-1">Management</h1>
-            <p class="page-subtitle mb-0">Faculty portal: master on/off and optional menu items — <strong>per department</strong>. Dashboard, Mark Attendance, and Mentorship stay visible when the portal is allowed; everything below is optional.</p>
+            <p class="page-subtitle mb-0">Faculty portal: master on/off and optional menu items — <strong>per department</strong>. Dashboard is always listed when the portal is on; Mark Attendance and Mentorship can be toggled below like other items.</p>
         </div>
     </div>
     <a href="{% url 'core:admin_dashboard' %}" class="btn btn-outline-light btn-sm"><i class="fas fa-arrow-left me-1"></i> Dashboard</a>
@@ -84,6 +84,14 @@
             <p class="text-muted small mb-3">Optional sidebar items for <strong>{{ department.name }}</strong> (only if master switch above is on and the academic semester allows faculty):</p>
 
             <div class="d-flex flex-column gap-4">
+                <div class="form-check form-switch">
+                    <input class="form-check-input" type="checkbox" role="switch" id="faculty_show_mark_attendance" name="faculty_show_mark_attendance" {% if department.faculty_show_mark_attendance %}checked{% endif %}>
+                    <label class="form-check-label" for="faculty_show_mark_attendance"><strong>Mark Attendance</strong></label>
+                </div>
+                <div class="form-check form-switch">
+                    <input class="form-check-input" type="checkbox" role="switch" id="faculty_show_mentorship" name="faculty_show_mentorship" {% if department.faculty_show_mentorship %}checked{% endif %}>
+                    <label class="form-check-label" for="faculty_show_mentorship"><strong>Mentorship Students</strong></label>
+                </div>
                 <div class="form-check form-switch">
                     <input class="form-check-input" type="checkbox" role="switch" id="faculty_show_doubt_solving" name="faculty_show_doubt_solving" {% if department.faculty_show_doubt_solving %}checked{% endif %}>
                     <label class="form-check-label" for="faculty_show_doubt_solving"><strong>Doubt solving</strong></label>

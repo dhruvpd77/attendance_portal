@@ -1,6 +1,6 @@
 """
 Send attendance notifications:
-- Students: Email when attendance drops below 75% (max once per week)
+- Students: Email when attendance drops below the department's configured threshold (max once per week)
 - Faculty: Reminder before class to mark attendance (daily, to faculty with classes today)
 - Admins: Weekly summary of attendance trends
 
@@ -23,6 +23,7 @@ from core.models import (
     TermPhase, FacultyAttendance, PhaseHoliday, AttendanceNotificationLog,
 )
 from accounts.models import UserRole
+from core.risk_policy import attendance_risk_min_percent
 
 
 def get_phase_holidays(dept, phase):
@@ -73,7 +74,7 @@ def _compile_phase_weeks(dept, phase):
 
 
 def student_low_attendance_emails(command):
-    """Send email to students with attendance below 75%. Max once per week."""
+    """Send email to students with attendance below the configured risk %. Max once per week."""
     sent = 0
     for dept in Department.objects.all():
         tp = TermPhase.objects.filter(department=dept).first()
@@ -91,6 +92,7 @@ def student_low_attendance_emails(command):
         all_dates = sorted(all_dates)
         if not all_dates:
             continue
+        att_min = float(attendance_risk_min_percent(dept))
         from core.views import _add_batch_schedule_pairs_for_attendance, get_cancelled_lectures_set
         batches = list(Batch.objects.filter(department=dept))
         batch_scheduled = defaultdict(set)
@@ -109,7 +111,7 @@ def student_low_attendance_emails(command):
             held = len(scheduled)
             attended = sum(1 for (d, slot) in scheduled if (d, slot) in batch_att_map[s.batch_id] and str_roll not in batch_att_map[s.batch_id][(d, slot)])
             pct = round(attended / held * 100, 2) if held else 0
-            if held and pct < 75:
+            if held and pct < att_min:
                 email = s.email or (s.user.email if s.user else None)
                 if not email:
                     continue
@@ -120,8 +122,8 @@ def student_low_attendance_emails(command):
                     continue
                 try:
                     send_mail(
-                        subject='LJIET Attendance Alert: Your attendance is below 75%',
-                        message=f'Dear {s.name},\n\nYour current attendance is {pct:.2f}% (attended {attended} of {held} lectures).\n\nPlease ensure you attend classes regularly to maintain the required 75% attendance.\n\n— LJIET Attendance Portal',
+                        subject=f'LJIET Attendance Alert: Your attendance is below {att_min:g}%',
+                        message=f'Dear {s.name},\n\nYour current attendance is {pct:.2f}% (attended {attended} of {held} lectures).\n\nPlease ensure you attend classes regularly to meet the required {att_min:g}% attendance for your department.\n\n— LJIET Attendance Portal',
                         from_email=settings.DEFAULT_FROM_EMAIL,
                         recipient_list=[email],
                         fail_silently=True,
@@ -178,6 +180,7 @@ def admin_weekly_summary(command):
         dept_ids = set(Department.objects.values_list('id', flat=True))
     lines = ['LJIET Attendance — Weekly Summary', '=' * 40, '']
     for dept in Department.objects.filter(id__in=dept_ids):
+        att_min = float(attendance_risk_min_percent(dept))
         tp = TermPhase.objects.filter(department=dept).first()
         phase = 'T1'
         for p in ['T1', 'T2', 'T3', 'T4']:
@@ -211,10 +214,10 @@ def admin_weekly_summary(command):
             attended = sum(1 for (d, slot) in scheduled if (d, slot) in batch_att_map[s.batch_id] and str_roll not in batch_att_map[s.batch_id][(d, slot)])
             total_held += held
             total_attended += attended
-            if held and round(attended / held * 100, 2) < 75:
+            if held and round(attended / held * 100, 2) < att_min:
                 at_risk += 1
         avg_pct = round(total_attended / total_held * 100, 2) if total_held else 0
-        lines.append(f'{dept.name}: {total_attended}/{total_held} overall ({avg_pct:.2f}%), {at_risk} at-risk students.')
+        lines.append(f'{dept.name}: {total_attended}/{total_held} overall ({avg_pct:.2f}%), {at_risk} students below {att_min:g}%.')
     body = '\n'.join(lines)
     recipients = list(set(ur.user.email for ur in admin_users if ur.user and ur.user.email))
     if not recipients:

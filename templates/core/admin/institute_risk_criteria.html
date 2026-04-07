@@ -1,0 +1,49 @@
+{% extends 'core/admin/base_admin.html' %}
+{% load static %}
+{% block title %}Institute risk criteria — LJIET_Attendance{% endblock %}
+{% block content %}
+<div class="admin-hero">
+    <div class="d-flex align-items-center gap-3">
+        <img src="{% static 'images/ljiet-logo.png' %}" alt="LJIET" class="admin-logo">
+        <div>
+            <h1 class="page-title mb-1">Institute risk criteria</h1>
+            <p class="page-subtitle mb-0">Super admin only. Defaults apply to all departments in the active academic semester unless a department sets its own override. Attendance threshold is one value for the whole term; mark cutoffs are per exam phase (T1, SEE, etc.).</p>
+        </div>
+    </div>
+    <a href="{% url 'core:admin_dashboard' %}" class="btn btn-outline-light btn-sm"><i class="fas fa-arrow-left me-1"></i> Dashboard</a>
+</div>
+
+<div class="card admin-card" style="max-width: 640px;">
+    <div class="card-header">Active semester: {{ semester.label }}</div>
+    <div class="card-body p-4">
+        <form method="post">
+            {% csrf_token %}
+            <div class="mb-4">
+                <label class="form-label fw-semibold" for="id_att">Minimum attendance % (at-risk if below)</label>
+                <input type="text" name="risk_attendance_min_percent" id="id_att" class="form-control form-control-app"
+                       value="{{ semester.risk_attendance_min_percent|default:75 }}" inputmode="decimal" autocomplete="off">
+                <p class="form-text small mb-0">Applied across all term phases (T1–T4). Typical value 75.</p>
+            </div>
+            <p class="fw-semibold mb-2">Mark risk cutoff per phase</p>
+            <p class="text-muted small">Students with marks <strong>strictly below</strong> this value count as at-risk for that phase. Leave blank to clear an override and use the default (9).</p>
+            <div class="table-responsive mb-4">
+                <table class="table table-sm align-middle mb-0">
+                    <thead><tr><th>Phase</th><th>Fail / risk below (marks)</th></tr></thead>
+                    <tbody>
+                        {% for row in phase_rows %}
+                        <tr>
+                            <td class="fw-medium">{{ row.name }}</td>
+                            <td><input type="text" class="form-control form-control-app" name="phase_mark_{{ row.name }}"
+                                       value="{% if row.value != None %}{{ row.value }}{% endif %}" placeholder="9" autocomplete="off"></td>
+                        </tr>
+                        {% empty %}
+                        <tr><td colspan="2" class="text-muted small">No exam phases found for this semester yet. Add exam phases under a department first.</td></tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            <button type="submit" class="btn btn-primary"><i class="fas fa-save me-1"></i>Save institute defaults</button>
+        </form>
+    </div>
+</div>
+{% endblock %}

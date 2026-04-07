@@ -26,6 +26,7 @@ from .exam_phase_order import (
     sorted_phase_names,
 )
 from .student_marks_utils import normalize_student_mark
+from .risk_policy import mark_fail_below_threshold
 
 MARK_LOW_THRESHOLD = 9
 LOW_FILL = PatternFill(start_color='FFCDD2', end_color='FFCDD2', fill_type='solid')
@@ -146,9 +147,10 @@ def build_student_phase_data(students, dept):
         for ep in exam_phases:
             subs = phase_subjects.get(ep.id, [])
             subject_marks = []
+            phase_cut = float(mark_fail_below_threshold(dept, ep.name))
             for eps in subs:
                 marks_val = marks_by_student_phase[s.id][ep.id].get(eps.subject.name)
-                is_low = marks_val is not None and marks_val < MARK_LOW_THRESHOLD
+                is_low = marks_val is not None and marks_val < phase_cut
                 subject_marks.append({'name': eps.subject.name, 'marks': marks_val, 'is_low': is_low})
             phase_wise.append({'phase_name': ep.name, 'subjects': subject_marks})
         result.append({'student': s, 'phase_wise': phase_wise, 'department': dept})
@@ -174,11 +176,12 @@ def build_risk_from_student_data(student_data, threshold=MARK_LOW_THRESHOLD):
         dept = item.get('department')
         dname = dept.name if dept else ''
         for phase in item['phase_wise']:
+            thr = float(mark_fail_below_threshold(dept, phase['phase_name'])) if dept else float(threshold)
             for s in phase['subjects']:
                 v = normalize_student_mark(s.get('marks'))
                 if v is None:
                     continue
-                if v < threshold:
+                if v < thr:
                     risk_rows.append({
                         'department': dname,
                         'student': st,
@@ -271,11 +274,12 @@ def all_phase_names(depts):
     return sorted_phase_names(names)
 
 
-def _apply_low_fill(cell, value):
+def _apply_low_fill(cell, value, *, low_below=None):
     if value is None or value == '':
         return
     try:
-        if float(value) < MARK_LOW_THRESHOLD:
+        lim = float(low_below) if low_below is not None else float(MARK_LOW_THRESHOLD)
+        if float(value) < lim:
             cell.fill = LOW_FILL
     except (TypeError, ValueError):
         pass
@@ -476,7 +480,7 @@ def _fill_all_departments_wide_sheet(ws, depts, all_dept_student_pairs):
             val = _mark_in_item(item, pn, sn)
             cell = ws.cell(r, nfix + 1 + i, '' if val is None else val)
             cell.border = THIN
-            _apply_low_fill(cell, val)
+            _apply_low_fill(cell, val, low_below=float(mark_fail_below_threshold(dept, pn)))
         for cc in range(1, nfix + len(col_phase_subject) + 1):
             ws.cell(r, cc).border = THIN
     _matrix_column_widths(ws, fixed, groups)
@@ -551,7 +555,9 @@ def _write_ranked_marks_sheet_phase_banner(ws, rows, *, with_department):
             c += 1
         c_m = ws.cell(r, c, v)
         c_m.border = THIN
-        _apply_low_fill(c_m, v)
+        st_dept = st.department
+        lb = float(mark_fail_below_threshold(st_dept, m.exam_phase.name)) if st_dept else float(MARK_LOW_THRESHOLD)
+        _apply_low_fill(c_m, v, low_below=lb)
         for cc in range(1, ncols + 1):
             ws.cell(r, cc).border = THIN
     for col in range(1, ncols + 1):
@@ -584,7 +590,9 @@ def _fill_compiled_matrix_sheet(ws, col_phase_subject, data_rows):
             col = nfix + 1 + i
             cell = ws.cell(r, col, val if val is not None else '')
             cell.border = THIN
-            _apply_low_fill(cell, val)
+            idpt = item.get('department')
+            lb = float(mark_fail_below_threshold(idpt, pn)) if idpt else float(MARK_LOW_THRESHOLD)
+            _apply_low_fill(cell, val, low_below=lb)
     _matrix_column_widths(ws, fixed, groups)
 
 
@@ -654,7 +662,7 @@ def _fill_combined_sheet(ws, depts, all_dept_student_pairs, *, include_departmen
             val = _mark_in_item(item, pn, sn) if ud.id == dept.id else None
             cell = ws.cell(r, base_col + j, val if val is not None else '')
             cell.border = THIN
-            _apply_low_fill(cell, val)
+            _apply_low_fill(cell, val, low_below=float(mark_fail_below_threshold(ud, pn)))
     _matrix_column_widths(ws, fixed, groups)
 
 
@@ -910,7 +918,9 @@ def excel_phase_compile(depts):
                 val = sid_to_subj[sid].get(sub)
                 cell = ws.cell(r, nfix + 1 + j, '' if val is None else val)
                 cell.border = THIN
-                _apply_low_fill(cell, val)
+                sd = st.department
+                lb = float(mark_fail_below_threshold(sd, pname)) if sd else float(MARK_LOW_THRESHOLD)
+                _apply_low_fill(cell, val, low_below=lb)
             for cc in range(1, nfix + len(subjects) + 1):
                 ws.cell(r, cc).border = THIN
 

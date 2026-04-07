@@ -1,4 +1,4 @@
-"""Multi-sheet Excel: low attendance cumulative through each WEEK-n (<75%, same as faculty mentorship) + failed marks (<9)."""
+"""Multi-sheet Excel: low attendance cumulative through each WEEK-n + failed marks; thresholds from risk_policy."""
 from __future__ import annotations
 
 from collections import defaultdict
@@ -21,10 +21,9 @@ from core.models import (
     Student,
     StudentMark,
 )
+from core.risk_policy import attendance_risk_min_percent, mark_fail_below_threshold
 
 PHASES = ('T1', 'T2', 'T3', 'T4')
-FAIL_MARK_LT = 9
-ATT_RISK_LT = 75
 
 HEADER_BLUE = '9BC2E6'
 HEADER_YELLOW = 'FFFF99'
@@ -93,11 +92,12 @@ def _cumulative_attendance_risk_rows(
     students: list[Student],
     cum_dates: set[date],
 ) -> list[dict]:
-    """Students with overall % < ATT_RISK_LT over all scheduled slots on cum_dates (mentorship-consistent)."""
+    """Students with overall % below dept attendance risk threshold over scheduled slots on cum_dates."""
     from core.views import _add_batch_schedule_pairs_for_attendance, get_cancelled_lectures_set
 
     if not cum_dates:
         return []
+    att_lim = float(attendance_risk_min_percent(dept))
     ds = cum_dates
     cancelled = get_cancelled_lectures_set(dept)
     batch_scheduled: dict[int, set] = defaultdict(set)
@@ -119,7 +119,7 @@ def _cumulative_attendance_risk_rows(
             if (d, slot) in att_map[s.batch_id] and roll not in att_map[s.batch_id][(d, slot)]
         )
         pct = round(attended / held * 100, 2) if held else 0.0
-        if pct < ATT_RISK_LT:
+        if pct < att_lim:
             m = s.mentor
             rows.append(
                 {
@@ -140,10 +140,11 @@ def _cumulative_attendance_risk_rows(
 
 
 def _phase_fail_rows_long(dept: Department, term_key: str) -> list[dict]:
-    """One row per (student, subject) where mark < FAIL_MARK_LT. Sorted by subject, mentor, div, roll."""
+    """One row per (student, subject) where mark is below the phase cutoff. Sorted by subject, mentor, div, roll."""
     ep = _exam_phase_for_term(dept, term_key)
     if not ep:
         return []
+    fail_lt = float(mark_fail_below_threshold(dept, term_key))
     subjs = list(
         ExamPhaseSubject.objects.filter(exam_phase=ep)
         .select_related('subject')
@@ -158,7 +159,7 @@ def _phase_fail_rows_long(dept: Department, term_key: str) -> list[dict]:
         if m.marks_obtained is None:
             continue
         val = float(m.marks_obtained)
-        if val >= FAIL_MARK_LT:
+        if val >= fail_lt:
             continue
         s = m.student
         if s.department_id != dept.id:
@@ -189,7 +190,7 @@ def _phase_fail_rows_long(dept: Department, term_key: str) -> list[dict]:
 
 
 def mentee_phase_fail_rows(dept: Department, mentee_ids: list[int], term_key: str) -> list[dict]:
-    """Fail rows (<9) restricted to given mentee student ids."""
+    """Fail rows (below phase cutoff) restricted to given mentee student ids."""
     if not mentee_ids:
         return []
     want = set(mentee_ids)
@@ -246,6 +247,8 @@ def _apply_week_sheet(
     global_week_num: int,
     data_rows: list[dict],
     log_by_student: dict[int, RiskStudentMentorLog] | None = None,
+    *,
+    att_risk_pct: float,
 ) -> None:
     thin = Border(left=THIN, right=THIN, top=THIN, bottom=THIN)
     title_fill = PatternFill(start_color=HEADER_BLUE, end_color=HEADER_BLUE, fill_type='solid')
@@ -264,7 +267,7 @@ def _apply_week_sheet(
     c2 = ws.cell(
         row=1,
         column=10,
-        value=f'WEEK-{global_week_num}: cumulative attendance through this week — students below {ATT_RISK_LT}%',
+        value=f'WEEK-{global_week_num}: cumulative attendance through this week — students below {att_risk_pct:g}%',
     )
     c2.fill = yellow_fill
     c2.font = sub_font
@@ -346,6 +349,8 @@ def _apply_phase_sheet(
     term_key: str,
     data_rows: list[dict],
     log_by_marks_key: dict[tuple[int, str], RiskStudentMentorLog] | None = None,
+    *,
+    mark_fail_below: float,
 ) -> None:
     """Subject-grouped fail sheet: merged SUBJECT column, MARKS column, alternating band fill (like FAIL_STUDENT template)."""
     thin = Border(left=THIN, right=THIN, top=THIN, bottom=THIN)
@@ -360,7 +365,7 @@ def _apply_phase_sheet(
     c1 = ws.cell(
         row=1,
         column=1,
-        value=f'{dept.name} {semester_label} — {term_key}: fail data (marks < {FAIL_MARK_LT})',
+        value=f'{dept.name} {semester_label} — {term_key}: fail data (marks < {mark_fail_below:g})',
     )
     c1.fill = title_fill
     c1.font = Font(bold=True, size=14)
@@ -459,6 +464,7 @@ def build_risk_students_workbook(dept: Department, end_phase: str, end_week_0bas
     specs = build_sheet_specs(end_phase, end_week_0based, week_map)
     students = _ordered_students(dept)
     sem = dept.institute_semester.label if dept.institute_semester_id else ''
+    att_pct = float(attendance_risk_min_percent(dept))
 
     wb = Workbook()
     first = True
@@ -514,9 +520,17 @@ def build_risk_students_workbook(dept: Department, end_phase: str, end_week_0bas
             ws = wb.create_sheet(title=title)
 
         if spec.kind == 'week':
-            _apply_week_sheet(ws, dept, sem, spec.global_week_num, rows, log_by_student=log_by)
+            _apply_week_sheet(ws, dept, sem, spec.global_week_num, rows, log_by_student=log_by, att_risk_pct=att_pct)
         else:
-            _apply_phase_sheet(ws, dept, sem, spec.phase, rows, log_by_marks_key=log_by_marks)
+            _apply_phase_sheet(
+                ws,
+                dept,
+                sem,
+                spec.phase,
+                rows,
+                log_by_marks_key=log_by_marks,
+                mark_fail_below=float(mark_fail_below_threshold(dept, spec.phase)),
+            )
 
     if first:
         ws = wb.active
@@ -629,10 +643,11 @@ def build_faculty_risk_studentwise_workbook(
                 mk = r['mark']
                 if isinstance(mk, float) and mk == int(mk):
                     mk = int(mk)
+                mk_thr = float(mark_fail_below_threshold(dept, spec.phase))
                 blocks[sid].append(
                     {
                         'kind': 'marks',
-                        'period': f'{spec.phase} (marks < {FAIL_MARK_LT})',
+                        'period': f'{spec.phase} (marks < {mk_thr:g})',
                         'roll': r['roll'],
                         'div': r['div'],
                         'mentor': r['mentor'],
@@ -661,9 +676,10 @@ def build_faculty_risk_studentwise_workbook(
     line_a = f'{dept.name} {sem}'.strip() if sem else dept.name
     if mentor_label:
         line_a = f'{line_a} · {mentor_label}'
+    att_line = float(attendance_risk_min_percent(dept))
     line_b = (
-        f'Through {end_phase} week {end_week_0based + 1} — at-risk only: attendance cumulative < {ATT_RISK_LT}% '
-        f'and/or marks < {FAIL_MARK_LT}; merged names, one row per week or failed subject.'
+        f'Through {end_phase} week {end_week_0based + 1} — at-risk only: attendance cumulative < {att_line:g}% '
+        f'and/or marks below each phase cutoff; merged names, one row per week or failed subject.'
     )
 
     ws.merge_cells('A1:O1')

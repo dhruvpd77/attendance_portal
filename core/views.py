@@ -6,6 +6,7 @@ import json
 import os
 import re
 import random
+from decimal import Decimal
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta
 from io import BytesIO
@@ -35,7 +36,14 @@ from openpyxl.styles import Font, Alignment, Border, Side, PatternFill
 from openpyxl.utils import get_column_letter
 
 from .models import (
-    Department, Batch, Subject, Faculty, FacultyDepartmentMembership, Student,
+    Department,
+    DepartmentExamPhaseRiskThreshold,
+    Batch,
+    Subject,
+    Faculty,
+    FacultyDepartmentMembership,
+    InstituteExamPhaseRiskThreshold,
+    Student,
     ScheduleSlot, TermPhase, FacultyAttendance, LectureAdjustment, LectureCancellation, ExtraLecture, PhaseHoliday,
     AttendanceNotificationLog, AttendanceLockSetting, HODWeekLock,
     ExamPhase, ExamPhaseSubject, StudentMark, FacultyDoubtSession,
@@ -57,6 +65,7 @@ from .subject_merge import SubjectMergeError, execute_subject_merge
 from .exam_phase_order import exam_phase_name_sort_key, sort_exam_phases
 from .schedule_utils import get_effective_slots_for_date
 from .student_marks_utils import normalize_student_mark
+from .risk_policy import attendance_risk_min_percent, mark_fail_below_threshold
 
 
 # ---------- Error handlers ----------
@@ -413,6 +422,9 @@ def faculty_portal_feature_allowed(request, url_name):
             return False
         return True
     mapping = {
+        'faculty_attendance_entry': d.faculty_show_mark_attendance,
+        'faculty_attendance_save': d.faculty_show_mark_attendance,
+        'faculty_mentorship': d.faculty_show_mentorship,
         'faculty_doubt_solving': d.faculty_show_doubt_solving,
         'faculty_doubt_students_data': d.faculty_show_doubt_solving,
         'faculty_dr_load': d.faculty_show_dr_weekly_load,
@@ -917,6 +929,8 @@ def admin_faculty_portal_management(request):
         )
         return redirect('core:faculty_dashboard' if user_can_faculty(request) else 'core:admin_dashboard')
     toggle_fields = (
+        'faculty_show_mark_attendance',
+        'faculty_show_mentorship',
         'faculty_show_doubt_solving',
         'faculty_show_dr_weekly_load',
         'faculty_show_mark_analytics',
@@ -953,6 +967,132 @@ def admin_faculty_portal_management(request):
             'management_department_choices': management_department_choices,
             'show_management_department_selector': len(management_department_choices) > 0,
             'show_pick_department_only': False,
+        },
+    )
+
+
+@login_required
+def admin_institute_risk_criteria(request):
+    """Super admin: institute-wide attendance % threshold and per–exam-phase mark cutoffs."""
+    if not is_super_admin(request):
+        messages.error(request, 'Access denied.')
+        return redirect('core:admin_dashboard')
+    from core.risk_policy import phase_names_for_institute_semester
+    from core.semester_scope import get_active_institute_semester
+
+    sem = get_active_institute_semester(request)
+    if not sem:
+        messages.error(request, 'Set an active academic semester first.')
+        return redirect('core:admin_dashboard')
+    phase_names = phase_names_for_institute_semester(sem)
+
+    if request.method == 'POST':
+        try:
+            sem.risk_attendance_min_percent = Decimal(
+                str((request.POST.get('risk_attendance_min_percent') or '75').strip())
+            )
+            sem.save(update_fields=['risk_attendance_min_percent'])
+        except Exception:
+            messages.error(request, 'Invalid attendance percentage.')
+            return redirect('core:admin_institute_risk_criteria')
+        for pn in phase_names:
+            raw = (request.POST.get(f'phase_mark_{pn}') or '').strip()
+            if raw == '':
+                InstituteExamPhaseRiskThreshold.objects.filter(
+                    institute_semester=sem, phase_name__iexact=pn
+                ).delete()
+                continue
+            try:
+                val = Decimal(raw)
+            except Exception:
+                continue
+            InstituteExamPhaseRiskThreshold.objects.update_or_create(
+                institute_semester=sem,
+                phase_name=pn,
+                defaults={'fail_below_marks': val},
+            )
+        messages.success(request, 'Institute risk criteria saved.')
+        return redirect('core:admin_institute_risk_criteria')
+
+    thresh_map = {
+        t.phase_name.upper(): t
+        for t in InstituteExamPhaseRiskThreshold.objects.filter(institute_semester=sem)
+    }
+    phase_rows = []
+    for pn in phase_names:
+        t = thresh_map.get(pn.upper())
+        phase_rows.append({'name': pn, 'value': t.fail_below_marks if t else Decimal('9')})
+    return render(
+        request,
+        'core/admin/institute_risk_criteria.html',
+        {'semester': sem, 'phase_rows': phase_rows},
+    )
+
+
+@login_required
+def admin_department_risk_criteria(request):
+    """HOD / super admin / departmental admin: department attendance override and per-phase mark cutoffs."""
+    if not user_can_admin(request):
+        return redirect('accounts:role_redirect')
+    dept = get_admin_department(request)
+    if not dept:
+        messages.error(request, 'Select a department first.')
+        return redirect('core:admin_dashboard')
+
+    phases = sort_exam_phases(ExamPhase.objects.filter(department=dept))
+    phase_names = [p.name for p in phases]
+
+    if request.method == 'POST':
+        att_raw = (request.POST.get('risk_attendance_min_percent') or '').strip()
+        if att_raw == '':
+            dept.risk_attendance_min_percent = None
+        else:
+            try:
+                dept.risk_attendance_min_percent = Decimal(att_raw)
+            except Exception:
+                messages.error(request, 'Invalid attendance percentage.')
+                return redirect('core:admin_department_risk_criteria')
+        dept.save(update_fields=['risk_attendance_min_percent'])
+        for pn in phase_names:
+            raw = (request.POST.get(f'phase_mark_{pn}') or '').strip()
+            if raw == '':
+                DepartmentExamPhaseRiskThreshold.objects.filter(
+                    department=dept, phase_name__iexact=pn
+                ).delete()
+                continue
+            try:
+                val = Decimal(raw)
+            except Exception:
+                continue
+            DepartmentExamPhaseRiskThreshold.objects.update_or_create(
+                department=dept,
+                phase_name=pn,
+                defaults={'fail_below_marks': val},
+            )
+        messages.success(request, 'Department risk criteria saved.')
+        return redirect('core:admin_department_risk_criteria')
+
+    thresh_map = {
+        t.phase_name.upper(): t for t in DepartmentExamPhaseRiskThreshold.objects.filter(department=dept)
+    }
+    phase_rows = []
+    for pn in phase_names:
+        t = thresh_map.get(pn.upper())
+        phase_rows.append({
+            'name': pn,
+            'override': t.fail_below_marks if t else None,
+            'effective': mark_fail_below_threshold(dept, pn),
+        })
+    return render(
+        request,
+        'core/admin/department_risk_criteria.html',
+        {
+            'department': dept,
+            'phase_rows': phase_rows,
+            'attendance_effective': attendance_risk_min_percent(dept),
+            'semester_default_att': dept.institute_semester.risk_attendance_min_percent
+            if dept.institute_semester
+            else Decimal('75'),
         },
     )
 
@@ -4223,6 +4363,19 @@ def _valid_dates(dept, term_phase):
     return sorted(out)
 
 
+def _global_week_no_for_department_date(dept, d):
+    """1-based global week index (T1 weeks, then T2, …) if ``d`` falls in a configured phase week; else None."""
+    phases = ['T1', 'T2', 'T3', 'T4']
+    week_map = {p: _compile_phase_weeks_date_objects(dept, p) for p in phases}
+    offsets = _get_phase_week_offsets(week_map)
+    for p in phases:
+        weeks = week_map.get(p) or []
+        for i, week_dates in enumerate(weeks):
+            if d in week_dates:
+                return offsets.get(p, 0) + i + 1
+    return None
+
+
 @login_required
 def daily_absent(request):
     if not user_can_admin(request):
@@ -4339,39 +4492,92 @@ def daily_absent_excel(request):
     wb = Workbook()
     ws = wb.active
     ws.title = 'Daily Absent'
+    ws.sheet_view.showGridLines = False
 
     max_batches_per_row = 2
     headers = ['No', 'Subject', 'Faculty', 'Absent Nos']
-    header_fill = PatternFill(start_color='1F497D', end_color='1F497D', fill_type='solid')
-    header_font = Font(color='FFFFFF', bold=True)
-    thin_border = Border(
-        left=Side(style='thin'), right=Side(style='thin'),
-        top=Side(style='thin'), bottom=Side(style='thin')
-    )
-    bottom_line = Border(bottom=Side(style='thin'))
+    # Match reference DailyAbsent xlsx: batch bar #4F81BD, column headers #1F497D, white header text.
+    batch_bar_fill = PatternFill(start_color='4F81BD', end_color='4F81BD', fill_type='solid')
+    batch_bar_font = Font(bold=True, color='FFFFFF', size=11)
+    table_header_fill = PatternFill(start_color='1F497D', end_color='1F497D', fill_type='solid')
+    table_header_font = Font(bold=True, color='FFFFFF', size=11)
+    thin = Side(style='thin', color='FF000000')
+    thin_border = Border(left=thin, right=thin, top=thin, bottom=thin)
+    # No borders on batch merges (optional; keeps batch bar clean like early workbook).
+    hdr_no_border = Border()
+    data_cell_fill = PatternFill(start_color='FFFFFF', end_color='FFFFFF', fill_type='solid')
+    data_cell_font = Font(size=11)
+
+    # Colorful header grid (per-row fills + fonts; still bordered like data grid).
+    fill_banner_institute = PatternFill(start_color='4F81BD', end_color='4F81BD', fill_type='solid')
+    font_banner_institute = Font(size=13, bold=True, color='FFFFFF')
+    fill_banner_dept = PatternFill(start_color='BDDCF2', end_color='BDDCF2', fill_type='solid')
+    font_banner_dept = Font(size=13, bold=True, color='1F497D')
+    fill_legend_black = PatternFill(start_color='E8E8E8', end_color='E8E8E8', fill_type='solid')
+    font_legend_black = Font(size=13, bold=True, color='000000')
+    fill_legend_red = PatternFill(start_color='FFD6D6', end_color='FFD6D6', fill_type='solid')
+    font_legend_red = Font(size=13, bold=True, color='FF0000')
+    fill_legend_blue = PatternFill(start_color='C6E0FF', end_color='C6E0FF', fill_type='solid')
+    font_legend_blue = Font(size=13, bold=True, color='0070C0')
+    fill_banner_date = PatternFill(start_color='E2F0D9', end_color='E2F0D9', fill_type='solid')
+    font_banner_date = Font(size=13, bold=True, color='375623')
 
     batch_names = sorted(lectures_by_batch.keys())
     pairs = [batch_names[i:i + max_batches_per_row] for i in range(0, len(batch_names), max_batches_per_row)]
     n_cols = (len(pairs[0]) * 5) if pairs else 5
 
-    # Header block: institution, dept, legend, date (all bold, large font)
-    header_font_style = Font(size=13, bold=True)
-    header_rows = [
-        'L J Institute of Engineering and Technology',
-        dept.name,
-        'FONT COLOUR: BLACK (Absent in all Lectures)',
-        'RED (Not attended all Lectures)',
-        'BLUE (Absent reason: washroom/playing game/others)',
-        f"Date-{selected_date.strftime('%d-%m-%Y')}. Day:- {selected_date.strftime('%A').upper()}",
-    ]
+    def _banner_row_grid(ws_ref, r, n_cols_inner, text, *, font, fill):
+        """One header row as real grid cells (no merge) — avoids Excel’s broken top-left border on merges."""
+        banner_al = Alignment(horizontal='centerContinuous', vertical='center', wrap_text=False)
+        for c in range(1, n_cols_inner + 1):
+            cell = ws_ref.cell(row=r, column=c, value=text if c == 1 else None)
+            cell.font = font
+            cell.fill = fill
+            cell.border = thin_border
+            cell.alignment = banner_al
+
     current_row = 1
-    for text in header_rows:
-        ws.merge_cells(start_row=current_row, start_column=1, end_row=current_row, end_column=n_cols)
-        cell = ws.cell(row=current_row, column=1, value=text)
-        cell.font = header_font_style
-        cell.alignment = Alignment(horizontal='center', vertical='center')
-        cell.border = bottom_line
-        current_row += 1
+    _banner_row_grid(
+        ws, current_row, n_cols,
+        'L J Institute of Engineering and Technology',
+        font=font_banner_institute,
+        fill=fill_banner_institute,
+    )
+    current_row += 1
+    sem = getattr(dept, 'institute_semester', None)
+    sem_lbl = (sem.label or str(sem)).strip() if sem else '—'
+    dept_line = f'Department: {dept.name}     |     Semester: {sem_lbl}'
+    _banner_row_grid(ws, current_row, n_cols, dept_line, font=font_banner_dept, fill=fill_banner_dept)
+    current_row += 1
+    _banner_row_grid(
+        ws, current_row, n_cols,
+        'FONT COLOUR: BLACK (Absent in all Lectures)',
+        font=font_legend_black,
+        fill=fill_legend_black,
+    )
+    current_row += 1
+    _banner_row_grid(
+        ws, current_row, n_cols,
+        'RED (Not attended all Lectures)',
+        font=font_legend_red,
+        fill=fill_legend_red,
+    )
+    current_row += 1
+    _banner_row_grid(
+        ws, current_row, n_cols,
+        'BLUE (Absent reason: washroom/playing game/others)',
+        font=font_legend_blue,
+        fill=fill_legend_blue,
+    )
+    current_row += 1
+    week_no = _global_week_no_for_department_date(dept, selected_date)
+    week_disp = str(week_no) if week_no is not None else '—'
+    date_str_disp = (
+        f"Date: {selected_date.strftime('%d-%m-%Y')}     |     Week No: {week_disp}     |     "
+        f"Day: {selected_date.strftime('%A').upper()}"
+    )
+    _banner_row_grid(ws, current_row, n_cols, date_str_disp, font=font_banner_date, fill=fill_banner_date)
+    current_row += 1
     current_row += 1
 
     for pair in pairs:
@@ -4379,19 +4585,20 @@ def daily_absent_excel(request):
         for batch in pair:
             ws.merge_cells(start_row=current_row, start_column=col, end_row=current_row, end_column=col + 3)
             batch_cell = ws.cell(row=current_row, column=col, value=f'Batch: {batch}')
-            batch_cell.font = Font(bold=True, color='FFFFFF')
-            batch_cell.fill = PatternFill(start_color='4F81BD', end_color='4F81BD', fill_type='solid')
-            batch_cell.alignment = Alignment(horizontal='center')
+            batch_cell.font = batch_bar_font
+            batch_cell.fill = batch_bar_fill
+            batch_cell.alignment = Alignment(horizontal='center', vertical='center')
+            batch_cell.border = hdr_no_border
             col += 5
         current_row += 1
         col = 1
         for batch in pair:
             for cidx, header in enumerate(headers):
                 c = ws.cell(row=current_row, column=col + cidx, value=header)
-                c.font = header_font
-                c.fill = header_fill
+                c.font = table_header_font
+                c.fill = table_header_fill
                 c.border = thin_border
-                c.alignment = Alignment(horizontal='center')
+                c.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
             col += 5
         current_row += 1
 
@@ -4475,18 +4682,22 @@ def daily_absent_excel(request):
                 for cidx, value in enumerate(data_rows[ridx]):
                     c = ws.cell(row=current_row, column=col + cidx, value=value)
                     c.border = thin_border
+                    c.fill = data_cell_fill
+                    c.font = data_cell_font
                     wrap = (cidx == 3)
                     c.alignment = Alignment(horizontal='center' if cidx == 0 else 'left', wrap_text=wrap)
                 col += 5
             current_row += 1
         current_row += 1
 
-    for b in range(2):
+    for b in range(max_batches_per_row):
         offset = b * 5
         ws.column_dimensions[get_column_letter(1 + offset)].width = 5
         ws.column_dimensions[get_column_letter(2 + offset)].width = 28
         ws.column_dimensions[get_column_letter(3 + offset)].width = 22
         ws.column_dimensions[get_column_letter(4 + offset)].width = 35
+        if b < max_batches_per_row - 1 and (5 + offset) <= n_cols:
+            ws.column_dimensions[get_column_letter(5 + offset)].width = 2.2
 
     bio = BytesIO()
     wb.save(bio)
@@ -4585,7 +4796,18 @@ def _filter_date_slots_by_subject(date_slots_list, subject_id):
     return [(d, [s for s in slots if s.subject_id == subject_id]) for d, slots in date_slots_list]
 
 
-def _write_all_batches_combined_sheet(ws, batches, all_students, date_slots_union, batch_att_map, batch_date_slots_set, styles, overall_segments_per_batch):
+def _write_all_batches_combined_sheet(
+    ws,
+    batches,
+    all_students,
+    date_slots_union,
+    batch_att_map,
+    batch_date_slots_set,
+    styles,
+    overall_segments_per_batch,
+    *,
+    att_risk_min_pct: float = 75.0,
+):
     """Write one sheet with all batches combined. Roll No, Name, Batch, then (date, slot) columns, then Overall.
     date_slots_union: [(d, slots), ...] slots have .time_slot. batch_date_slots_set: batch_id -> set of (d, time_slot).
     overall_segments_per_batch: [(batch, [(label, seg), ...]), ...]
@@ -4688,7 +4910,7 @@ def _write_all_batches_combined_sheet(ws, batches, all_students, date_slots_unio
                 ws.cell(idx, c + 1, attended).border = thin_border
                 pct_cell = ws.cell(idx, c + 2, f'{pct:.2f}%')
                 pct_cell.border = thin_border
-                if pct < 75 and held:
+                if held and pct < att_risk_min_pct:
                     pct_cell.font = Font(color='FFFFFF', bold=True)
                     pct_cell.fill = PatternFill(start_color='DC3545', end_color='DC3545', fill_type='solid')
                 c += 3
@@ -4698,7 +4920,18 @@ def _write_all_batches_combined_sheet(ws, batches, all_students, date_slots_unio
     ws.freeze_panes = f'D{data_start_row}'
 
 
-def _write_subject_all_batches_sheet(ws, subject_name, batches, all_students, batch_date_slots_subject, batch_att_map, styles, build_overall_fn):
+def _write_subject_all_batches_sheet(
+    ws,
+    subject_name,
+    batches,
+    all_students,
+    batch_date_slots_subject,
+    batch_att_map,
+    styles,
+    build_overall_fn,
+    *,
+    att_risk_min_pct: float = 75.0,
+):
     """Write one sheet per subject with students from all batches. Same format as individual batch subject sheet.
     Roll No, Name, Batch (extra), date+lecture columns (date merged when multiple lectures), Overall.
     Only difference from individual: Batch column + all batches' students in one sheet."""
@@ -4825,7 +5058,7 @@ def _write_subject_all_batches_sheet(ws, subject_name, batches, all_students, ba
                 ws.cell(idx, c + 1, attended).border = thin_border
                 pct_cell = ws.cell(idx, c + 2, f'{pct:.2f}%')
                 pct_cell.border = thin_border
-                if pct < 75 and held:
+                if held and pct < att_risk_min_pct:
                     pct_cell.font = Font(color='FFFFFF', bold=True)
                     pct_cell.fill = PatternFill(start_color='DC3545', end_color='DC3545', fill_type='solid')
                 c += 3
@@ -4904,7 +5137,18 @@ def _student_held_attended_for_segment(date_slots_segment, att_map, str_roll):
     return held, attended
 
 
-def _write_one_batch_attendance_sheet(ws, batch, date_slots_list, students, att_map, styles, overall_segments=None, sheet_title=None):
+def _write_one_batch_attendance_sheet(
+    ws,
+    batch,
+    date_slots_list,
+    students,
+    att_map,
+    styles,
+    overall_segments=None,
+    sheet_title=None,
+    *,
+    att_risk_min_pct: float = 75.0,
+):
     """Write one batch's attendance data into worksheet ws. If overall_segments is given, append Overall Attendance block.
     overall_segments: list of (label, date_slots_sub_list) e.g. [('Week 1', w1_list), ('Week 2', w2_list), ('Overall', all_list)].
     sheet_title: optional custom title for the sheet (default: batch.name).
@@ -5030,7 +5274,7 @@ def _write_one_batch_attendance_sheet(ws, batch, date_slots_list, students, att_
                 ws.cell(idx, c + 1, attended).border = thin_border
                 pct_cell = ws.cell(idx, c + 2, f'{pct:.2f}%')
                 pct_cell.border = thin_border
-                if pct < 75 and held:
+                if held and pct < att_risk_min_pct:
                     pct_cell.font = Font(color='FFFFFF', bold=True)
                     pct_cell.fill = PatternFill(start_color='DC3545', end_color='DC3545', fill_type='solid')
                 c += 3
@@ -5148,6 +5392,7 @@ def attendance_sheet_excel(request):
         'lect_align': Alignment(horizontal='center', vertical='center', wrap_text=True),
         'red_font': Font(color='FF0000'),
     }
+    sheet_att_min = float(attendance_risk_min_percent(dept))
 
     wb = Workbook()
     first = True
@@ -5174,7 +5419,10 @@ def attendance_sheet_excel(request):
                 key = (d, att.lecture_slot)
                 att_map[key] = set(x.strip() for x in (att.absent_roll_numbers or '').split(',') if x.strip())
 
-        _write_one_batch_attendance_sheet(ws, batch, date_slots_list, students, att_map, styles, overall_segments=overall_segments)
+        _write_one_batch_attendance_sheet(
+            ws, batch, date_slots_list, students, att_map, styles,
+            overall_segments=overall_segments, att_risk_min_pct=sheet_att_min,
+        )
 
     bio = BytesIO()
     wb.save(bio)
@@ -5327,6 +5575,7 @@ def attendance_sheet_subjectwise_excel(request):
         'lect_align': Alignment(horizontal='center', vertical='center', wrap_text=True),
         'red_font': Font(color='FF0000'),
     }
+    sheet_att_min = float(attendance_risk_min_percent(dept))
 
     def build_overall_segments_subject(batch, date_slots_list, subject_id):
         base_segments = []
@@ -5412,7 +5661,7 @@ def attendance_sheet_subjectwise_excel(request):
             first = False
             _write_all_batches_combined_sheet(
                 ws, batches, all_students, date_slots_union, batch_att_map, batch_date_slots_set,
-                styles, overall_segments_per_batch
+                styles, overall_segments_per_batch, att_risk_min_pct=sheet_att_min,
             )
         for subject_id, subject_name in sorted(subjects_all, key=lambda x: x[1]):
             batch_date_slots_subject = {}
@@ -5425,7 +5674,8 @@ def attendance_sheet_subjectwise_excel(request):
                 return build_overall_segments_subject(b, batch_date_slots.get(b.id, []), subject_id)
             ws_subj = wb.create_sheet(title=(subject_name[:31] if subject_name else 'Subject'))
             _write_subject_all_batches_sheet(
-                ws_subj, subject_name, batches, all_students, batch_date_slots_subject, batch_att_map, styles, build_fn
+                ws_subj, subject_name, batches, all_students, batch_date_slots_subject, batch_att_map, styles, build_fn,
+                att_risk_min_pct=sheet_att_min,
             )
     else:
         batch = batches[0]
@@ -5456,7 +5706,7 @@ def attendance_sheet_subjectwise_excel(request):
                 ws = wb.create_sheet(title=(subject_name[:31] if subject_name else 'Sheet'))
             _write_one_batch_attendance_sheet(
                 ws, batch, date_slots_subject, students, att_map, styles,
-                overall_segments=overall_segments, sheet_title=subject_name
+                overall_segments=overall_segments, sheet_title=subject_name, att_risk_min_pct=sheet_att_min,
             )
     if first:
         messages.warning(request, 'No subject data found for the selected period.')
@@ -5480,6 +5730,7 @@ def attendance_sheet_subjectwise_excel(request):
 def _admin_analytics_data(dept, phase=None, week=None):
     """Compute analytics for admin dashboard: at-risk students, batch-wise, subject-wise, weekly trend, heat map.
     week: None or 'all' = all weeks; int (0-based) = cumulative through that week."""
+    att_min = float(attendance_risk_min_percent(dept))
     tp = TermPhase.objects.filter(department=dept).first()
     phases = ['T1', 'T2', 'T3', 'T4']
     if not phase or phase not in phases:
@@ -5528,7 +5779,7 @@ def _admin_analytics_data(dept, phase=None, week=None):
         held = batch_held.get(s.batch_id, 0)
         attended = sum(1 for (d, slot) in scheduled if (d, slot) in batch_att_map[s.batch_id] and str_roll not in batch_att_map[s.batch_id][(d, slot)])
         pct = round(attended / held * 100, 2) if held else 0
-        if held and pct < 75:
+        if held and pct < att_min:
             at_risk.append({'student': s, 'held': held, 'attended': attended, 'pct': pct})
         batch_pcts[s.batch_id].append(pct)
     for b in batches:
@@ -5629,6 +5880,7 @@ def admin_analytics_dashboard(request):
         'selected_week': week_param,
         'week_options': week_options,
         'selected_week_global_num': selected_week_global_num,
+        'att_risk_min_pct': float(attendance_risk_min_percent(dept)),
         **data,
         'weekly_trend_json': json.dumps(data['weekly_trend']),
         'subject_wise_json': json.dumps(data['subject_wise']),
@@ -5804,9 +6056,10 @@ def compile_attendance(request):
 
 
 def _admin_notifications_build_mentor_data(dept, phase, week_idx):
-    """Build list of mentors with their at-risk mentees (below 75%) and full attendance report.
+    """Build list of mentors with their at-risk mentees (below configured attendance %) and full attendance report.
     Returns: [(mentor, [{'student': s, 'held': n, 'attended': n, 'pct': x, 'week_wise': [...], 'subject_wise': [...]}]), ...]
     """
+    att_min = float(attendance_risk_min_percent(dept))
     weeks = _compile_phase_weeks_date_objects(dept, phase)
     if not weeks:
         return []
@@ -5841,7 +6094,7 @@ def _admin_notifications_build_mentor_data(dept, phase, week_idx):
         held = len(scheduled)
         attended = sum(1 for (d, slot) in scheduled if (d, slot) in batch_att_map[s.batch_id] and str_roll not in batch_att_map[s.batch_id][(d, slot)])
         pct = round(attended / held * 100, 2) if held else 0
-        if held and pct < 75:
+        if held and pct < att_min:
             week_wise = []
             cum_held = cum_attended = 0
             for i, week_dates in enumerate(weeks):
@@ -5926,6 +6179,7 @@ def admin_notifications(request):
     if weeks_list and week_idx >= len(weeks_list):
         week_idx = len(weeks_list) - 1
     global_week_num = phase_week_offsets.get(phase, 0) + week_idx + 1 if weeks_list else 0
+    att_risk_min_pct = float(attendance_risk_min_percent(dept))
     mentor_data = []
     if weeks_list:
         mentor_data = _admin_notifications_build_mentor_data(dept, phase, week_idx)
@@ -5946,10 +6200,11 @@ def admin_notifications(request):
                             'week_num': global_week_num,
                             'at_risk_list': at_risk_list,
                             'department': dept,
+                            'att_risk_min_pct': att_risk_min_pct,
                         }).content.decode('utf-8')
                         try:
                             send_mail(
-                                subject=f'LJIET Attendance: {len(at_risk_list)} mentee(s) below 75% — Week {global_week_num}',
+                                subject=f'LJIET Attendance: {len(at_risk_list)} mentee(s) below {att_risk_min_pct:g}% — Week {global_week_num}',
                                 message='Please view this email in HTML format.',
                                 from_email=settings.DEFAULT_FROM_EMAIL,
                                 recipient_list=[email],
@@ -5992,10 +6247,11 @@ def admin_notifications(request):
                 'week_num': global_week_num,
                 'at_risk_list': at_risk_list,
                 'department': dept,
+                'att_risk_min_pct': att_risk_min_pct,
             }).content.decode('utf-8')
             try:
                 send_mail(
-                    subject=f'LJIET Attendance: {len(at_risk_list)} mentee(s) below 75% — Week {global_week_num}',
+                    subject=f'LJIET Attendance: {len(at_risk_list)} mentee(s) below {att_risk_min_pct:g}% — Week {global_week_num}',
                     message='Please view this email in HTML format.',
                     from_email=settings.DEFAULT_FROM_EMAIL,
                     recipient_list=[email],
@@ -6020,6 +6276,7 @@ def admin_notifications(request):
         'phase': phase,
         'week_idx': week_idx,
         'global_week_num': global_week_num,
+        'att_risk_min_pct': att_risk_min_pct,
         'week_range': week_range,
         'week_options': week_options,
         'mentor_data': mentor_data,
@@ -6287,7 +6544,8 @@ def _mark_analytics_build_data_from_students(students, dept):
             subject_marks = []
             for eps in subs:
                 marks_val = marks_by_student_phase[s.id][ep.id].get(eps.subject.name)
-                is_low = marks_val is not None and marks_val < 9
+                thr = float(mark_fail_below_threshold(dept, ep.name))
+                is_low = marks_val is not None and float(marks_val) < thr
                 subject_marks.append({'name': eps.subject.name, 'marks': marks_val, 'is_low': is_low})
             phase_wise.append({'phase_name': ep.name, 'subjects': subject_marks})
         result.append({'student': s, 'phase_wise': phase_wise})
@@ -6310,15 +6568,19 @@ def _mark_analytics_build_data(dept, batch_id, roll_search=None):
     return result, batches
 
 
-def _mark_analytics_build_risk_data(student_data, threshold=9):
-    """From student_data, extract subject-wise at-risk students (marks < threshold)."""
+def _mark_analytics_build_risk_data(student_data, dept=None):
+    """From student_data, extract subject-wise at-risk students (marks < phase threshold)."""
     risk_data = []
     subject_map = {}
     for item in student_data:
+        d = dept or item.get('department')
+        if not d:
+            continue
         for phase in item['phase_wise']:
+            thr = float(mark_fail_below_threshold(d, phase['phase_name']))
             for s in phase['subjects']:
                 v = normalize_student_mark(s.get('marks'))
-                if v is not None and v < threshold:
+                if v is not None and float(v) < thr:
                     subj_name = s['name']
                     if subj_name not in subject_map:
                         subject_map[subj_name] = {'subject_name': subj_name, 'at_risk': []}
@@ -6380,7 +6642,7 @@ def mark_analytics(request):
             student_data = _mark_analytics_build_data_from_students(students, dept)
         else:
             student_data, batches = _mark_analytics_build_data(dept, batch_id, roll_search or None)
-    risk_data = _mark_analytics_build_risk_data(student_data)
+    risk_data = _mark_analytics_build_risk_data(student_data, dept)
     if selected_phase:
         for item in student_data:
             item['phase_wise'] = [p for p in item['phase_wise'] if p['phase_name'] == selected_phase]
@@ -6436,7 +6698,7 @@ def faculty_mark_analytics(request):
     batches = list(Batch.objects.filter(
         id__in=Student.objects.filter(mentor_id__in=m_ids, department=dept).values_list('batch_id', flat=True).distinct()
     ).order_by('name'))
-    risk_data = _mark_analytics_build_risk_data(student_data)
+    risk_data = _mark_analytics_build_risk_data(student_data, dept)
     risk_student_data = []
     if selected_phase:
         for item in student_data:
@@ -6449,16 +6711,20 @@ def faculty_mark_analytics(request):
         risk_data = _risk_filtered
         for item in student_data:
             has_low = any(
-                (v := normalize_student_mark(s.get('marks'))) is not None and v < 9
-                for p in item['phase_wise'] for s in p['subjects']
+                (v := normalize_student_mark(s.get('marks'))) is not None
+                and float(v) < float(mark_fail_below_threshold(dept, p['phase_name']))
+                for p in item['phase_wise']
+                for s in p['subjects']
             )
             if has_low:
                 risk_student_data.append(item)
     else:
         for item in student_data:
             has_low = any(
-                (v := normalize_student_mark(s.get('marks'))) is not None and v < 9
-                for p in item['phase_wise'] for s in p['subjects']
+                (v := normalize_student_mark(s.get('marks'))) is not None
+                and float(v) < float(mark_fail_below_threshold(dept, p['phase_name']))
+                for p in item['phase_wise']
+                for s in p['subjects']
             )
             if has_low:
                 risk_student_data.append(item)
@@ -6921,7 +7187,7 @@ def mark_analytics_risk_excel(request):
         students = list(Student.objects.filter(department=dept, batch_id=batch_id).select_related('batch', 'mentor'))
     students.sort(key=lambda s: (s.batch.name if s.batch else '', _roll_sort_key(s)))
     student_data = _mark_analytics_build_data_from_students(students, dept)
-    risk_data = _mark_analytics_build_risk_data(student_data)
+    risk_data = _mark_analytics_build_risk_data(student_data, dept)
     if subject_name:
         risk_data = [r for r in risk_data if r['subject_name'] == subject_name]
     if not risk_data:
@@ -6945,11 +7211,12 @@ def mark_analytics_risk_excel(request):
         for entry in subj_data['at_risk']:
             s = entry['student']
             vals = [s.roll_no, s.mentor.short_name if s.mentor else '', s.name, s.batch.name if s.batch else '', s.enrollment_no or '', entry['phase_name'], entry['marks']]
+            fail_below = float(mark_fail_below_threshold(dept, entry['phase_name']))
             for c, val in enumerate(vals, 1):
                 cell = ws.cell(row, c, str(val) if val is not None else '')
                 cell.border = thin_border
                 mv = normalize_student_mark(val) if c == 7 else None
-                if mv is not None and mv < 9:
+                if mv is not None and mv < fail_below:
                     cell.fill = red_fill
             row += 1
     resp = HttpResponse(content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
@@ -6970,7 +7237,7 @@ def mark_analytics_risk_all_excel(request):
     students = list(Student.objects.filter(department=dept).select_related('batch', 'mentor'))
     students.sort(key=lambda s: (s.batch.name if s.batch else '', _roll_sort_key(s)))
     student_data = _mark_analytics_build_data_from_students(students, dept)
-    risk_data = _mark_analytics_build_risk_data(student_data)
+    risk_data = _mark_analytics_build_risk_data(student_data, dept)
     exam_phases = sort_exam_phases(ExamPhase.objects.filter(department=dept))
     phase_subjects = {ep.name: [eps.subject.name for eps in ExamPhaseSubject.objects.filter(exam_phase=ep).select_related('subject').order_by('subject__name')] for ep in exam_phases}
     selected_phases = [p for p in exam_phases if p.name == phase_param] if phase_param and phase_param != 'all' else exam_phases
@@ -7021,6 +7288,13 @@ def mark_analytics_risk_all_excel(request):
         cell.border = thin_border
         cell.alignment = Alignment(horizontal='center', vertical='center')
         ws.merge_cells(start_row=1, start_column=start_col, end_row=1, end_column=col - 1)
+    thresh_by_col = {}
+    cci = 6
+    for ep in selected_phases:
+        t = float(mark_fail_below_threshold(dept, ep.name))
+        for subj in phase_subjects.get(ep.name, []):
+            thresh_by_col[cci] = t
+            cci += 1
     row = 3
     for item in student_data:
         if item['student'].id not in at_risk_ids:
@@ -7028,9 +7302,10 @@ def mark_analytics_risk_all_excel(request):
         s = item['student']
         cols = [s.mentor.short_name if s.mentor else '', s.roll_no, s.enrollment_no or '', s.name, s.batch.name if s.batch else '']
         for ep in selected_phases:
+            fail_below = float(mark_fail_below_threshold(dept, ep.name))
             for subj in phase_subjects.get(ep.name, []):
                 m = marks_by_student_phase_subj[s.id].get(ep.name, {}).get(subj)
-                if m is not None and m < 9:
+                if m is not None and m < fail_below:
                     cols.append(str(m))
                 else:
                     cols.append('-')
@@ -7039,7 +7314,8 @@ def mark_analytics_risk_all_excel(request):
             cell.border = thin_border
             if c >= 6 and val != '-' and val:
                 cv = normalize_student_mark(val)
-                if cv is not None and cv < 9:
+                thr = thresh_by_col.get(c, float(mark_fail_below_threshold(dept, '')))
+                if cv is not None and cv < thr:
                     cell.fill = red_fill
         row += 1
     resp = HttpResponse(content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
@@ -7072,7 +7348,7 @@ def faculty_mark_analytics_risk_excel(request):
     students = list(qs)
     students.sort(key=lambda s: (s.batch.name if s.batch else '', _roll_sort_key(s)))
     student_data = _mark_analytics_build_data_from_students(students, dept)
-    risk_data = _mark_analytics_build_risk_data(student_data)
+    risk_data = _mark_analytics_build_risk_data(student_data, dept)
     if subject_name:
         risk_data = [r for r in risk_data if r['subject_name'] == subject_name]
     if not risk_data:
@@ -7096,11 +7372,12 @@ def faculty_mark_analytics_risk_excel(request):
         for entry in subj_data['at_risk']:
             s = entry['student']
             vals = [s.roll_no, s.mentor.short_name if s.mentor else '', s.name, s.batch.name if s.batch else '', s.enrollment_no or '', entry['phase_name'], entry['marks']]
+            fail_below = float(mark_fail_below_threshold(dept, entry['phase_name']))
             for c, val in enumerate(vals, 1):
                 cell = ws.cell(row, c, str(val) if val is not None else '')
                 cell.border = thin_border
                 mv = normalize_student_mark(val) if c == 7 else None
-                if mv is not None and mv < 9:
+                if mv is not None and mv < fail_below:
                     cell.fill = red_fill
             row += 1
     resp = HttpResponse(content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
@@ -7129,7 +7406,7 @@ def faculty_mark_analytics_risk_all_excel(request):
     students = list(Student.objects.filter(mentor_id__in=m_ids, department=dept).select_related('batch', 'mentor'))
     students.sort(key=lambda s: (s.batch.name if s.batch else '', _roll_sort_key(s)))
     student_data = _mark_analytics_build_data_from_students(students, dept)
-    risk_data = _mark_analytics_build_risk_data(student_data)
+    risk_data = _mark_analytics_build_risk_data(student_data, dept)
     exam_phases = sort_exam_phases(ExamPhase.objects.filter(department=dept))
     phase_subjects = {ep.name: [eps.subject.name for eps in ExamPhaseSubject.objects.filter(exam_phase=ep).select_related('subject').order_by('subject__name')] for ep in exam_phases}
     selected_phases = [p for p in exam_phases if p.name == phase_param] if phase_param and phase_param != 'all' else exam_phases
@@ -7180,6 +7457,13 @@ def faculty_mark_analytics_risk_all_excel(request):
         cell.border = thin_border
         cell.alignment = Alignment(horizontal='center', vertical='center')
         ws.merge_cells(start_row=1, start_column=start_col, end_row=1, end_column=col - 1)
+    thresh_by_col = {}
+    cci = 6
+    for ep in selected_phases:
+        t = float(mark_fail_below_threshold(dept, ep.name))
+        for subj in phase_subjects.get(ep.name, []):
+            thresh_by_col[cci] = t
+            cci += 1
     row = 3
     for item in student_data:
         if item['student'].id not in at_risk_ids:
@@ -7187,9 +7471,10 @@ def faculty_mark_analytics_risk_all_excel(request):
         s = item['student']
         cols = [s.mentor.short_name if s.mentor else '', s.roll_no, s.enrollment_no or '', s.name, s.batch.name if s.batch else '']
         for ep in selected_phases:
+            fail_below = float(mark_fail_below_threshold(dept, ep.name))
             for subj in phase_subjects.get(ep.name, []):
                 m = marks_by_student_phase_subj[s.id].get(ep.name, {}).get(subj)
-                if m is not None and m < 9:
+                if m is not None and m < fail_below:
                     cols.append(str(m))
                 else:
                     cols.append('-')
@@ -7198,7 +7483,8 @@ def faculty_mark_analytics_risk_all_excel(request):
             cell.border = thin_border
             if c >= 6 and val != '-' and val:
                 cv = normalize_student_mark(val)
-                if cv is not None and cv < 9:
+                thr = thresh_by_col.get(c, float(mark_fail_below_threshold(dept, '')))
+                if cv is not None and cv < thr:
                     cell.fill = red_fill
         row += 1
     resp = HttpResponse(content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
@@ -7315,12 +7601,13 @@ def _mark_analytics_report_excel_impl(request, is_admin):
             cell.border = thin_border
             col += 1
         for phase_name in selected_phases:
+            fail_below = float(mark_fail_below_threshold(dept, phase_name))
             for sub in phase_subjects.get(phase_name, []):
                 m = marks_map[s.id].get(phase_name, {}).get(sub)
                 val = str(m) if m is not None else ''
                 cell = ws.cell(data_row, col, val)
                 cell.border = thin_border
-                if m is not None and m < 9:
+                if m is not None and m < fail_below:
                     cell.fill = red_fill
                 col += 1
         data_row += 1
@@ -7374,6 +7661,7 @@ def compile_attendance_excel(request):
     if not students:
         messages.error(request, 'No students in this department.')
         return redirect('core:compile_attendance')
+    att_min = float(attendance_risk_min_percent(dept))
     # Scheduled slots per batch: (date, time_slot) from timetable (ScheduleSlot) for all dates in selected range
     all_dates_in_range = cumulative_dates[week_idx]  # set of dates through selected week
     cancelled_set = get_cancelled_lectures_set(dept)
@@ -7467,7 +7755,7 @@ def compile_attendance_excel(request):
             c += 1
             pct_cell = ws.cell(row_idx, c, f'{pct:.2f}%')
             pct_cell.border = thin_border
-            if pct < 75 and h:
+            if h and pct < att_min:
                 pct_cell.font = Font(bold=True, color='FFFFFF')
                 pct_cell.fill = PatternFill(start_color='DC3545', end_color='DC3545', fill_type='solid')
             c += 1
@@ -7478,7 +7766,7 @@ def compile_attendance_excel(request):
         tpct = round(total_attended / total_held * 100, 2) if total_held else 0
         tpct_cell = ws.cell(row_idx, total_col + 2, f'{tpct:.2f}%')
         tpct_cell.border = thin_border
-        if tpct < 75 and total_held:
+        if total_held and tpct < att_min:
             tpct_cell.font = Font(bold=True, color='FFFFFF')
             tpct_cell.fill = PatternFill(start_color='DC3545', end_color='DC3545', fill_type='solid')
     ws.column_dimensions['A'].width = 12
@@ -7518,6 +7806,7 @@ def admin_risk_students_export(request):
         'phases': phases,
         'week_map_json': json.dumps(week_map),
         'phase_week_offsets_json': json.dumps(phase_week_offsets),
+        'att_risk_min_pct': float(attendance_risk_min_percent(dept)),
     }
     return render(request, 'core/admin/risk_students_export.html', ctx)
 
@@ -7685,6 +7974,8 @@ def overall_attendance_excel(request):
         batch_label = f'DIV-{names[0]} TO {names[-1]}' if names else 'DIV-ALL'
     fname_base = f'({batch_label})_WEEK-{global_week_num}_{dept_label}_SEM-IV_ COMPILED_ATTENDANCE SHEET_{year}.xlsx'
 
+    att_min = float(attendance_risk_min_percent(dept))
+
     thin_border = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
     header_fill = PatternFill(start_color='4F81BD', end_color='4F81BD', fill_type='solid')
     header_font = Font(bold=True, color='FFFFFF')
@@ -7774,7 +8065,7 @@ def overall_attendance_excel(request):
             wo_pct = round(wo_attended / wo_held * 100, 2) if wo_held else 0
             wo_pct_cell = ws.cell(row_idx, c, f'{wo_pct:.2f}%' if wo_held else '')
             wo_pct_cell.border = thin_border
-            if wo_held and wo_pct < 75:
+            if wo_held and wo_pct < att_min:
                 wo_pct_cell.font = Font(bold=True, color='FFFFFF')
                 wo_pct_cell.fill = pct_red_fill
             c += 1
@@ -7788,7 +8079,7 @@ def overall_attendance_excel(request):
                 c += 1
                 pct_cell = ws.cell(row_idx, c, f'{pct:.2f}%' if held else '')
                 pct_cell.border = thin_border
-                if held and pct < 75:
+                if held and pct < att_min:
                     pct_cell.font = Font(bold=True, color='FFFFFF')
                     pct_cell.fill = pct_red_fill
                 c += 1
@@ -7799,7 +8090,7 @@ def overall_attendance_excel(request):
             tpct = round(r['total_attended'] / r['total_held'] * 100, 2) if r['total_held'] else 0
             tpct_cell = ws.cell(row_idx, c, f'{tpct:.2f}%' if r['total_held'] else '')
             tpct_cell.border = thin_border
-            if r['total_held'] and tpct < 75:
+            if r['total_held'] and tpct < att_min:
                 tpct_cell.font = Font(bold=True, color='FFFFFF')
                 tpct_cell.fill = pct_red_fill
             c += 1
@@ -7857,6 +8148,9 @@ def faculty_attendance_entry(request):
             'No department is available for your account (period may be closed or access turned off). Contact your HOD or super admin.',
         )
         return redirect('core:faculty_dashboard')
+    blocked = _faculty_portal_guard_redirect(request, 'faculty_attendance_entry')
+    if blocked:
+        return blocked
     tp = TermPhase.objects.filter(department=dept).first()
     portal_faculty_ids = list(faculty_ids_equivalent_for_portal(faculty))
 
@@ -8053,6 +8347,9 @@ def faculty_attendance_save(request):
     if not dept:
         messages.error(request, 'No active department context.')
         return redirect('core:faculty_dashboard')
+    blocked = _faculty_portal_guard_redirect(request, 'faculty_attendance_save')
+    if blocked:
+        return blocked
     if _is_attendance_locked_for_date(selected_date, dept):
         messages.error(request, 'Attendance is locked for this date. Contact admin to update via Manual Attendance.')
         url = reverse('core:faculty_attendance_entry') + f'?date={date_str}'
@@ -9984,6 +10281,10 @@ def faculty_mentorship(request):
     if not dept:
         messages.error(request, 'No department context. Use the header switcher or contact admin.')
         return redirect('core:faculty_dashboard')
+    blocked = _faculty_portal_guard_redirect(request, 'faculty_mentorship')
+    if blocked:
+        return blocked
+    att_min = float(attendance_risk_min_percent(dept))
     m_ids = list(faculty_ids_equivalent_for_portal(faculty))
     mentorship_students = list(
         Student.objects.filter(mentor_id__in=m_ids, department=dept)
@@ -10076,7 +10377,7 @@ def faculty_mentorship(request):
             'student': s, 'held': held, 'attended': attended, 'pct': pct,
             'week_wise': week_wise, 'subject_wise': subj_list,
         })
-        if held and pct < 75:
+        if held and pct < att_min:
             at_risk.append({'student': s, 'held': held, 'attended': attended, 'pct': pct, 'week_wise': week_wise, 'subject_wise': subj_list})
     week_options = [(i, phase_week_offsets.get(phase, 0) + i + 1) for i in range(len(weeks))]
     selected_week_global_num = (phase_week_offsets.get(phase, 0) + week_idx + 1) if week_idx is not None and weeks else None
@@ -10090,6 +10391,7 @@ def faculty_mentorship(request):
         'week_options': week_options,
         'selected_week': week_param,
         'selected_week_global_num': selected_week_global_num,
+        'att_risk_min_pct': att_min,
     }
     return render(request, 'core/faculty/mentorship.html', ctx)
 
@@ -10253,6 +10555,7 @@ def _risk_student_info_build_context(
         'contact_choices': RiskStudentMentorLog.CONTACT_CHOICES,
         'has_mentees': has_mentees,
         'risk_session_key': risk_session_key,
+        'att_risk_min_pct': float(attendance_risk_min_percent(dept)),
     }
 
 

@@ -87,7 +87,7 @@
     <div class="col-lg-6">
         <div class="analytics-card">
             <div class="card-header d-flex flex-wrap align-items-center justify-content-between gap-2">
-                <span>At-risk students (below 75%)</span>
+                <span>At-risk students (below {{ att_risk_min_pct|floatformat:2 }}%)</span>
                 {% if at_risk_students %}
                 <a href="{% url 'core:admin_analytics_at_risk_excel' %}?phase={{ phase }}&week={{ selected_week }}" class="btn btn-sm btn-light">
                     <i class="fas fa-file-excel me-1"></i> Download Excel
@@ -116,7 +116,7 @@
                     </table>
                 </div>
                 {% else %}
-                <p class="text-center text-success py-4 mb-0"><i class="fas fa-check-circle me-2"></i>No at-risk students. All above 75%.</p>
+                <p class="text-center text-success py-4 mb-0"><i class="fas fa-check-circle me-2"></i>No at-risk students. All at or above {{ att_risk_min_pct|floatformat:2 }}%.</p>
                 {% endif %}
             </div>
         </div>
@@ -126,7 +126,7 @@
 <div class="analytics-card">
     <div class="card-header">Heat map — Low attendance days & time slots</div>
     <div class="card-body">
-        <p class="small text-secondary mb-3">Darker red = lower attendance. Green = good (&ge;75%).</p>
+        <p class="small text-secondary mb-3">Darker red = lower attendance. Green = good (&ge;{{ att_risk_min_pct|floatformat:2 }}%).</p>
         {% if heat_map %}
         <div class="table-responsive">
             <table class="table table-bordered mb-0">
@@ -143,7 +143,7 @@
                     <tr>
                         <td class="fw-medium">{{ row.day }}</td>
                         {% for s in row.slots %}
-                        <td class="heat-map-cell {% if s.pct == None %}na{% elif s.pct >= 75 %}good{% elif s.pct >= 50 %}warn{% else %}low{% endif %}">
+                        <td class="heat-map-cell {% if s.pct == None %}na{% elif s.pct >= att_risk_min_pct %}good{% elif s.pct >= 50 %}warn{% else %}low{% endif %}">
                             {% if s.pct != None %}{{ s.pct|floatformat:2 }}%{% else %}—{% endif %}
                         </td>
                         {% endfor %}
@@ -160,6 +160,8 @@
 
 <script>
 (function() {
+    var attRiskMin = Number('{{ att_risk_min_pct }}');
+    if (isNaN(attRiskMin)) attRiskMin = 75;
     var weeklyData = {{ weekly_trend_json|safe }};
     var subjectData = {{ subject_wise_json|safe }};
     var batchData = {{ batch_wise_json|safe }};
@@ -233,7 +235,7 @@
                     label: 'Attendance %',
                     data: batchData.map(function(b) { return b.pct; }),
                     backgroundColor: batchData.map(function(b) {
-                        return b.pct >= 75 ? '#10b981' : (b.pct >= 50 ? '#f59e0b' : '#ef4444');
+                        return b.pct >= attRiskMin ? '#10b981' : (b.pct >= 50 ? '#f59e0b' : '#ef4444');
                     })
                 }]
             },

@@ -1,0 +1,49 @@
+{% extends 'core/admin/base_admin.html' %}
+{% load static %}
+{% block title %}Department risk criteria — LJIET_Attendance{% endblock %}
+{% block content %}
+<div class="admin-hero">
+    <div class="d-flex align-items-center gap-3">
+        <img src="{% static 'images/ljiet-logo.png' %}" alt="LJIET" class="admin-logo">
+        <div>
+            <h1 class="page-title mb-1">Department risk criteria <span class="badge bg-light text-dark ms-1">{{ department.name }}</span></h1>
+            <p class="page-subtitle mb-0">Optional overrides for this department. Empty attendance field = use institute default (currently {{ semester_default_att|floatformat:2 }}% for this semester). Effective attendance threshold now: <strong>{{ attendance_effective|floatformat:2 }}%</strong>.</p>
+        </div>
+    </div>
+    <a href="{% url 'core:admin_dashboard' %}" class="btn btn-outline-light btn-sm"><i class="fas fa-arrow-left me-1"></i> Dashboard</a>
+</div>
+
+<div class="card admin-card" style="max-width: 680px;">
+    <div class="card-body p-4">
+        <form method="post">
+            {% csrf_token %}
+            <div class="mb-4">
+                <label class="form-label fw-semibold" for="id_att_dept">Attendance % override (optional)</label>
+                <input type="text" name="risk_attendance_min_percent" id="id_att_dept" class="form-control form-control-app"
+                       value="{% if department.risk_attendance_min_percent != None %}{{ department.risk_attendance_min_percent }}{% endif %}"
+                       placeholder="Leave empty for institute default" inputmode="decimal" autocomplete="off">
+            </div>
+            <p class="fw-semibold mb-2">Mark cutoff override per phase</p>
+            <p class="text-muted small mb-3">Leave blank to remove a department override for that phase (institute phase value or default 9 applies).</p>
+            <div class="table-responsive mb-4">
+                <table class="table table-sm align-middle mb-0">
+                    <thead><tr><th>Phase</th><th>Override (marks)</th><th>Effective</th></tr></thead>
+                    <tbody>
+                        {% for row in phase_rows %}
+                        <tr>
+                            <td class="fw-medium">{{ row.name }}</td>
+                            <td><input type="text" class="form-control form-control-app" name="phase_mark_{{ row.name }}"
+                                       value="{% if row.override != None %}{{ row.override }}{% endif %}" placeholder="—" autocomplete="off"></td>
+                            <td class="text-muted small">{{ row.effective }}</td>
+                        </tr>
+                        {% empty %}
+                        <tr><td colspan="3" class="text-muted small">No exam phases for this department yet.</td></tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            <button type="submit" class="btn btn-primary"><i class="fas fa-save me-1"></i>Save {{ department.name }}</button>
+        </form>
+    </div>
+</div>
+{% endblock %}

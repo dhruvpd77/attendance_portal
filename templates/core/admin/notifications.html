@@ -105,7 +105,7 @@
         <img src="{% static 'images/ljiet-logo.png' %}" alt="LJIET" class="admin-logo">
         <div>
             <h1 class="page-title">Notifications</h1>
-            <p class="page-subtitle">Students below 75% attendance — Phase & Week wise. Email report to mentors.</p>
+            <p class="page-subtitle">Students below {{ att_risk_min_pct|floatformat:2 }}% attendance — Phase & Week wise. Email report to mentors.</p>
         </div>
     </div>
     <a href="{% url 'core:admin_dashboard' %}" class="btn btn-outline-light btn-sm"><i class="fas fa-arrow-left me-1"></i> Dashboard</a>
@@ -137,7 +137,7 @@
                 <button type="submit" class="btn btn-primary-app"><i class="fas fa-search me-1"></i> Show</button>
             </form>
             {% if mentor_data %}
-            <form method="post" action="{% url 'core:admin_notifications' %}" class="d-inline" onsubmit="return confirm('Send email to ALL mentors with mentees below 75%?');">
+            <form method="post" action="{% url 'core:admin_notifications' %}" class="d-inline" onsubmit="return confirm('Send email to ALL mentors with mentees below {{ att_risk_min_pct|floatformat:2 }}%?');">
                 {% csrf_token %}
                 <input type="hidden" name="action" value="email_all">
                 <input type="hidden" name="phase" value="{{ phase }}">
@@ -151,10 +151,10 @@
 
 {% if mentor_data %}
 <div class="card notif-card notif-mentor-card">
-    <div class="card-header"><i class="fas fa-users me-2"></i>Students below 75% — Grouped by mentor</div>
+    <div class="card-header"><i class="fas fa-users me-2"></i>Students below {{ att_risk_min_pct|floatformat:2 }}% — Grouped by mentor</div>
     <div class="card-body p-4">
         <div class="alert alert-info border-0 mb-4" style="background: #eff6ff; color: #1e40af;">
-            <i class="fas fa-info-circle me-2"></i>Click <strong>Email to Mentor</strong> to send the full attendance report (subject-wise, week-wise) to each mentor for their mentees below 75%.
+            <i class="fas fa-info-circle me-2"></i>Click <strong>Email to Mentor</strong> to send the full attendance report (subject-wise, week-wise) to each mentor for their mentees below {{ att_risk_min_pct|floatformat:2 }}%.
         </div>
         {% for mentor, at_risk_list in mentor_data %}
         <div class="notif-mentor-block">
@@ -162,7 +162,7 @@
                 <div>
                     <div class="notif-mentor-name">{{ mentor.full_name }} ({{ mentor.short_name }})</div>
                     <div class="notif-mentor-badges">
-                        <span class="badge bg-warning text-dark">{{ at_risk_list|length }} mentee(s) below 75%</span>
+                        <span class="badge bg-warning text-dark">{{ at_risk_list|length }} mentee(s) below {{ att_risk_min_pct|floatformat:2 }}%</span>
                         {% if mentor.email or mentor.user.email %}
                         <span class="badge bg-secondary bg-opacity-25 text-dark">{{ mentor.email|default:mentor.user.email }}</span>
                         {% else %}
@@ -217,8 +217,8 @@
         <div class="mb-3">
             <i class="fas fa-check-circle fa-4x text-success" style="opacity: 0.9;"></i>
         </div>
-        <h5 class="text-success fw-bold mb-2">No students below 75%</h5>
-        <p class="text-secondary mb-0">All students with mentors have attendance ≥ 75% for <strong>{{ phase }}</strong> up to <strong>Week {{ global_week_num }}</strong>.</p>
+        <h5 class="text-success fw-bold mb-2">No students below {{ att_risk_min_pct|floatformat:2 }}%</h5>
+        <p class="text-secondary mb-0">All students with mentors have attendance ≥ {{ att_risk_min_pct|floatformat:2 }}% for <strong>{{ phase }}</strong> up to <strong>Week {{ global_week_num }}</strong>.</p>
         <p class="text-muted small mt-3 mb-0">Ensure students have mentors assigned (via CSV upload or <code>seed_mentors</code>) and term phases are set.</p>
     </div>
 </div>
