@@ -205,6 +205,109 @@ def _export_contact_cells(log: RiskStudentMentorLog | None) -> tuple[str, str, s
     return (log.contact_person or '', d, t, (log.remarks or '').strip())
 
 
+def _write_mentorship_introduction_call_sheet(
+    ws,
+    dept: Department,
+    students: list[Student],
+    *,
+    mentor_label: str = '',
+) -> None:
+    """First sheet of faculty export: one row per mentee with introduction call log (if any)."""
+    thin = Border(left=THIN, right=THIN, top=THIN, bottom=THIN)
+    title_fill = PatternFill(start_color=HEADER_BLUE, end_color=HEADER_BLUE, fill_type='solid')
+    yellow_fill = PatternFill(start_color=HEADER_YELLOW, end_color=HEADER_YELLOW, fill_type='solid')
+    mentor_fill = PatternFill(start_color=MENTOR_PINK, end_color=MENTOR_PINK, fill_type='solid')
+    title_font = Font(bold=True, size=14)
+    sub_font = Font(bold=True, size=11)
+    sem = dept.institute_semester.label if dept.institute_semester_id else ''
+    line_a = f'{dept.name} {sem}'.strip() if sem else dept.name
+    if mentor_label:
+        line_a = f'{line_a} · {mentor_label}'
+    line_b = (
+        'Mentorship introduction call — one row per assigned mentee. '
+        'Total duration = call length in minutes (optional). Same contact fields as attendance/marks risk logs.'
+    )
+    intro_ph = RiskStudentMentorLog.PHASE_INTRODUCTION_CALL
+    want_ids = [s.id for s in students]
+    logs = list(
+        RiskStudentMentorLog.objects.filter(
+            department=dept,
+            kind=RiskStudentMentorLog.KIND_INTRODUCTION_CALL,
+            phase=intro_ph,
+            student_id__in=want_ids,
+        )
+    )
+    log_by_sid = {lg.student_id: lg for lg in logs}
+
+    ws.merge_cells('A1:I1')
+    c1 = ws.cell(row=1, column=1, value=line_a)
+    c1.fill = title_fill
+    c1.font = title_font
+    c1.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
+    ws.merge_cells('A2:I2')
+    c2 = ws.cell(row=2, column=1, value=line_b)
+    c2.fill = yellow_fill
+    c2.font = sub_font
+    c2.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
+
+    headers = [
+        'Student name',
+        'Roll',
+        'Div',
+        'Mentor',
+        'Contact person',
+        'Date of call',
+        'Time',
+        'Duration (min)',
+        'Remarks',
+    ]
+    hr = 3
+    for col, h in enumerate(headers, start=1):
+        cell = ws.cell(row=hr, column=col, value=h)
+        cell.font = Font(bold=True)
+        cell.border = thin
+        cell.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
+        if col == 4:
+            cell.fill = mentor_fill
+
+    row = hr + 1
+    for s in students:
+        lg = log_by_sid.get(s.id)
+        cont = _export_contact_cells(lg)
+        dur = lg.duration_minutes if lg and lg.duration_minutes is not None else ''
+        m = s.mentor
+        mentor_s = (m.short_name if m else '') or (m.full_name if m else '')
+        vals = [
+            s.name,
+            s.roll_no,
+            s.batch.name if s.batch else '',
+            mentor_s,
+            cont[0],
+            cont[1],
+            cont[2],
+            dur,
+            cont[3],
+        ]
+        for col, v in enumerate(vals, start=1):
+            cell = ws.cell(row=row, column=col, value=v)
+            cell.border = thin
+            if col == 4:
+                cell.fill = mentor_fill
+            cell.alignment = Alignment(
+                horizontal='left' if col in (1, 5, 9) else 'center',
+                vertical='center',
+                wrap_text=True,
+            )
+        row += 1
+
+    widths = [28, 10, 8, 14, 14, 14, 10, 14, 36]
+    for i, w in enumerate(widths, start=1):
+        ws.column_dimensions[get_column_letter(i)].width = w
+
+    if row == hr + 1:
+        ws.cell(row=hr + 1, column=1, value='No mentorship students in this export.')
+
+
 @dataclass
 class SheetSpec:
     kind: str
@@ -553,17 +656,14 @@ def build_faculty_risk_studentwise_workbook(
     *,
     mentor_label: str = '',
 ) -> Workbook:
-    """Single sheet: each at-risk mentee block with column A merged (name), rows = week-wise attendance + phase fail marks + call fields."""
+    """Sheet 1: Introduction call (all mentees). Sheet 2: at-risk blocks (attendance weeks + failed marks) through selected phase/week."""
     from core.models import Batch
     from core.views import _compile_phase_weeks_date_objects, _student_phase_weeks_and_dates
 
     want = set(int(x) for x in mentee_ids)
-    if not want:
-        wb = Workbook()
-        ws = wb.active
-        ws.title = 'Student_wise'[:31]
-        ws.cell(row=1, column=1, value='No mentees selected for this export.')
-        return wb
+    wb = Workbook()
+    ws_intro = wb.active
+    ws_intro.title = 'Introduction call'[:31]
 
     batch = Batch.objects.filter(department=dept).order_by('name').first()
     if batch:
@@ -572,11 +672,11 @@ def build_faculty_risk_studentwise_workbook(
         week_map = {p: _compile_phase_weeks_date_objects(dept, p) for p in PHASES}
     specs = build_sheet_specs(end_phase, end_week_0based, week_map)
     students = [s for s in _ordered_students(dept) if s.id in want]
+    _write_mentorship_introduction_call_sheet(ws_intro, dept, students, mentor_label=mentor_label)
+
+    ws = wb.create_sheet('Student_wise', 1)
     if not students:
-        wb = Workbook()
-        ws = wb.active
-        ws.title = 'Student_wise'[:31]
-        ws.cell(row=1, column=1, value='No students found for this export.')
+        ws.cell(row=1, column=1, value='No mentees selected for this export.')
         return wb
 
     sem = dept.institute_semester.label if dept.institute_semester_id else ''
@@ -663,9 +763,6 @@ def build_faculty_risk_studentwise_workbook(
                     }
                 )
 
-    wb = Workbook()
-    ws = wb.active
-    ws.title = 'Student_wise'[:31]
     thin = Border(left=THIN, right=THIN, top=THIN, bottom=THIN)
     title_fill = PatternFill(start_color=HEADER_BLUE, end_color=HEADER_BLUE, fill_type='solid')
     yellow_fill = PatternFill(start_color=HEADER_YELLOW, end_color=HEADER_YELLOW, fill_type='solid')

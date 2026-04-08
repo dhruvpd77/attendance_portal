@@ -142,9 +142,9 @@
                 <h1 class="page-title mb-1">Risk student information</h1>
                 <p class="text-white-50 mb-0 small">
                     {% if is_admin_proxy %}
-                    <strong>{{ department.name }}</strong> — optional parent-call notes for mentees. Choose a faculty, then the same filters as the faculty portal. Data appears in Risk students Excel.
+                    <strong>{{ department.name }}</strong> — optional parent-call notes for mentees. Choose a faculty, then the same filters as the faculty portal. Use <strong>Introduction call</strong> for every assigned mentee (not only at-risk). Data appears in Risk students Excel and the faculty download.
                     {% elif faculty %}
-                    {{ faculty.full_name }} — optional parent call notes for your mentees. Data is included in the admin Risk students Excel.
+                    {{ faculty.full_name }} — optional parent call notes for your mentees. <strong>Introduction call</strong> lists all your mentorship students with total call duration. Attendance/Marks modes are for at-risk rows only. Data is included in the Excel export (first sheet).
                     {% else %}
                     Risk student contact logs.
                     {% endif %}
@@ -164,12 +164,15 @@
             </div>
             {% endif %}
             <input type="hidden" name="mode" id="modeInput" value="{{ mode }}">
-            <div class="btn-group risk-mode-toggle w-100" role="group" aria-label="Data mode">
+            <div class="btn-group risk-mode-toggle w-100 flex-wrap" role="group" aria-label="Data mode">
                 <input type="radio" class="btn-check" name="mode_radio" id="modeAtt" autocomplete="off" {% if mode == 'attendance' %}checked{% endif %} onchange="document.getElementById('modeInput').value='attendance'; this.form.submit();">
                 <label class="btn btn-sm btn-outline-light flex-fill" for="modeAtt">Attendance</label>
                 <input type="radio" class="btn-check" name="mode_radio" id="modeMk" autocomplete="off" {% if mode == 'marks' %}checked{% endif %} onchange="document.getElementById('modeInput').value='marks'; this.form.submit();">
                 <label class="btn btn-sm btn-outline-light flex-fill" for="modeMk">Marks</label>
+                <input type="radio" class="btn-check" name="mode_radio" id="modeIntro" autocomplete="off" {% if mode == 'introduction' %}checked{% endif %} onchange="document.getElementById('modeInput').value='introduction'; this.form.submit();">
+                <label class="btn btn-sm btn-outline-light flex-fill" for="modeIntro" title="All mentorship students">Intro call</label>
             </div>
+            {% if mode != 'introduction' %}
             <div class="d-flex flex-wrap align-items-center gap-2">
                 <label class="text-white-50 small mb-0 text-nowrap">Phase</label>
                 <select name="phase" class="form-select form-select-sm bg-light flex-grow-1" style="max-width: 120px;" onchange="this.form.submit()">
@@ -178,6 +181,7 @@
                     {% endfor %}
                 </select>
             </div>
+            {% endif %}
             {% if mode == 'attendance' %}
             <div class="d-flex flex-wrap align-items-center gap-2">
                 <label class="text-white-50 small mb-0 text-nowrap">Week</label>
@@ -195,7 +199,7 @@
 
 {% if not needs_faculty_pick %}
 <div class="d-flex flex-wrap justify-content-end align-items-center gap-2 mb-3">
-    <span class="text-secondary small me-auto">Export uses the phase and week selected above (same cutoff as the admin &ldquo;Risk students&rdquo; workbook). Includes every at-risk week and failed-subject row through that point, with call details.</span>
+    <span class="text-secondary small me-auto">Excel has two sheets: <strong>Introduction call</strong> (all your mentees, with duration) first, then <strong>Student_wise</strong> (at-risk only) for the phase/week chosen above — same cutoff as the admin Risk students workbook.</span>
     {% if is_admin_proxy and scope_faculty %}
     <a href="{% url 'core:admin_risk_student_info_excel' %}?faculty={{ scope_faculty.pk }}&phase={{ phase }}&week={{ selected_week }}&mode={{ mode }}" class="btn btn-sm btn-success shadow-sm">
         <i class="fas fa-file-excel me-1" aria-hidden="true"></i>Download Excel (student-wise)
@@ -209,7 +213,9 @@
 {% endif %}
 
 <p class="risk-note mb-3">
-    {% if mode == 'attendance' %}
+    {% if mode == 'introduction' %}
+    Showing <strong>all</strong> students assigned to you as mentor. Log parent introduction calls with the same contact fields as at-risk logs, plus <strong>total duration</strong> (minutes).
+    {% elif mode == 'attendance' %}
     Showing mentees below {{ att_risk_min_pct|floatformat:2 }}% for {{ phase }}{% if selected_week_global_num %} — through Week {{ selected_week_global_num }}{% else %} — cumulative through {{ phase }}{% endif %}.
     {% if log_week_global_num %}
     Saves attach to <strong>WEEK-{{ log_week_global_num }}</strong> on the admin export (when &ldquo;All (cumulative)&rdquo; is selected, that is the last week of {{ phase }}).
@@ -234,6 +240,8 @@
         </p>
         {% elif mode == 'marks' %}
         <p class="mb-0">No at-risk marks rows for these mentees in this phase.</p>
+        {% elif mode == 'introduction' %}
+        <p class="mb-0">No mentorship students to show.</p>
         {% else %}
         <p class="mb-0">No at-risk attendance rows for this selection (cumulative % is at or above {{ att_risk_min_pct|floatformat:2 }}%).</p>
         {% endif %}
@@ -244,12 +252,13 @@
 {% if mode == 'attendance' and log_week_idx == None %}
 <div class="alert alert-warning">Term weeks are not configured for this phase — attendance contact logs cannot be saved until weeks exist.</div>
 {% endif %}
-
 <div class="risk-bulk-bar" id="riskBulkBar">
     <div class="mb-2">
         <div class="bulk-title"><i class="fas fa-calendar-day me-2 text-primary"></i>Calling date for all rows (this view)</div>
         <div class="bulk-hint mt-1">
-            {% if mode == 'attendance' %}
+            {% if mode == 'introduction' %}
+            Introduction call: optionally set one <strong>date</strong> (and duration in each row) for all students, then <strong>Apply to all</strong> for dates only — save each row you need.
+            {% elif mode == 'attendance' %}
             {{ phase }}{% if selected_week_global_num %} — Week {{ selected_week_global_num }}{% elif selected_week == 'all' or not selected_week %} — all weeks (cumulative){% endif %}: pick a date, <strong>Apply to all</strong>, then save each row you need. The same date is restored in this browser after a save until you change filters.
             {% else %}
             {{ phase }} (marks): apply one date to all fields shown, then save per row.
@@ -290,6 +299,10 @@
             <input type="hidden" name="context_faculty_id" value="{{ scope_faculty.pk }}">
             {% endif %}
             <input type="hidden" name="student_id" value="{{ row.student_id }}">
+            {% if mode == 'introduction' %}
+            <input type="hidden" name="kind" value="introduction_call">
+            <input type="hidden" name="phase" value="INTRO">
+            {% else %}
             <input type="hidden" name="phase" value="{{ phase }}">
             {% if mode == 'attendance' %}
             <input type="hidden" name="kind" value="attendance_week">
@@ -297,6 +310,7 @@
             {% else %}
             <input type="hidden" name="kind" value="marks_subject">
             <input type="hidden" name="subject_name" value="{{ row.subject }}">
+            {% endif %}
             {% endif %}
             <div class="col-12 col-md-6 col-xl-3">
                 <label class="form-label">Contact person</label>
@@ -314,7 +328,14 @@
                 <label class="form-label">Time</label>
                 <input type="time" name="call_time" class="form-control form-control-sm" value="{% if row.log and row.log.call_time %}{{ row.log.call_time|time:'H:i' }}{% endif %}" autocomplete="off">
             </div>
-            <div class="col-12 col-xl-4">
+            {% if mode == 'introduction' %}
+            <div class="col-12 col-sm-6 col-xl-2">
+                <label class="form-label">Duration (min)</label>
+                <input type="number" name="duration_minutes" class="form-control form-control-sm risk-row-duration" min="0" max="32767" step="1" placeholder="Total"
+                    value="{% if row.log and row.log.duration_minutes != None %}{{ row.log.duration_minutes }}{% endif %}" autocomplete="off">
+            </div>
+            {% endif %}
+            <div class="col-12 {% if mode == 'introduction' %}col-xl-3{% else %}col-xl-4{% endif %}">
                 <label class="form-label">Remarks</label>
                 <textarea name="remarks" class="form-control form-control-sm" rows="2" placeholder="Optional">{% if row.log %}{{ row.log.remarks }}{% endif %}</textarea>
             </div>

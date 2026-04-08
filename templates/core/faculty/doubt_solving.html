@@ -64,18 +64,23 @@
                     </table>
                 </div>
 
-                <div class="row g-3 mb-3">
-                    <div class="col-md-4">
+                <div class="row g-3 mb-3 align-items-end">
+                    <div class="col-6 col-lg-3">
                         <label class="form-label">Date</label>
                         <input type="date" name="date" class="form-control" required>
                     </div>
-                    <div class="col-md-4">
+                    <div class="col-6 col-lg-3">
                         <label class="form-label">Start time</label>
                         <input type="time" name="start_time" class="form-control" required step="60">
                     </div>
-                    <div class="col-md-4">
+                    <div class="col-6 col-lg-3">
                         <label class="form-label">End time</label>
                         <input type="time" name="end_time" class="form-control" required step="60">
+                    </div>
+                    <div class="col-6 col-lg-3">
+                        <label class="form-label">Location</label>
+                        <input type="text" name="location" class="form-control" maxlength="255" autocomplete="off"
+                            placeholder="e.g. Room 301, Lab A, Online">
                     </div>
                 </div>
                 <button type="submit" id="ds-submit" class="btn btn-primary" disabled>Submit request to HOD</button>
@@ -106,6 +111,7 @@
                         <th>Date</th>
                         <th>Batches</th>
                         <th>Time</th>
+                        <th>Location</th>
                         <th class="text-end">Clock (min)</th>
                         <th>Status</th>
                         <th>Students</th>
@@ -133,7 +139,7 @@
                         <td class="text-end">{{ row.duration_hours|floatformat:2 }}</td>
                     </tr>
                     {% empty %}
-                    <tr><td colspan="7" class="text-secondary py-4 text-center">No requests yet.</td></tr>
+                    <tr><td colspan="8" class="text-secondary py-4 text-center">No requests yet.</td></tr>
                     {% endfor %}
                 </tbody>
             </table>

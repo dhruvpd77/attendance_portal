@@ -842,7 +842,15 @@ def admin_performance_students(request):
     if not dept:
         messages.error(request, 'Select a department first.')
         return redirect('core:admin_dashboard')
-    return render(request, 'core/admin/performance_students.html', {'department': dept})
+    return render(
+        request,
+        'core/admin/performance_students.html',
+        {
+            'department': dept,
+            'is_super_admin': is_super_admin(request),
+            'show_compiled_marksheets': _user_can_compiled_marksheet_excel(request),
+        },
+    )
 
 
 @login_required
@@ -3277,6 +3285,13 @@ def _lecture_label_for_slot(dept, batch, d, time_slot_str, fallback_index=1):
 
 def _user_can_daily_report(request):
     """HOD or Super Admin only (not departmental admin)."""
+    if not request.user.is_authenticated:
+        return False
+    return is_hod(request) or is_super_admin(request)
+
+
+def _user_can_compiled_marksheet_excel(request):
+    """Compiled marksheet downloads: HOD or institute super admin only (not departmental admin)."""
     if not request.user.is_authenticated:
         return False
     return is_hod(request) or is_super_admin(request)
@@ -6663,6 +6678,8 @@ def mark_analytics(request):
         'student_data': student_data,
         'risk_data': risk_data,
         'is_admin': True,
+        'is_super_admin': is_super_admin(request),
+        'show_compiled_marksheets': _user_can_compiled_marksheet_excel(request),
     }
     return render(request, 'core/admin/mark_analytics.html', ctx)
 
@@ -6741,6 +6758,7 @@ def faculty_mark_analytics(request):
         'risk_student_data': risk_student_data,
         'risk_data': risk_data,
         'is_admin': False,
+        'show_compiled_marksheets': False,
     }
     return render(request, 'core/admin/mark_analytics.html', ctx)
 
@@ -6920,6 +6938,8 @@ def detailed_mark_analytics(request):
         'selected_phase_id': phase_id or '',
         'selected_subject_id': subject_id or '',
         'selected_batch_id': batch_id,
+        'is_super_admin': is_super_admin(request),
+        'show_compiled_marksheets': _user_can_compiled_marksheet_excel(request),
     }
     return render(request, 'core/admin/detailed_mark_analytics.html', ctx)
 
@@ -7627,6 +7647,89 @@ def mark_analytics_report_excel(request):
 def faculty_mark_analytics_report_excel(request):
     """Faculty: Download marks report (mentorship students only)."""
     return _mark_analytics_report_excel_impl(request, is_admin=False)
+
+
+@login_required
+def admin_marks_compile_per_department_excel(request):
+    """HOD / super admin: batch-wise compiled marksheet for the active department (same builder as Exam Analytics Hub)."""
+    if not user_can_admin(request):
+        return redirect('core:admin_dashboard')
+    if not _user_can_compiled_marksheet_excel(request):
+        messages.error(request, 'Only HOD or super admin can download compiled marksheets.')
+        return redirect('core:admin_performance_students')
+    dept = get_admin_department(request)
+    if not dept:
+        messages.error(request, 'Select a department first.')
+        return redirect('core:admin_dashboard')
+    bio = exam_admin_analytics.excel_compiled_per_department([dept])
+    safe = re.sub(r'[^\w\-.]+', '_', (dept.name or 'dept'))[:50].strip('_') or 'dept'
+    return _exam_admin_excel_response(bio, f'marks_compiled_{safe}.xlsx')
+
+
+@login_required
+def admin_marks_compile_subject_wise_excel(request):
+    """HOD / super admin: subject-wise marks Excel for the active department."""
+    if not user_can_admin(request):
+        return redirect('core:admin_dashboard')
+    if not _user_can_compiled_marksheet_excel(request):
+        messages.error(request, 'Only HOD or super admin can download compiled marksheets.')
+        return redirect('core:admin_performance_students')
+    dept = get_admin_department(request)
+    if not dept:
+        messages.error(request, 'Select a department first.')
+        return redirect('core:admin_dashboard')
+    bio = exam_admin_analytics.excel_subject_wise_per_department([dept])
+    safe = re.sub(r'[^\w\-.]+', '_', (dept.name or 'dept'))[:50].strip('_') or 'dept'
+    return _exam_admin_excel_response(bio, f'marks_subject_wise_{safe}.xlsx')
+
+
+@login_required
+def admin_marks_compile_phase_wise_excel(request):
+    """HOD / super admin: phase-wise compile workbook for the active department."""
+    if not user_can_admin(request):
+        return redirect('core:admin_dashboard')
+    if not _user_can_compiled_marksheet_excel(request):
+        messages.error(request, 'Only HOD or super admin can download compiled marksheets.')
+        return redirect('core:admin_performance_students')
+    dept = get_admin_department(request)
+    if not dept:
+        messages.error(request, 'Select a department first.')
+        return redirect('core:admin_dashboard')
+    bio = exam_admin_analytics.excel_phase_compile([dept])
+    safe = re.sub(r'[^\w\-.]+', '_', (dept.name or 'dept'))[:50].strip('_') or 'dept'
+    return _exam_admin_excel_response(bio, f'marks_phase_compile_{safe}.xlsx')
+
+
+@login_required
+def admin_marks_compile_all_departments_excel(request):
+    """Institute super admin: compiled marksheet across all departments in the active institute semester."""
+    if not is_super_admin(request):
+        return redirect('core:admin_dashboard')
+    from core.semester_scope import departments_for_institute_semester, get_active_institute_semester
+
+    sem = get_active_institute_semester(request)
+    depts = list(departments_for_institute_semester(sem).order_by('name')) if sem else []
+    if not depts:
+        messages.error(request, 'No departments in the selected institute semester.')
+        return redirect('core:admin_mark_analytics')
+    bio = exam_admin_analytics.excel_compiled_all_departments(depts)
+    return _exam_admin_excel_response(bio, 'marks_compiled_all_departments.xlsx')
+
+
+@login_required
+def admin_marks_compile_subject_all_departments_excel(request):
+    """Institute super admin: subject-wise marks for all departments in the active institute semester."""
+    if not is_super_admin(request):
+        return redirect('core:admin_dashboard')
+    from core.semester_scope import departments_for_institute_semester, get_active_institute_semester
+
+    sem = get_active_institute_semester(request)
+    depts = list(departments_for_institute_semester(sem).order_by('name')) if sem else []
+    if not depts:
+        messages.error(request, 'No departments in the selected institute semester.')
+        return redirect('core:admin_mark_analytics')
+    bio = exam_admin_analytics.excel_subject_wise_all_departments(depts)
+    return _exam_admin_excel_response(bio, 'marks_subject_wise_all_departments.xlsx')
 
 
 @login_required
@@ -8820,6 +8923,7 @@ def faculty_doubt_solving(request):
         student_ids = request.POST.getlist('student_ids')
         start_s = request.POST.get('start_time', '').strip()
         end_s = request.POST.get('end_time', '').strip()
+        location_s = (request.POST.get('location') or '').strip()[:255]
         if not all([date_str, batch_ids, start_s, end_s]):
             messages.error(request, 'Please select at least one batch, and fill date and times.')
             return redirect('core:faculty_doubt_solving')
@@ -8848,6 +8952,7 @@ def faculty_doubt_solving(request):
             date=sess_date,
             start_time=t_start,
             end_time=t_end,
+            location=location_s or '',
             status=FacultyDoubtRequest.STATUS_PENDING,
         )
         req.batches.set(batch_list)
@@ -9097,7 +9202,7 @@ def hod_doubt_reports_excel(request):
     def _detail_sheet(ws):
         ws.append([
             'Request ID', 'Status', 'Faculty', 'Date', 'Batches', 'Phase', 'Week in phase', 'Global week',
-            'Start', 'End', 'Effective hours (DS)', '# Students', 'Roll numbers', 'Names', 'Phones',
+            'Start', 'End', 'Location', 'Effective hours (DS)', '# Students', 'Roll numbers', 'Names', 'Phones',
             'Reviewed at', 'Notes',
         ])
         for c in ws[1]:
@@ -9127,6 +9232,7 @@ def hod_doubt_reports_excel(request):
                 gw if gw is not None else '—',
                 dr.start_time.strftime('%H:%M'),
                 dr.end_time.strftime('%H:%M'),
+                (dr.location or '').strip() or '—',
                 round(dr.nominal_ds_hours(), 2),
                 len(lines),
                 rolls,
@@ -9138,9 +9244,9 @@ def hod_doubt_reports_excel(request):
         for row in ws.iter_rows(min_row=2, max_row=ws.max_row):
             for c in row:
                 c.border = thin
-        for col in range(1, 18):
+        for col in range(1, 19):
             ws.column_dimensions[get_column_letter(col)].width = 14
-        ws.column_dimensions['N'].width = 28
+        ws.column_dimensions['O'].width = 28
 
     def _doubt_accepted_qs():
         return list(
@@ -9151,14 +9257,14 @@ def hod_doubt_reports_excel(request):
 
     def _write_doubt_detail_block(ws, r, title_text, week_dates, accepted_all, thin_local, hdr_fill_blue, hdr_w, title_f, sub_f):
         """Write one week’s detail table; return (next_row, week_effective_sum)."""
-        detail_ncol = 11
+        detail_ncol = 12
         ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=detail_ncol)
         c0 = ws.cell(r, 1, value=title_text)
         c0.font = title_f
         c0.alignment = Alignment(horizontal='left', vertical='center', wrap_text=True)
         r += 1
         headers = [
-            'Faculty', 'Date', 'Batches', 'Start', 'End', 'Clock (min)', 'Effective hours',
+            'Faculty', 'Date', 'Batches', 'Start', 'End', 'Location', 'Clock (min)', 'Effective hours',
             'Roll numbers', 'Student names', 'Phone numbers', '# Students',
         ]
         for col, h in enumerate(headers, 1):
@@ -9186,6 +9292,7 @@ def hod_doubt_reports_excel(request):
                 dr.batches_label(),
                 dr.start_time.strftime('%H:%M'),
                 dr.end_time.strftime('%H:%M'),
+                (dr.location or '').strip() or '—',
                 cm,
                 round(nh, 2),
                 rolls,
@@ -9196,7 +9303,7 @@ def hod_doubt_reports_excel(request):
             for col, val in enumerate(vals, 1):
                 c = ws.cell(r, col, value=val)
                 c.border = thin_local
-                if col in (6, 7, 11):
+                if col in (7, 8, 12):
                     c.alignment = Alignment(horizontal='right', vertical='center')
             r += 1
         if not week_reqs:
@@ -9207,7 +9314,7 @@ def hod_doubt_reports_excel(request):
         for col in range(1, detail_ncol + 1):
             ws.cell(r, col).border = thin_local
         ws.cell(r, 1, value='Week subtotal — effective hours (DS):').font = sub_f
-        ws.cell(r, 7, value=round(week_sum, 2)).font = sub_f
+        ws.cell(r, 8, value=round(week_sum, 2)).font = sub_f
         r += 2
         return r, week_sum
 
@@ -9343,8 +9450,8 @@ def hod_doubt_reports_excel(request):
         ws.cell(r, max_gw + 2, value=round(sum(col_totals), 2)).font = sub_f
         r += 1
         for col_letter, w in zip(
-            'ABCDEFGHIJK',
-            (12, 12, 14, 8, 8, 10, 12, 22, 28, 22, 10),
+            'ABCDEFGHIJKL',
+            (12, 12, 14, 8, 8, 18, 10, 12, 22, 28, 22, 10),
         ):
             ws.column_dimensions[col_letter].width = w
 
@@ -10444,7 +10551,7 @@ def _risk_student_info_build_context(
 
     phases = ['T1', 'T2', 'T3', 'T4']
     mode = request.GET.get('mode', 'attendance')
-    if mode not in ('attendance', 'marks'):
+    if mode not in ('attendance', 'marks', 'introduction'):
         mode = 'attendance'
     phase = request.GET.get('phase', 'T1')
     if phase not in phases:
@@ -10504,7 +10611,28 @@ def _risk_student_info_build_context(
 
     has_mentees = bool(mentorship_students)
     risk_data = []
-    if mentorship_students:
+    if mentorship_students and mode == 'introduction':
+        intro_phase = RiskStudentMentorLog.PHASE_INTRODUCTION_CALL
+        log_qs = RiskStudentMentorLog.objects.filter(
+            department=dept,
+            kind=RiskStudentMentorLog.KIND_INTRODUCTION_CALL,
+            phase=intro_phase,
+            student_id__in=[s.id for s in mentorship_students],
+        )
+        log_map = {lg.student_id: lg for lg in log_qs}
+        for s in mentorship_students:
+            m = s.mentor
+            risk_data.append(
+                {
+                    'student_id': s.id,
+                    'roll': s.roll_no,
+                    'div': s.batch.name if s.batch else '',
+                    'name': s.name,
+                    'mentor': (m.short_name if m else '') or (m.full_name if m else ''),
+                    'log': log_map.get(s.id),
+                }
+            )
+    elif mentorship_students:
         if mode == 'marks':
             risk_data = mentee_phase_fail_rows(dept, [s.id for s in mentorship_students], phase)
             if risk_data:
@@ -10576,10 +10704,6 @@ def _risk_student_info_save_commit(request, dept, m_ids_allow) -> tuple[bool, st
     if not student or not student.mentor_id or student.mentor_id not in m_ids_allow:
         return False, q_fallback
 
-    phases = {'T1', 'T2', 'T3', 'T4'}
-    if phase not in phases:
-        phase = 'T1'
-
     cp_raw = (request.POST.get('contact_person') or '').strip()
     if cp_raw in (RiskStudentMentorLog.CONTACT_FATHER, RiskStudentMentorLog.CONTACT_MOTHER, RiskStudentMentorLog.CONTACT_OTHER):
         contact_person = cp_raw
@@ -10610,6 +10734,38 @@ def _risk_student_info_save_commit(request, dept, m_ids_allow) -> tuple[bool, st
     if not mentor_f:
         return False, q_fallback
 
+    duration_minutes = None
+    dm_raw = (request.POST.get('duration_minutes') or '').strip()
+    if dm_raw:
+        try:
+            duration_minutes = max(0, min(int(float(dm_raw)), 32767))
+        except ValueError:
+            duration_minutes = None
+
+    if kind == RiskStudentMentorLog.KIND_INTRODUCTION_CALL:
+        intro_ph = RiskStudentMentorLog.PHASE_INTRODUCTION_CALL
+        RiskStudentMentorLog.objects.update_or_create(
+            student=student,
+            kind=RiskStudentMentorLog.KIND_INTRODUCTION_CALL,
+            phase=intro_ph,
+            defaults={
+                'department': dept,
+                'faculty': mentor_f,
+                'week_index': None,
+                'subject_name': '',
+                'contact_person': contact_person,
+                'call_date': call_date,
+                'call_time': call_time,
+                'duration_minutes': duration_minutes,
+                'remarks': remarks,
+            },
+        )
+        return True, q_fallback
+
+    phases = {'T1', 'T2', 'T3', 'T4'}
+    if phase not in phases:
+        phase = 'T1'
+
     if kind == RiskStudentMentorLog.KIND_MARKS_SUBJECT:
         fails = mentee_phase_fail_rows(dept, [student.id], phase)
         subj_ok = {r['subject'] for r in fails}
@@ -10624,6 +10780,7 @@ def _risk_student_info_save_commit(request, dept, m_ids_allow) -> tuple[bool, st
                 'department': dept,
                 'faculty': mentor_f,
                 'week_index': None,
+                'duration_minutes': None,
                 'contact_person': contact_person,
                 'call_date': call_date,
                 'call_time': call_time,
@@ -10648,6 +10805,7 @@ def _risk_student_info_save_commit(request, dept, m_ids_allow) -> tuple[bool, st
                 'department': dept,
                 'faculty': mentor_f,
                 'subject_name': '',
+                'duration_minutes': None,
                 'contact_person': contact_person,
                 'call_date': call_date,
                 'call_time': call_time,
@@ -10662,7 +10820,7 @@ def _risk_student_info_save_commit(request, dept, m_ids_allow) -> tuple[bool, st
 
 @login_required
 def faculty_risk_student_info(request):
-    """Faculty: optional parent-call log for at-risk mentees (attendance or marks); data appears on admin Risk students Excel."""
+    """Faculty: parent-call logs for at-risk mentees (attendance/marks) and introduction calls for all mentees."""
     if not user_can_faculty(request):
         return redirect('accounts:role_redirect')
     faculty = get_faculty_user(request)
@@ -10812,8 +10970,11 @@ def faculty_risk_student_info_save(request):
     ok, q = _risk_student_info_save_commit(request, dept, m_ids)
     if not ok:
         err = 'Invalid student, mentee, or subject/week for this save.'
-        if request.POST.get('kind') == RiskStudentMentorLog.KIND_MARKS_SUBJECT:
+        k = request.POST.get('kind', '')
+        if k == RiskStudentMentorLog.KIND_MARKS_SUBJECT:
             err = 'Invalid student or not an at-risk marks row for this student in the selected phase.'
+        elif k == RiskStudentMentorLog.KIND_INTRODUCTION_CALL:
+            err = 'Invalid student or this mentee is not assigned to you.'
         messages.error(request, err)
         url = f'{reverse("core:faculty_risk_student_info")}?{q}' if q else reverse('core:faculty_risk_student_info')
         return redirect(url)

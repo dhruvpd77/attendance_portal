@@ -114,6 +114,31 @@ urlpatterns = [
     path('admin/mark-analytics/risk-excel/', views.mark_analytics_risk_excel, name='admin_mark_analytics_risk_excel'),
     path('admin/mark-analytics/risk-all-excel/', views.mark_analytics_risk_all_excel, name='admin_mark_analytics_risk_all_excel'),
     path('admin/mark-analytics/report-excel/', views.mark_analytics_report_excel, name='admin_mark_analytics_report_excel'),
+    path(
+        'admin/mark-analytics/compile/per-department/',
+        views.admin_marks_compile_per_department_excel,
+        name='admin_marks_compile_per_department_excel',
+    ),
+    path(
+        'admin/mark-analytics/compile/subject-wise/',
+        views.admin_marks_compile_subject_wise_excel,
+        name='admin_marks_compile_subject_wise_excel',
+    ),
+    path(
+        'admin/mark-analytics/compile/phase-wise/',
+        views.admin_marks_compile_phase_wise_excel,
+        name='admin_marks_compile_phase_wise_excel',
+    ),
+    path(
+        'admin/mark-analytics/compile/all-departments/',
+        views.admin_marks_compile_all_departments_excel,
+        name='admin_marks_compile_all_departments_excel',
+    ),
+    path(
+        'admin/mark-analytics/compile/subject-all-departments/',
+        views.admin_marks_compile_subject_all_departments_excel,
+        name='admin_marks_compile_subject_all_departments_excel',
+    ),
     path('admin/result/', views.exam_phases_list, name='exam_phases_list'),
     path('admin/result/phase/<int:phase_id>/', views.exam_phase_detail, name='exam_phase_detail'),
     path('admin/result/upload-marks/', views.exam_phase_upload_marks, name='exam_phase_upload_marks'),

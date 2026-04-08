@@ -103,7 +103,7 @@ class FacultyDoubtRequestStudentInline(admin.TabularInline):
 
 @admin.register(FacultyDoubtRequest)
 class FacultyDoubtRequestAdmin(admin.ModelAdmin):
-    list_display = ('faculty', 'date', 'batches_list', 'status', 'start_time', 'end_time', 'created_at')
+    list_display = ('faculty', 'date', 'batches_list', 'location', 'status', 'start_time', 'end_time', 'created_at')
     list_filter = ('status', 'date', 'department')
     search_fields = ('faculty__short_name', 'batches__name')
     filter_horizontal = ('batches',)

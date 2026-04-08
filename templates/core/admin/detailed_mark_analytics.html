@@ -125,6 +125,23 @@
     <a href="{% url 'core:admin_dashboard' %}" class="btn btn-outline-light btn-sm"><i class="fas fa-arrow-left me-1"></i> Dashboard</a>
 </div>
 
+{% if show_compiled_marksheets %}
+<div class="card dma-filter-card mb-4">
+    <div class="card-header"><i class="fas fa-file-excel me-2 text-success"></i>Compiled marksheets — {{ department.name }}</div>
+    <div class="card-body p-3">
+        <div class="d-flex flex-wrap gap-2">
+            <a href="{% url 'core:admin_marks_compile_per_department_excel' %}" class="btn btn-success btn-sm">Compiled (dept)</a>
+            <a href="{% url 'core:admin_marks_compile_subject_wise_excel' %}" class="btn btn-outline-success btn-sm">Subject-wise (dept)</a>
+            <a href="{% url 'core:admin_marks_compile_phase_wise_excel' %}" class="btn btn-outline-primary btn-sm">Phase compile (dept)</a>
+            {% if is_super_admin %}
+            <a href="{% url 'core:admin_marks_compile_all_departments_excel' %}" class="btn btn-warning btn-sm text-dark">All departments</a>
+            <a href="{% url 'core:admin_marks_compile_subject_all_departments_excel' %}" class="btn btn-outline-warning btn-sm text-dark">Subject-wise all</a>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endif %}
+
 <div class="card dma-filter-card mb-4">
     <div class="card-header"><i class="fas fa-filter me-2"></i>Filter analytics</div>
     <div class="card-body p-4">

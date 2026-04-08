@@ -109,6 +109,11 @@ def sidebar_links(request):
                     'admin_mark_analytics',
                     'admin_detailed_mark_analytics',
                     'admin_marks_report',
+                    'admin_marks_compile_per_department_excel',
+                    'admin_marks_compile_subject_wise_excel',
+                    'admin_marks_compile_phase_wise_excel',
+                    'admin_marks_compile_all_departments_excel',
+                    'admin_marks_compile_subject_all_departments_excel',
                     'exam_phases_list',
                     'exam_phase_detail',
                     'exam_phase_upload_marks',
@@ -763,7 +768,7 @@ def sidebar_links(request):
                     'core:faculty_risk_student_info',
                     'fa-phone',
                     'faculty_risk_student_info',
-                    active_name_extra=('faculty_risk_student_info_excel',),
+                    active_name_extra=('faculty_risk_student_info_excel', 'faculty_risk_student_info_save'),
                 )
             )
         if flags['show_exam_duties']:

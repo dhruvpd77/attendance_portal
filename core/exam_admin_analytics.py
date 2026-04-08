@@ -26,7 +26,7 @@ from .exam_phase_order import (
     sorted_phase_names,
 )
 from .student_marks_utils import normalize_student_mark
-from .risk_policy import mark_fail_below_threshold
+from .risk_policy import mark_fail_below_getter_for_departments, mark_fail_below_threshold
 
 MARK_LOW_THRESHOLD = 9
 LOW_FILL = PatternFill(start_color='FFCDD2', end_color='FFCDD2', fill_type='solid')
@@ -141,13 +141,15 @@ def build_student_phase_data(students, dept):
         marks_by_student_phase[m.student_id][m.exam_phase_id][m.subject.name] = normalize_student_mark(
             m.marks_obtained
         )
+    fail_lb = mark_fail_below_getter_for_departments([dept])
+    phase_cut_by_ep = {ep.id: fail_lb(dept, ep.name) for ep in exam_phases}
     result = []
     for s in students:
         phase_wise = []
         for ep in exam_phases:
             subs = phase_subjects.get(ep.id, [])
             subject_marks = []
-            phase_cut = float(mark_fail_below_threshold(dept, ep.name))
+            phase_cut = phase_cut_by_ep[ep.id]
             for eps in subs:
                 marks_val = marks_by_student_phase[s.id][ep.id].get(eps.subject.name)
                 is_low = marks_val is not None and marks_val < phase_cut
@@ -447,11 +449,13 @@ def _matrix_column_widths(ws, fixed_labels, phase_subject_groups):
             col += 1
 
 
-def _fill_all_departments_wide_sheet(ws, depts, all_dept_student_pairs):
+def _fill_all_departments_wide_sheet(ws, depts, all_dept_student_pairs, *, fail_below_getter=None):
     """
     One matrix sheet: Department + student cols, then T1 / T2 / T3 / SEE (each once), subjects =
     union per phase across selected depts; one row per student; marks from that student's dept only.
     """
+    if fail_below_getter is None:
+        fail_below_getter = mark_fail_below_getter_for_departments(depts)
     col_phase_subject = _col_phase_subject_union_across_depts(depts)
     fixed = ['Department', 'Roll No', 'Name', 'Enrollment', 'Batch']
     groups = _group_mark_columns_single_dept(col_phase_subject)
@@ -480,7 +484,7 @@ def _fill_all_departments_wide_sheet(ws, depts, all_dept_student_pairs):
             val = _mark_in_item(item, pn, sn)
             cell = ws.cell(r, nfix + 1 + i, '' if val is None else val)
             cell.border = THIN
-            _apply_low_fill(cell, val, low_below=float(mark_fail_below_threshold(dept, pn)))
+            _apply_low_fill(cell, val, low_below=fail_below_getter(dept, pn))
         for cc in range(1, nfix + len(col_phase_subject) + 1):
             ws.cell(r, cc).border = THIN
     _matrix_column_widths(ws, fixed, groups)
@@ -496,12 +500,18 @@ def _phase_banner_label(phase_names):
     return ' · '.join(u)
 
 
-def _write_ranked_marks_sheet_phase_banner(ws, rows, *, with_department):
+def _write_ranked_marks_sheet_phase_banner(ws, rows, *, with_department, fail_below_getter=None):
     """
     Subject-wise ranked sheet: row 1 = merged phase banner (same style as compiled export);
     row 2 = headers; data from row 3. If all rows share one phase, Phase column is omitted.
     rows: list of (mark_value, StudentMark) sorted by mark descending.
+    fail_below_getter: optional (dept, phase_name) -> float; avoids per-row DB hits on large exports.
     """
+    if fail_below_getter is None:
+
+        def fail_below_getter(d, p):
+            return float(mark_fail_below_threshold(d, p))
+
     phase_names = {m.exam_phase.name for _, m in rows}
     single_phase = len(phase_names) == 1
     if with_department:
@@ -556,7 +566,7 @@ def _write_ranked_marks_sheet_phase_banner(ws, rows, *, with_department):
         c_m = ws.cell(r, c, v)
         c_m.border = THIN
         st_dept = st.department
-        lb = float(mark_fail_below_threshold(st_dept, m.exam_phase.name)) if st_dept else float(MARK_LOW_THRESHOLD)
+        lb = fail_below_getter(st_dept, m.exam_phase.name) if st_dept else float(MARK_LOW_THRESHOLD)
         _apply_low_fill(c_m, v, low_below=lb)
         for cc in range(1, ncols + 1):
             ws.cell(r, cc).border = THIN
@@ -566,13 +576,18 @@ def _write_ranked_marks_sheet_phase_banner(ws, rows, *, with_department):
         ws.column_dimensions[letter].width = min(24, max(10, len(sample) + 2))
 
 
-def _fill_compiled_matrix_sheet(ws, col_phase_subject, data_rows):
+def _fill_compiled_matrix_sheet(ws, col_phase_subject, data_rows, *, fail_below_getter=None):
     """Two header rows + data: Roll No, Name, Enrollment, Batch + marks matrix."""
     fixed = ['Roll No', 'Name', 'Enrollment', 'Batch']
     groups = _group_mark_columns_single_dept(col_phase_subject)
     _write_two_row_matrix_headers(ws, fixed, groups)
     nfix = len(fixed)
     data_start = 3
+    if fail_below_getter is None and data_rows:
+        idpt = data_rows[0].get('department')
+        fail_below_getter = mark_fail_below_getter_for_departments([idpt] if idpt else [])
+    elif fail_below_getter is None:
+        fail_below_getter = lambda dept, pn: float(MARK_LOW_THRESHOLD)
     for r, item in enumerate(data_rows, data_start):
         s = item['student']
         ws.cell(r, 1, s.roll_no)
@@ -591,7 +606,7 @@ def _fill_compiled_matrix_sheet(ws, col_phase_subject, data_rows):
             cell = ws.cell(r, col, val if val is not None else '')
             cell.border = THIN
             idpt = item.get('department')
-            lb = float(mark_fail_below_threshold(idpt, pn)) if idpt else float(MARK_LOW_THRESHOLD)
+            lb = fail_below_getter(idpt, pn) if idpt else float(MARK_LOW_THRESHOLD)
             _apply_low_fill(cell, val, low_below=lb)
     _matrix_column_widths(ws, fixed, groups)
 
@@ -613,7 +628,7 @@ def _mark_in_item(item, phase_name, subject_name):
     return None
 
 
-def _fill_combined_sheet(ws, depts, all_dept_student_pairs, *, include_department=None):
+def _fill_combined_sheet(ws, depts, all_dept_student_pairs, *, include_department=None, fail_below_getter=None):
     """
     Single sheet: all batches / departments. Union of mark columns; two-row headers (phase merge, subjects).
     all_dept_student_pairs: list of (dept, item) with item from build_student_phase_data for that dept.
@@ -624,6 +639,8 @@ def _fill_combined_sheet(ws, depts, all_dept_student_pairs, *, include_departmen
         dept_col = len(depts) > 1
     else:
         dept_col = include_department
+    if fail_below_getter is None:
+        fail_below_getter = mark_fail_below_getter_for_departments(depts)
     multi_labels = len(depts) > 1
     union_cols = []
     for d in depts:
@@ -662,7 +679,7 @@ def _fill_combined_sheet(ws, depts, all_dept_student_pairs, *, include_departmen
             val = _mark_in_item(item, pn, sn) if ud.id == dept.id else None
             cell = ws.cell(r, base_col + j, val if val is not None else '')
             cell.border = THIN
-            _apply_low_fill(cell, val, low_below=float(mark_fail_below_threshold(ud, pn)))
+            _apply_low_fill(cell, val, low_below=fail_below_getter(ud, pn))
     _matrix_column_widths(ws, fixed, groups)
 
 
@@ -677,6 +694,7 @@ def excel_compiled_per_department(depts):
     wb = Workbook()
     wb.remove(wb.active)
     all_combined_pairs = []
+    fail_lb = mark_fail_below_getter_for_departments(depts)
 
     for dept in depts:
         col_phase_subject = _col_phase_subject_for_dept(dept)
@@ -709,14 +727,14 @@ def excel_compiled_per_department(depts):
             )
             title = _unique_sheet_title(wb, f'{sheet_prefix}{gkey}'.replace(' ', '_'))
             ws = wb.create_sheet(title=title)
-            _fill_compiled_matrix_sheet(ws, col_phase_subject, batch_data)
+            _fill_compiled_matrix_sheet(ws, col_phase_subject, batch_data, fail_below_getter=fail_lb)
 
         no_batch = [row for row in full_data if not row['student'].batch_id]
         if no_batch:
             no_batch.sort(key=lambda it: roll_sort_key(it['student']))
             title = _unique_sheet_title(wb, f'{sheet_prefix}No_Batch')
             ws = wb.create_sheet(title=title)
-            _fill_compiled_matrix_sheet(ws, col_phase_subject, no_batch)
+            _fill_compiled_matrix_sheet(ws, col_phase_subject, no_batch, fail_below_getter=fail_lb)
 
         for row in full_data:
             all_combined_pairs.append((dept, row))
@@ -727,7 +745,7 @@ def excel_compiled_per_department(depts):
     else:
         tcomb = _unique_sheet_title(wb, 'Combined')
         ws_c = wb.create_sheet(title=tcomb)
-        _fill_combined_sheet(ws_c, depts, all_combined_pairs)
+        _fill_combined_sheet(ws_c, depts, all_combined_pairs, fail_below_getter=fail_lb)
 
     bio = BytesIO()
     wb.save(bio)
@@ -768,7 +786,8 @@ def excel_compiled_all_departments(depts):
         bio.seek(0)
         return bio
 
-    _fill_all_departments_wide_sheet(ws, depts, all_dept_student_pairs)
+    fail_lb = mark_fail_below_getter_for_departments(depts)
+    _fill_all_departments_wide_sheet(ws, depts, all_dept_student_pairs, fail_below_getter=fail_lb)
     bio = BytesIO()
     wb.save(bio)
     bio.seek(0)
@@ -781,6 +800,7 @@ def excel_subject_wise_per_department(depts):
     wb.remove(wb.active)
     used_titles = set()
     for dept in depts:
+        fail_lb = mark_fail_below_getter_for_departments([dept])
         subject_ids = (
             StudentMark.objects.filter(student__department=dept, exam_phase__department=dept)
             .values_list('subject_id', flat=True)
@@ -805,7 +825,7 @@ def excel_subject_wise_per_department(depts):
                     continue
                 marks_rows.append((v, m))
             marks_rows.sort(key=lambda x: -x[0])
-            _write_ranked_marks_sheet_phase_banner(ws, marks_rows, with_department=False)
+            _write_ranked_marks_sheet_phase_banner(ws, marks_rows, with_department=False, fail_below_getter=fail_lb)
     if not wb.worksheets:
         ws = wb.create_sheet('Empty')
         ws.cell(1, 1, 'No marks.')
@@ -819,6 +839,7 @@ def excel_subject_wise_all_departments(depts):
     """One sheet per subject name (global): all depts, marks descending."""
     wb = Workbook()
     wb.remove(wb.active)
+    fail_lb = mark_fail_below_getter_for_departments(depts)
     marks_flat = []
     for m in StudentMark.objects.filter(
         student__department__in=depts,
@@ -843,7 +864,7 @@ def excel_subject_wise_all_departments(depts):
             t2 = f'{title[:28]}_{i}'
         used.add(t2)
         ws = wb.create_sheet(title=t2)
-        _write_ranked_marks_sheet_phase_banner(ws, rows, with_department=True)
+        _write_ranked_marks_sheet_phase_banner(ws, rows, with_department=True, fail_below_getter=fail_lb)
     if not wb.worksheets:
         ws = wb.create_sheet('Empty')
         ws.cell(1, 1, 'No marks.')
@@ -878,6 +899,7 @@ def excel_phase_compile(depts):
     used = set()
     fixed = ['Department', 'Roll No', 'Name', 'Enrollment', 'Batch']
     nfix = len(fixed)
+    fail_lb = mark_fail_below_getter_for_departments(depts)
 
     for pname in sorted(phase_sid_marks.keys(), key=exam_phase_name_sort_key):
         sid_to_subj = phase_sid_marks[pname]
@@ -919,7 +941,7 @@ def excel_phase_compile(depts):
                 cell = ws.cell(r, nfix + 1 + j, '' if val is None else val)
                 cell.border = THIN
                 sd = st.department
-                lb = float(mark_fail_below_threshold(sd, pname)) if sd else float(MARK_LOW_THRESHOLD)
+                lb = fail_lb(sd, pname) if sd else float(MARK_LOW_THRESHOLD)
                 _apply_low_fill(cell, val, low_below=lb)
             for cc in range(1, nfix + len(subjects) + 1):
                 ws.cell(r, cc).border = THIN

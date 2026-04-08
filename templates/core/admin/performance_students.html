@@ -7,7 +7,7 @@
         <img src="{% static 'images/ljiet-logo.png' %}" alt="LJIET" class="admin-logo">
         <div>
             <h1 class="page-title mb-1">Performance Students</h1>
-            <p class="page-subtitle mb-0">{{ department.name }} — Shortcuts to results, marks, and analytics (same URLs as before).</p>
+            <p class="page-subtitle mb-0">{{ department.name }} — Shortcuts to results, marks, and analytics.{% if show_compiled_marksheets %} <strong>Compiled marksheet Excel</strong> downloads are below and on <em>Mark Analytics</em> / <em>Detailed Mark Analytics</em>.{% endif %}</p>
         </div>
     </div>
     <a href="{% url 'core:admin_dashboard' %}" class="btn btn-outline-light btn-sm"><i class="fas fa-arrow-left me-1"></i> Dashboard</a>
@@ -45,7 +45,7 @@
                 <div>
                     <p class="stat-label mb-1">Mark Analytics</p>
                     <p class="stat-value fs-5 mb-0">Charts &amp; risk</p>
-                    <small class="text-muted">Performance and at-risk views.</small>
+                    <small class="text-muted">{% if show_compiled_marksheets %}Performance, at-risk views, and compiled marksheet Excel.{% else %}Performance and at-risk views.{% endif %}</small>
                 </div>
             </div>
         </a>
@@ -75,4 +75,26 @@
         </a>
     </div>
 </div>
+
+{% if show_compiled_marksheets %}
+<div class="card admin-card mt-4">
+    <div class="card-header fw-semibold"><i class="fas fa-file-excel me-2 text-success"></i>Compiled marksheets (Excel) — {{ department.name }}</div>
+    <div class="card-body">
+        <p class="small text-muted mb-3 mb-md-2">Batch-wise compiled, subject-wise, and phase-wise workbooks for <strong>this department</strong> (same engine as Exam Analytics Hub).</p>
+        <div class="d-flex flex-wrap gap-2">
+            <a href="{% url 'core:admin_marks_compile_per_department_excel' %}" class="btn btn-success btn-sm"><i class="fas fa-download me-1"></i>Compiled (dept)</a>
+            <a href="{% url 'core:admin_marks_compile_subject_wise_excel' %}" class="btn btn-outline-success btn-sm"><i class="fas fa-download me-1"></i>Subject-wise (dept)</a>
+            <a href="{% url 'core:admin_marks_compile_phase_wise_excel' %}" class="btn btn-outline-primary btn-sm"><i class="fas fa-download me-1"></i>Phase compile (dept)</a>
+        </div>
+        {% if is_super_admin %}
+        <hr class="my-3">
+        <p class="small text-muted mb-2">Super admin — all departments in the active institute semester:</p>
+        <div class="d-flex flex-wrap gap-2">
+            <a href="{% url 'core:admin_marks_compile_all_departments_excel' %}" class="btn btn-warning btn-sm text-dark"><i class="fas fa-download me-1"></i>Compiled — all departments</a>
+            <a href="{% url 'core:admin_marks_compile_subject_all_departments_excel' %}" class="btn btn-outline-warning btn-sm text-dark"><i class="fas fa-download me-1"></i>Subject-wise — all</a>
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endif %}
 {% endblock %}

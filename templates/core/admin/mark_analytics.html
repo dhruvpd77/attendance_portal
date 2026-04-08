@@ -207,6 +207,31 @@
     {% endif %}
 </div>
 
+{% if is_admin and show_compiled_marksheets %}
+<div class="card sa-filter-card mb-4">
+    <div class="card-header"><i class="fas fa-file-excel me-2 text-success"></i>Compiled marksheets</div>
+    <div class="card-body p-4">
+        <p class="small text-muted mb-3">
+            Same Excel layouts as <strong>Exam Analytics Hub</strong> (batch-wise compiled, subject-wise, phase-wise), scoped to
+            <strong>{{ department.name }}</strong>. Users with the dedicated <em>exam_admin</em> role still use the hub for multi-department picks.
+        </p>
+        <div class="d-flex flex-wrap gap-2 align-items-center">
+            <a href="{% url 'core:admin_marks_compile_per_department_excel' %}" class="btn btn-success btn-sm"><i class="fas fa-download me-1"></i>Compiled (dept)</a>
+            <a href="{% url 'core:admin_marks_compile_subject_wise_excel' %}" class="btn btn-outline-success btn-sm"><i class="fas fa-download me-1"></i>Subject-wise (dept)</a>
+            <a href="{% url 'core:admin_marks_compile_phase_wise_excel' %}" class="btn btn-outline-primary btn-sm"><i class="fas fa-download me-1"></i>Phase-wise compile (dept)</a>
+        </div>
+        {% if is_super_admin %}
+        <hr class="my-3">
+        <p class="small text-muted mb-2"><strong>Institute scope</strong> — all departments in the active semester (super admin only).</p>
+        <div class="d-flex flex-wrap gap-2">
+            <a href="{% url 'core:admin_marks_compile_all_departments_excel' %}" class="btn btn-warning btn-sm text-dark"><i class="fas fa-download me-1"></i>Compiled — all departments</a>
+            <a href="{% url 'core:admin_marks_compile_subject_all_departments_excel' %}" class="btn btn-outline-warning btn-sm text-dark"><i class="fas fa-download me-1"></i>Subject-wise — all departments</a>
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endif %}
+
 <div class="card sa-filter-card mb-4">
     <div class="card-header"><i class="fas fa-filter me-2"></i>Select batch & search</div>
     <div class="card-body p-4">

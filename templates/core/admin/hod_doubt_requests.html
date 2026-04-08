@@ -82,7 +82,7 @@
                     <a href="{% url 'core:hod_doubt_reports_excel' %}?report=phase&phase=T3" class="btn btn-outline-primary hod-btn-phase">T3</a>
                     <a href="{% url 'core:hod_doubt_reports_excel' %}?report=phase&phase=T4" class="btn btn-outline-primary hod-btn-phase">T4</a>
                 </div>
-                <p class="hod-hint mb-0">Each file: <strong>week-by-week detail</strong> (date, batches, start/end, clock minutes, effective hours, rolls, names, phones) + week subtotals, then faculty × week summary and department totals.</p>
+                <p class="hod-hint mb-0">Each file: <strong>week-by-week detail</strong> (date, batches, start/end, location, clock minutes, effective hours, rolls, names, phones) + week subtotals, then faculty × week summary and department totals.</p>
             </div>
         </div>
     </div>
@@ -98,6 +98,7 @@
                     <th>Faculty</th>
                     <th>Batches</th>
                     <th>Time</th>
+                    <th>Location</th>
                     <th>Students</th>
                     <th></th>
                 </tr>
@@ -109,6 +110,7 @@
                     <td>{{ req.faculty.short_name }} — {{ req.faculty.full_name }}</td>
                     <td>{{ req.batches_label }}</td>
                     <td>{{ req.start_time|time:"H:i" }} – {{ req.end_time|time:"H:i" }} ({{ req.duration_hours|floatformat:2 }} h effective)</td>
+                    <td class="small">{% if req.location %}{{ req.location }}{% else %}<span class="text-muted">—</span>{% endif %}</td>
                     <td class="small">
                         {% for line in req.student_lines.all %}
                         <div>{{ line.student.roll_no }} — {{ line.student.name }} · {{ line.student.student_phone_number|default:"—" }}</div>
@@ -133,7 +135,7 @@
                     </td>
                 </tr>
                 {% empty %}
-                <tr><td colspan="6" class="text-secondary py-4 text-center">No pending requests.</td></tr>
+                <tr><td colspan="7" class="text-secondary py-4 text-center">No pending requests.</td></tr>
                 {% endfor %}
             </tbody>
         </table>
@@ -152,6 +154,7 @@
                     <th>Date</th>
                     <th>Faculty</th>
                     <th>Batches</th>
+                    <th>Location</th>
                     <th>Status</th>
                     <th>Students</th>
                     <th>Reviewed</th>
@@ -165,6 +168,7 @@
                     <td>{{ req.date|date:"d M Y" }}</td>
                     <td>{{ req.faculty.short_name }}</td>
                     <td>{{ req.batches_label }}</td>
+                    <td class="small">{% if req.location %}{{ req.location }}{% else %}<span class="text-muted">—</span>{% endif %}</td>
                     <td>
                         {% if req.status == 'accepted' %}<span class="badge bg-success">Accepted</span>
                         {% elif req.status == 'rejected' %}<span class="badge bg-secondary">Rejected</span>
@@ -184,7 +188,7 @@
                     </td>
                 </tr>
                 {% empty %}
-                <tr><td colspan="8" class="text-secondary py-3 text-center">None yet.</td></tr>
+                <tr><td colspan="9" class="text-secondary py-3 text-center">None yet.</td></tr>
                 {% endfor %}
             </tbody>
         </table>

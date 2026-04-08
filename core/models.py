@@ -277,9 +277,12 @@ class RiskStudentMentorLog(models.Model):
 
     KIND_ATTENDANCE_WEEK = 'attendance_week'
     KIND_MARKS_SUBJECT = 'marks_subject'
+    KIND_INTRODUCTION_CALL = 'introduction_call'
+    PHASE_INTRODUCTION_CALL = 'INTRO'
     KIND_CHOICES = (
         (KIND_ATTENDANCE_WEEK, 'Attendance week'),
         (KIND_MARKS_SUBJECT, 'Marks subject'),
+        (KIND_INTRODUCTION_CALL, 'Mentorship introduction call'),
     )
     CONTACT_FATHER = 'Father'
     CONTACT_MOTHER = 'Mother'
@@ -294,7 +297,10 @@ class RiskStudentMentorLog(models.Model):
     department = models.ForeignKey(Department, on_delete=models.CASCADE, related_name='risk_mentor_logs')
     faculty = models.ForeignKey(Faculty, on_delete=models.CASCADE, related_name='risk_mentor_logs_saved')
     kind = models.CharField(max_length=20, choices=KIND_CHOICES)
-    phase = models.CharField(max_length=4, help_text='T1–T4 exam/term phase.')
+    phase = models.CharField(
+        max_length=8,
+        help_text='T1–T4 for attendance/marks rows; use INTRO for mentorship introduction call.',
+    )
     week_index = models.PositiveSmallIntegerField(
         null=True,
         blank=True,
@@ -304,6 +310,11 @@ class RiskStudentMentorLog(models.Model):
     contact_person = models.CharField(max_length=20, choices=CONTACT_CHOICES, default=CONTACT_FATHER)
     call_date = models.DateField(null=True, blank=True)
     call_time = models.TimeField(null=True, blank=True)
+    duration_minutes = models.PositiveSmallIntegerField(
+        null=True,
+        blank=True,
+        help_text='Total call duration in minutes (introduction call rows).',
+    )
     remarks = models.TextField(blank=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -319,6 +330,11 @@ class RiskStudentMentorLog(models.Model):
                 fields=['student', 'kind', 'phase', 'subject_name'],
                 condition=models.Q(kind='marks_subject'),
                 name='uniq_risk_mentor_log_marks',
+            ),
+            models.UniqueConstraint(
+                fields=['student', 'kind', 'phase'],
+                condition=models.Q(kind='introduction_call'),
+                name='uniq_risk_mentor_log_intro',
             ),
         ]
         verbose_name = 'Risk student mentor log'
@@ -588,6 +604,11 @@ class FacultyDoubtRequest(models.Model):
     date = models.DateField()
     start_time = models.TimeField()
     end_time = models.TimeField()
+    location = models.CharField(
+        max_length=255,
+        blank=True,
+        help_text='Where the doubt session takes place (room, lab, online link, etc.).',
+    )
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default=STATUS_PENDING)
     created_at = models.DateTimeField(auto_now_add=True)
     reviewed_at = models.DateTimeField(null=True, blank=True)
